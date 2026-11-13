@@ -195,7 +195,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/09_decisiones_y_supuestos.md` §DD-06, SU-09
 
 ### [C-04] `ui-shell-and-settings`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado 2026-11-13)
 - **Scope**:
   - `src/app`: shell, routing, providers; cliente IPC en `src/lib/ipc.ts`.
   - Catálogo de strings en español `src/shared/i18n` (RN-GLB-03); UI kit con variantes `simple`/`advanced`.
