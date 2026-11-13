@@ -1,6 +1,6 @@
 # Modelo de Datos
 
-Persistencia: **SQLite local** (`rusqlite`), un único archivo en el directorio de datos de la app (**Suposición:** `%APPDATA%\pc-optimizer\data.db` del perfil real del usuario interactivo). Migraciones versionadas (`PRAGMA user_version`). Timestamps en UTC, epoch milisegundos (INTEGER). Tamaños en bytes (INTEGER).
+Persistencia: **SQLite local** (`rusqlite`), un único archivo en el directorio de datos de la app (**Decisión DD-15:** `%LOCALAPPDATA%\pc-optimizer\data.db` del perfil real del usuario interactivo; no itinerante). Migraciones versionadas (`PRAGMA user_version`). Timestamps en UTC, epoch milisegundos (INTEGER). Tamaños en bytes (INTEGER).
 
 ## Dominios
 

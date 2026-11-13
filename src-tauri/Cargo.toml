@@ -38,5 +38,8 @@ expect_used = "deny"
 undocumented_unsafe_blocks = "deny"
 
 # Dependencias de runtime fijadas desde C-01 (ver design D-02) pero aun sin consumidores.
+# Tras C-02 ya se usan rusqlite, thiserror y serde_json. Siguen sin uso: sysinfo (C-06),
+# walkdir (C-07), trash (C-09), blake3 (C-11) y windows (C-03/C-05). El lint no admite
+# excepciones por dependencia: lo quita el ultimo consumidor.
 [lints.cargo]
 unused_dependencies = "allow"

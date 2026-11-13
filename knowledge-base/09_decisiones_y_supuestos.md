@@ -88,6 +88,13 @@
 **Justificación**: no hay señal fiable de "uso"; la desinstalación silenciosa es riesgosa.
 **Trade-offs aceptados**: más clicks para el usuario.
 
+### DD-15 — Base de datos en `%LOCALAPPDATA%` (no Roaming)
+**Decisión**: la base SQLite vive en `%LOCALAPPDATA%\pc-optimizer\data.db` (Tauri `app.path().local_data_dir()`), no en Roaming `%APPDATA%`.
+**Decidido por**: el dueño, 2026-11-13 (durante C-02).
+**Alternativas consideradas**: `%APPDATA%` (Roaming).
+**Justificación**: historial y métricas son propios de la máquina y pueden crecer; no deben itinerar con los perfiles de dominio.
+**Trade-offs aceptados**: la base no acompaña al usuario entre equipos.
+
 ## Supuestos inferidos
 
 ### SU-01 — Pesos del health score
@@ -109,7 +116,7 @@
 **Cómo validar**: feedback en v0.3; si se pide, diseñar "limpieza automática" como feature aparte con revisión.
 
 ### SU-04 — Directorio de datos en el perfil del usuario interactivo
-**Supuesto**: `%APPDATA%` del usuario real, no del token elevado.
+**Supuesto**: `%LOCALAPPDATA%` del usuario real, no del token elevado (ubicación definida en DD-15).
 **Origen**: inferido para evitar guardar datos en el perfil de otra cuenta (over-the-shoulder).
 **Riesgo si es falso**: datos en perfil equivocado.
 **Cómo validar**: test manual con over-the-shoulder.

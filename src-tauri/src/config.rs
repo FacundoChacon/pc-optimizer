@@ -3,12 +3,17 @@
 //! La resolucion es pura: el entorno se inyecta como funcion de busqueda para poder
 //! testearla sin tocar el entorno real del proceso.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Variable que redirige el directorio de datos (solo desarrollo y tests).
 const ENV_DATA_DIR: &str = "PCOPT_DATA_DIR";
 /// Variable que fija la verbosidad del log (respetada tambien en release).
 const ENV_LOG: &str = "PCOPT_LOG";
+
+/// Subcarpeta de la app dentro de `%LOCALAPPDATA%`.
+pub const APP_DATA_SUBDIR: &str = "pc-optimizer";
+/// Nombre del archivo de base de datos dentro del directorio de datos.
+pub const DB_FILE_NAME: &str = "data.db";
 
 /// Nivel de log resuelto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,11 +73,72 @@ pub fn resolve_runtime_config(
     }
 }
 
+/// Resuelve el directorio de datos: el override (ya filtrado por `resolve_runtime_config`) se
+/// usa tal cual; sin override, `<LocalAppData>\pc-optimizer`. Si `local_app_data` es `Err`
+/// (perfil no resoluble) falla en vez de usar un directorio alternativo.
+pub fn resolve_data_dir(
+    override_dir: Option<&Path>,
+    local_app_data: Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
+    match override_dir {
+        Some(dir) => Ok(dir.to_path_buf()),
+        None => local_app_data.map(|base| base.join(APP_DATA_SUBDIR)),
+    }
+}
+
+/// Ruta del archivo de base de datos dentro de `data_dir`.
+pub fn db_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(DB_FILE_NAME)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::path::PathBuf;
+
+    #[test]
+    fn resolve_data_dir_should_append_app_subdir_to_local_app_data_without_override() {
+        let dir = resolve_data_dir(None, Ok(PathBuf::from(r"C:\Users\ana\AppData\Local")));
+        assert_eq!(
+            dir,
+            Ok(PathBuf::from(r"C:\Users\ana\AppData\Local\pc-optimizer"))
+        );
+        let other = resolve_data_dir(None, Ok(PathBuf::from(r"D:\Perfiles\bob\Local")));
+        assert_eq!(
+            other,
+            Ok(PathBuf::from(r"D:\Perfiles\bob\Local\pc-optimizer"))
+        );
+    }
+
+    #[test]
+    fn resolve_data_dir_should_use_override_as_is_and_ignore_the_profile() {
+        let over = PathBuf::from(r"C:\tmp\pcopt-dev");
+        let with_profile = resolve_data_dir(
+            Some(&over),
+            Ok(PathBuf::from(r"C:\Users\ana\AppData\Local")),
+        );
+        assert_eq!(with_profile, Ok(over.clone()));
+        let without_profile = resolve_data_dir(Some(&over), Err("sin perfil".into()));
+        assert_eq!(without_profile, Ok(over));
+    }
+
+    #[test]
+    fn resolve_data_dir_should_fail_when_profile_unresolvable_and_no_override() {
+        assert_eq!(
+            resolve_data_dir(None, Err("sin perfil".into())),
+            Err("sin perfil".to_string())
+        );
+    }
+
+    #[test]
+    fn db_path_should_append_the_database_file_name() {
+        assert_eq!(
+            db_path(Path::new(r"C:\tmp\pcopt-dev")),
+            PathBuf::from(r"C:\tmp\pcopt-dev\data.db")
+        );
+        assert_eq!(db_path(Path::new(r"D:\x")), PathBuf::from(r"D:\x\data.db"));
+    }
 
     fn lookup_from<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         let map: HashMap<&str, &str> = pairs.iter().copied().collect();

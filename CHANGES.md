@@ -165,7 +165,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/02_descripcion_general.md`
 
 ### [C-02] `domain-ports-and-sqlite-store`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado 2026-11-13)
 - **Scope**:
   - `domain/ports.rs`: traits `FileSystem`, `Trash`, `Registry`, `Sensors`, `Store` con fakes para tests.
   - Adaptador SQLite (`rusqlite`) con migraciones versionadas por `PRAGMA user_version`; timestamps UTC epoch ms.
@@ -203,6 +203,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - Pantalla Configuración v0.1: modo y autostart (deshabilitado hasta C-22) (US-024); comandos IPC `get_settings`/`set_setting`.
   - Accesibilidad base (WCAG 2.2 AA: foco visible, teclado, reduced-motion, icono+texto para estado).
   - Tests Vitest: cambio de modo, render desde catálogo, persistencia vía IPC mockeado.
+  - Estado de la base de datos (Ready/Unavailable) y acción "Respaldar y recrear" con confirmación y mensaje claro cuando está corrupta o no disponible (el archivo dañado se conserva como `.corrupt-<ms>.bak`; nunca se recrea automáticamente). Decidido por el dueño en C-02.
 - **Dependencias**: `C-02`
 - **Governance**: BAJO (LOW)
 - **Leer antes**:
@@ -400,6 +401,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - Motor apply/undo: snapshot persistido ANTES de aplicar (sin snapshot no se aplica); undo exacto comparando estado actual; si cambió externamente, aviso y confirmación (RN-MEJ-04); falla al aplicar descarta el snapshot.
   - Acciones HKCU bloqueadas bajo mismatch (C-05).
   - Tests con fake de `Registry`: snapshot-antes-de-aplicar, undo exacto, estado externo cambiado, fallo de aplicación.
+  - Define el port `Registry` (diferido desde C-02).
 - **Dependencias**: `C-02, C-05`
 - **Governance**: ALTO (HIGH)
 - **Leer antes**:
