@@ -12,11 +12,13 @@ pub mod trash;
 #[cfg(test)]
 pub(crate) mod fakes;
 #[cfg(test)]
+pub(crate) mod fs_contract;
+#[cfg(test)]
 pub(crate) mod store_contract;
 
 pub use clock::Clock;
 pub use error::PortError;
-pub use fs::{DirEntry, EntryKind, FileMeta, FileSystem};
+pub use fs::{AncestorPin, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem};
 pub use sensors::{SensorSample, Sensors};
 pub use store::{CleanupLogStore, ScanStore, SettingsStore, Store, StoreError};
 pub use trash::Trash;

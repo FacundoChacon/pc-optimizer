@@ -106,7 +106,7 @@ Son contrato; romperlas es un defecto.
 - NUNCA `std::fs::remove_*` sobre archivos de usuario → todo borrado pasa por el adapter de limpieza, que valida contra `protected_paths` y mueve a la Papelera (`trash`). Única excepción declarada: vaciar la Papelera (RN-LIM-06), con doble confirmación y nunca automática.
 - NUNCA agregar categorías de basura ni mejoras de sistema fuera de la whitelist → requiere `/opsx:propose` aprobado por el dueño.
 - NUNCA exponer plugins `fs`/`shell` al webview, ampliar capabilities/CSP, ni agregar dependencias con red o telemetría → sin aprobación explícita.
-- NUNCA tests contra el disco real del usuario → `tempdir` fixtures; tests que dependen de Windows real van con `#[ignore]` y se corren a mano.
+- NUNCA tests contra el disco real del usuario → `tempdir` fixtures. Los tests de adapters que solo tocan un `tempdir` corren siempre; los que dependen del estado real de la máquina (perfil/carpetas del usuario, privilegios como `SeCreateSymbolicLinkPrivilege`, hardware) van con `#[ignore = "motivo"]` y se corren a mano con `--ignored`.
 
 **Frontend (React + TS)**
 - NUNCA `any` → `tsconfig` en `strict`; usar `unknown` + narrowing. Componentes en `PascalCase`.

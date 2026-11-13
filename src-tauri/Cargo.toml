@@ -23,7 +23,7 @@ walkdir = "=2.5.0"
 trash = "=5.3.0"
 rusqlite = { version = "=0.42.0", features = ["bundled"] }
 blake3 = "=1.8.7"
-windows = "=0.62.2"
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_UI_Shell"] }
 
 [dev-dependencies]
 tauri = { version = "=2.12.5", features = ["test"] }
@@ -39,7 +39,7 @@ undocumented_unsafe_blocks = "deny"
 
 # Dependencias de runtime fijadas desde C-01 (ver design D-02) pero aun sin consumidores.
 # Tras C-02 ya se usan rusqlite, thiserror y serde_json. Siguen sin uso: sysinfo (C-06),
-# walkdir (C-07), trash (C-09), blake3 (C-11) y windows (C-03/C-05). El lint no admite
+# walkdir (C-07), trash (C-09) y blake3 (C-11); windows ya lo usa C-03. El lint no admite
 # excepciones por dependencia: lo quita el ultimo consumidor.
 [lints.cargo]
 unused_dependencies = "allow"
