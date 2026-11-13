@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Ventana principal: solo comandos propios habilitados explícitamente. Sin plugins shell/fs/http.",
+  "windows": ["main"],
+  "platforms": ["windows"],
+  "permissions": ["allow-get-app-info"]
+}
