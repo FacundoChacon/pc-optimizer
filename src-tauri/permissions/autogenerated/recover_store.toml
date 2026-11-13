@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recover-store"
+description = "Enables the recover_store command without any pre-configured scope."
+commands.allow = ["recover_store"]
+
+[[permission]]
+identifier = "deny-recover-store"
+description = "Denies the recover_store command without any pre-configured scope."
+commands.deny = ["recover_store"]

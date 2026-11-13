@@ -3,3 +3,5 @@
 pub mod model;
 pub mod ports;
 pub mod protection;
+pub mod settings;
+pub mod store_status;

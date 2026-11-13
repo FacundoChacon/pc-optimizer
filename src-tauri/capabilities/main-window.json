@@ -4,5 +4,11 @@
   "description": "Ventana principal: solo comandos propios habilitados explícitamente. Sin plugins shell/fs/http.",
   "windows": ["main"],
   "platforms": ["windows"],
-  "permissions": ["allow-get-app-info"]
+  "permissions": [
+    "allow-get-app-info",
+    "allow-get-settings",
+    "allow-set-setting",
+    "allow-get-store-status",
+    "allow-recover-store"
+  ]
 }

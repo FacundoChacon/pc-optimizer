@@ -7,7 +7,7 @@ pub mod recovery;
 mod rows;
 pub mod state;
 
-pub use state::{StoreState, open_store_state};
+pub use state::{RecoveryError, StoreHandle, StoreState, open_store_state};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
