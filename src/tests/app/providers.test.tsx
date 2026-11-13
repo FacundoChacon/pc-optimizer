@@ -7,9 +7,10 @@ import { AppInfoProvider, useAppInfo } from "../../app/providers/AppInfoProvider
 import { Announcer, useAnnounce } from "../../app/providers/Announcer";
 import { NavigationProvider, useNavigation } from "../../app/providers/NavigationProvider";
 import { SettingsProvider, useSettings } from "../../app/providers/SettingsProvider";
+import { PrivilegeProvider, usePrivilege } from "../../app/providers/PrivilegeProvider";
 import { StoreStatusProvider, useStoreStatus } from "../../app/providers/StoreStatusProvider";
 import type { AppError } from "../../lib/ipc";
-import { CORRUPT, installBackend } from "../support/mockBackend";
+import { CORRUPT, installBackend, OTHER_USER } from "../support/mockBackend";
 
 afterEach(() => {
   cleanup();
@@ -247,5 +248,46 @@ describe("AppInfoProvider y Announcer (7.4)", () => {
     fireEvent.click(screen.getByRole("button", { name: "b" }));
     expect(region).toHaveTextContent("dos");
     expect(region).not.toHaveTextContent("uno");
+  });
+});
+
+describe("PrivilegeProvider (6.2)", () => {
+  const wrapper = ({ children }: { children: ReactNode }) => <PrivilegeProvider>{children}</PrivilegeProvider>;
+  const UNDETERMINED = { status: "mismatch", reason: "undetermined", elevated: false };
+
+  it("pasa de loading a ready con el contexto del backend", async () => {
+    installBackend({ privilege: OTHER_USER });
+    const { result } = renderHook(() => usePrivilege(), { wrapper });
+    expect(result.current.phase).toBe("loading");
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    expect(result.current.context).toEqual(OTHER_USER);
+  });
+
+  it("consulta una sola vez aunque haya dos consumidores", async () => {
+    const backend = installBackend();
+    const { result } = renderHook(() => [usePrivilege(), usePrivilege()] as const, { wrapper });
+    await waitFor(() => expect(result.current[0].phase).toBe("ready"));
+    expect(result.current[1].context).toEqual(result.current[0].context);
+    expect(backend.count("get_privilege_context")).toBe(1);
+  });
+
+  it("falla cerrado ante un error de IPC", async () => {
+    installBackend({ failures: { get_privilege_context: { kind: "internal", message: "x" } } });
+    const { result } = renderHook(() => usePrivilege(), { wrapper });
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    expect(result.current.context).toEqual(UNDETERMINED);
+  });
+
+  it("falla cerrado ante una respuesta invalida", async () => {
+    installBackend({ privilege: { status: "raro" } });
+    const { result } = renderHook(() => usePrivilege(), { wrapper });
+    await waitFor(() => expect(result.current.phase).toBe("ready"));
+    expect(result.current.context).toEqual(UNDETERMINED);
+  });
+
+  it("usePrivilege fuera del provider lanza un error claro", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(() => renderHook(() => usePrivilege())).toThrow(/PrivilegeProvider/);
+    vi.restoreAllMocks();
   });
 });

@@ -19,12 +19,12 @@ Gobernanza: monitoreo = **MEDIUM**; manejo de privilegios y autostart = **HIGH**
 
 - Escenario: usuario estándar escribe credenciales de **otra** cuenta admin en el prompt UAC → el proceso corre como esa cuenta.
 - Consecuencia: `%TEMP%`, cachés de navegador, Papelera y claves HKCU corresponden al perfil equivocado.
-- Detección: comparar el SID/usuario del token del proceso con el usuario de la sesión interactiva (por ejemplo, propietario de `explorer.exe` / sesión de consola) (**Suposición** sobre el mecanismo exacto).
-- Respuesta: advertencia visible, bloqueo de limpieza por-usuario y de acciones HKCU; el directorio de datos de la app se ubica en el perfil de la sesión interactiva (SU-04).
+- Detección (C-05): se compara el SID del token del proceso con dos señales de la **misma sesión de Windows** que el proceso: el dueño del shell (`GetShellWindow`) y el usuario de logon (WTS). Alcanza con una señal y todas las disponibles deben coincidir. Es fail-closed: sin señales, con señales contradictorias o con el token ilegible el resultado es mismatch (`undetermined`). Se calcula una vez al arrancar.
+- Respuesta: advertencia visible, bloqueo de limpieza por-usuario y de acciones HKCU (`scope_access`, `restrict_protection_context`); el resto de la app sigue disponible. El directorio de datos de la app queda en el perfil del token del proceso (DD-16; SU-04 refutado).
 
 ### UIPI
 
-El drag & drop desde Explorador (nivel de integridad medio) hacia la ventana elevada (alto) no funciona. Se ofrece selector de carpeta/archivo.
+El drag & drop desde Explorador (nivel de integridad medio) hacia la ventana elevada (alto) no funciona. Se ofrece selector de carpeta/archivo, que se implementa en su primer consumidor (C-07 o C-21), no en C-05.
 
 ## Fuentes de métricas
 

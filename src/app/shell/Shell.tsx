@@ -5,6 +5,7 @@ import { useNavigation } from "../providers/NavigationProvider";
 import { useSettings } from "../providers/SettingsProvider";
 import { AdvancedLayout } from "./AdvancedLayout";
 import { SimpleLayout } from "./SimpleLayout";
+import { PrivilegeBanner } from "./PrivilegeBanner";
 import { StoreBanner } from "./StoreBanner";
 
 export function Shell() {
@@ -25,6 +26,7 @@ export function Shell() {
   return (
     <DensityProvider value={settings.uiMode}>
       <Layout>
+        <PrivilegeBanner />
         <StoreBanner />
         {Screen !== undefined && <Screen />}
       </Layout>

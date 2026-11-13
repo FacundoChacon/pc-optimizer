@@ -11,6 +11,7 @@
 
 ### DD-02 — Ejecutar siempre como administrador
 **Decisión**: manifest `requireAdministrator`; UAC en cada arranque.
+**Mecanismo (C-05)**: solo en perfil `release`, `build.rs` emite `/MANIFESTUAC:level='requireAdministrator'`; en debug el manifest queda `asInvoker` para poder correr tests y `tauri dev` sin elevar. Un test de manifest lo verifica en ambos perfiles y el `[[bin]]` lleva `test = false` (el arnés release no puede ejecutar un binario elevado: error 740).
 **Contexto**: leer SMART/WMI, limpiar `Windows\Temp` y `SoftwareDistribution`, y gestionar tareas programadas requieren elevación.
 **Alternativas consideradas**: (a) elevación bajo demanda por acción; (b) servicio de Windows con UI no elevada.
 **Justificación**: la decisión del usuario prioriza simplicidad y que todas las funciones funcionen sin flujos parciales. Un servicio amplía superficie de ataque y complejidad de instalación; la elevación bajo demanda complica la arquitectura (procesos helper, IPC elevado).
@@ -115,8 +116,16 @@
 **Riesgo si es falso**: el usuario esperaba limpieza automática.
 **Cómo validar**: feedback en v0.3; si se pide, diseñar "limpieza automática" como feature aparte con revisión.
 
-### SU-04 — Directorio de datos en el perfil del usuario interactivo
-**Supuesto**: `%LOCALAPPDATA%` del usuario real, no del token elevado (ubicación definida en DD-15).
+### DD-16 — Datos de la app en el perfil del token del proceso
+**Decisión**: el directorio de datos (DD-15) es el `%LOCALAPPDATA%` del perfil del token del proceso, también en una escalada over-the-shoulder (donde es el perfil del administrador que autorizó).
+**Decidido por**: el dueño, C-05 (D-08 opción A).
+**Alternativas consideradas**: ubicar la base en el perfil del usuario interactivo (requiere cargar su perfil/hive y escribir en una cuenta ajena al proceso).
+**Justificación**: la app no puede resolver de forma segura otro perfil con su token; es coherente con que, en mismatch, las categorías por-usuario quedan bloqueadas y los datos de la app no son datos del usuario limpiable. Detalle en `privilege-context-and-profile-check`.
+**Trade-offs aceptados**: tras una escalada over-the-shoulder, los ajustes e historial quedan en el perfil del administrador y no en el de quien usa el equipo.
+
+### SU-04 — Directorio de datos en el perfil del usuario interactivo (REFUTADO en C-05)
+**Estado**: refutado en C-05; reemplazado por DD-16 (el directorio es el del perfil del token del proceso).
+**Supuesto (original)**: `%LOCALAPPDATA%` del usuario real, no del token elevado (ubicación definida en DD-15).
 **Origen**: inferido para evitar guardar datos en el perfil de otra cuenta (over-the-shoulder).
 **Riesgo si es falso**: datos en perfil equivocado.
 **Cómo validar**: test manual con over-the-shoulder.

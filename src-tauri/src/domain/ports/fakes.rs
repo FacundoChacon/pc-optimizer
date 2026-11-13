@@ -10,8 +10,9 @@ use crate::domain::model::{
 };
 use crate::domain::ports::{
     AncestorPin, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem,
-    PortError, ScanStore, SensorSample, Sensors, SettingsStore, StoreError, Trash,
+    PortError, ScanStore, SensorSample, Sensors, SessionIdentity, SettingsStore, StoreError, Trash,
 };
+use crate::domain::privileges::UserSid;
 
 /// Operacion del puerto de archivos (para registrar llamadas e inyectar fallas por operacion).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -636,6 +637,68 @@ impl CleanupLogStore for InMemoryStore {
         log.sort_by_key(|e| std::cmp::Reverse((e.ts, e.id)));
         log.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         Ok(log)
+    }
+}
+
+/// SID de usuario de prueba `S-1-5-21-1-2-3-<rid>` (28 bytes).
+pub(crate) fn user_sid(rid: u32) -> UserSid {
+    let mut bytes = vec![1, 5, 0, 0, 0, 0, 0, 5];
+    for part in [21, 1, 2, 3, rid] {
+        bytes.extend_from_slice(&u32::to_le_bytes(part));
+    }
+    UserSid::from_bytes(bytes).expect("SID de prueba valido")
+}
+
+/// Identidad de sesion falsa: cada respuesta es un valor, ausencia (`Ok(None)`) o un error.
+pub(crate) struct FakeSessionIdentity {
+    pub(crate) process_user: Result<UserSid, PortError>,
+    pub(crate) process_elevated: Result<bool, PortError>,
+    pub(crate) shell_user: Result<Option<UserSid>, PortError>,
+    pub(crate) logon_user: Result<Option<UserSid>, PortError>,
+}
+
+impl FakeSessionIdentity {
+    /// Proceso del usuario `process` sin elevar y sin senales de sesion.
+    pub(crate) fn new(process: UserSid) -> Self {
+        Self {
+            process_user: Ok(process),
+            process_elevated: Ok(false),
+            shell_user: Ok(None),
+            logon_user: Ok(None),
+        }
+    }
+
+    pub(crate) fn elevated(mut self, elevated: bool) -> Self {
+        self.process_elevated = Ok(elevated);
+        self
+    }
+
+    pub(crate) fn shell(mut self, user: Option<UserSid>) -> Self {
+        self.shell_user = Ok(user);
+        self
+    }
+
+    pub(crate) fn logon(mut self, user: Option<UserSid>) -> Self {
+        self.logon_user = Ok(user);
+        self
+    }
+}
+
+impl SessionIdentity for FakeSessionIdentity {
+    fn process_user(&self) -> Result<UserSid, PortError> {
+        self.process_user.clone()
+    }
+
+    fn process_elevated(&self) -> Result<bool, PortError> {
+        self.process_elevated.clone()
+    }
+
+    fn shell_user(&self) -> Result<Option<UserSid>, PortError> {
+        self.shell_user.clone()
+    }
+
+    fn logon_user(&self) -> Result<Option<UserSid>, PortError> {
+        self.logon_user.clone()
     }
 }
 

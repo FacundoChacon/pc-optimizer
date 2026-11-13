@@ -212,13 +212,14 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/08_arquitectura_propuesta.md` §Estructura de directorios
 
 ### [C-05] `privilege-context-and-profile-check`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado 2026-11-13)
 - **Scope**:
   - `pc-optimizer.exe.manifest` con `requireAdministrator`; UAC cancelado = la app no inicia.
   - Adaptador `adapters/windows/privileges`: usuario del token vs usuario de la sesión interactiva; si no se puede determinar, se trata como mismatch.
   - Comando `get_privilege_context` -> `{match | mismatch}`; en mismatch: advertencia explicativa y bloqueo SOLO de categorías por-usuario y acciones HKCU (PA-14), sin deshabilitar el resto.
-  - Directorio de datos en el perfil de la sesión interactiva (SU-04).
-  - UI: banner de advertencia en mismatch; selector de carpeta como alternativa a drag & drop (UIPI).
+  - Directorio de datos en el perfil del token del proceso (DD-16; SU-04 refutado en C-05).
+  - UI: banner de advertencia en mismatch (sin botón de cierre). El selector de carpeta (UIPI) NO va en C-05: lo implementa su primer consumidor (C-07 o C-21).
+  - Expone `scope_access` y `restrict_protection_context` para C-08/C-09/C-18; manifest `requireAdministrator` solo en release.
   - Tests: decisión match/mismatch/desconocido con fakes; el bloqueo por-usuario no afecta categorías de sistema.
 - **Dependencias**: `C-02`
 - **Governance**: ALTO (HIGH)
@@ -250,6 +251,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 ### [C-07] `disk-usage-scanner`
 - **Estado**: `[ ]` pendiente
 - **Scope**:
+  - Nota C-05: aquí (primer consumidor) va el selector de carpeta como alternativa a drag & drop (UIPI), junto con C-21 si llega antes.
   - Migración 002: `folder_snapshot` (UNIQUE(scan_id, path), índice (path, scan_id), `parent_id` autorreferencia).
   - Recorrido con `walkdir` sin seguir junctions/symlinks; progreso por eventos y cancelación; carpetas inaccesibles reportadas sin romper el escaneo.
   - Comandos `start_scan(kind=folders)`, `cancel_scan`; treemap/lista por carpeta y top de archivos pesados (US-006, US-007) ordenable por tamaño y fecha.
@@ -267,6 +269,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 ### [C-08] `junk-detection`
 - **Estado**: `[ ]` pendiente
 - **Scope**:
+  - Nota C-05: consumir `scope_access(ctx, UserScope::PerUser)` para bloquear categorías por-usuario en mismatch y `restrict_protection_context` al resolver el contexto de protección.
   - Migración 003: `junk_finding` (CHECK `category` en el enum whitelist, `protected_flag`).
   - `domain/junk.rs`: whitelist `temp_user`, `temp_windows`, `browser_cache_{chrome,edge,firefox,brave}` (solo directorios de caché), `old_logs` (>= 30 días), `wu_cache`, `thumbnail_cache`, `crash_dumps`, `recycle_bin` (solo detección y tamaño).
   - Cada candidato pasa por `is_protected`; los protegidos se persisten como omitidos.
@@ -284,6 +287,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 ### [C-09] `cleanup-preview-and-trash`
 - **Estado**: `[ ]` pendiente
 - **Scope**:
+  - Nota C-05: reevaluar `scope_access` y `restrict_protection_context` al confirmar la limpieza, no solo al previsualizar.
   - `domain/cleanup.rs`: `preview_cleanup` (ítems, cantidad, tamaño total, `preview_id`) y `confirm_cleanup(preview_id)`; el frontend solo envía IDs de hallazgos.
   - Re-verificación `is_protected` justo antes de mover (anti-TOCTOU), incluido archivo reemplazado por symlink.
   - Mueve cada ítem a la Papelera (crate `trash`); outcomes `moved_to_trash`, `skipped_locked`, `skipped_protected`, `skipped_cloud`, `error` con detalle; un error no detiene el resto; volumen sin Papelera se omite y reporta.
@@ -346,6 +350,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 ### [C-13] `packaging-and-release-pipeline`
 - **Estado**: `[ ]` pendiente
 - **Scope**:
+  - Nota C-05: el manifest `requireAdministrator` solo existe en release; verificarlo con el test `manifest` en release. Si el instalador NSIS lanza la app al terminar, esa ejecución falla con error 740 si el instalador no está elevado.
   - Bundle NSIS/MSI (`npm run tauri build`) con manifest elevado; sin firma en v0.x; release en GitHub (tag v0.1.0).
   - CI: `cargo test`, `cargo clippy`, `npm test`, `npm run build`, `cargo audit`, `npm audit`, verificación de ausencia de crates de red (`cargo tree`).
   - Verificación manual guiada de v0.1 en Windows 10 22H2 y 11 (SU-05).
@@ -427,6 +432,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 ### [C-18] `one-click-improvements`
 - **Estado**: `[ ]` pendiente
 - **Scope**:
+  - Nota C-05: las acciones HKCU usan `UserScope::PerUser` y quedan bloqueadas en mismatch (`scope_access`).
   - Mejoras de lista cerrada: plan de energía, preset de efectos visuales, limpieza whitelisted (reutiliza preview/Papelera/log de C-09; nunca vacía la Papelera).
   - UI: cartas con riesgo e impacto en palabras, confirmación previa y botón de deshacer visible; historial y snapshots (avanzado). US-015.
   - Tests: aplicar/revertir cada tipo, riesgo/impacto visibles, ninguna mejora fuera del catálogo.
@@ -486,6 +492,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 ### [C-22] `tray-mode-and-autostart`
 - **Estado**: `[ ]` pendiente
 - **Scope**:
+  - Nota C-05: el contexto de privilegios se detecta al arrancar; el modo bandeja hereda esa detección (no se vuelve a calcular).
   - Icono de bandeja; cerrar ventana minimiza a bandeja; muestreo reducido (5-10 s) con ventana oculta.
   - Autostart opt-in vía tarea de Task Scheduler "run with highest privileges" al iniciar sesión (no clave `Run`); desactivar la opción o desinstalar elimina la tarea. US-017.
   - Activa `autostart_tray` en Configuración (C-04). Adaptador `adapters/windows/task_scheduler` con fake.

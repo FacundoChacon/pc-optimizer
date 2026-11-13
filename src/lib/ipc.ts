@@ -129,6 +129,31 @@ function decodeStoreStatus(raw: unknown, command: string): StoreStatus {
   throw invalidResponse(command);
 }
 
+/** Motivo del aviso de privilegios (espejo de `MismatchReason::as_str`). */
+export type PrivilegeMismatchReason = "different_user" | "undetermined";
+
+/** Espejo de `commands::privileges::PrivilegeContextDto` (Rust): sin SID, nombres ni rutas. */
+export type PrivilegeContext =
+  | { status: "match"; elevated: boolean }
+  | { status: "mismatch"; reason: PrivilegeMismatchReason; elevated: boolean };
+
+function decodePrivilegeContext(raw: unknown, command: string): PrivilegeContext {
+  if (isRecord(raw) && typeof raw["elevated"] === "boolean") {
+    const elevated = raw["elevated"];
+    if (raw["status"] === "match") return { status: "match", elevated };
+    const reason = raw["reason"];
+    if (raw["status"] === "mismatch" && (reason === "different_user" || reason === "undetermined")) {
+      return { status: "mismatch", reason, elevated };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+/** Contexto de privilegios calculado por el backend al arrancar. */
+export async function getPrivilegeContext(): Promise<PrivilegeContext> {
+  return decodePrivilegeContext(await call<unknown>("get_privilege_context"), "get_privilege_context");
+}
+
 /** Estado de la base local. */
 export async function getStoreStatus(): Promise<StoreStatus> {
   return decodeStoreStatus(await call<unknown>("get_store_status"), "get_store_status");

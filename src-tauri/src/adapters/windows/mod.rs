@@ -4,6 +4,8 @@
 
 pub mod fs;
 pub mod known_folders;
+pub mod privileges;
 
 pub use fs::WindowsFileSystem;
 pub use known_folders::{UserFolderSource, resolve_protection_context};
+pub use privileges::SystemSessionIdentity;

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Announcer } from "./Announcer";
 import { AppInfoProvider } from "./AppInfoProvider";
 import { NavigationProvider } from "./NavigationProvider";
+import { PrivilegeProvider } from "./PrivilegeProvider";
 import { SettingsProvider, useSettings } from "./SettingsProvider";
 import { StoreStatusProvider } from "./StoreStatusProvider";
 
@@ -15,11 +16,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <Announcer>
       <AppInfoProvider>
-        <SettingsProvider>
-          <StoreStatusWithSettings>
-            <NavigationProvider>{children}</NavigationProvider>
-          </StoreStatusWithSettings>
-        </SettingsProvider>
+        <PrivilegeProvider>
+          <SettingsProvider>
+            <StoreStatusWithSettings>
+              <NavigationProvider>{children}</NavigationProvider>
+            </StoreStatusWithSettings>
+          </SettingsProvider>
+        </PrivilegeProvider>
       </AppInfoProvider>
     </Announcer>
   );

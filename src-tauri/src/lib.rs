@@ -11,7 +11,9 @@ pub(crate) mod test_util;
 use std::path::Path;
 
 use adapters::sqlite::{StoreHandle, open_store_state};
+use adapters::windows::SystemSessionIdentity;
 use config::{RuntimeConfig, resolve_data_dir, resolve_runtime_config};
+use domain::privileges::{PrivilegeContext, detect};
 use error::AppError;
 use tauri::Manager;
 
@@ -29,14 +31,22 @@ pub fn app_builder<R: tauri::Runtime>(
             commands::settings::get_settings,
             commands::settings::set_setting,
             commands::store::get_store_status,
-            commands::store::recover_store
+            commands::store::recover_store,
+            commands::privileges::get_privilege_context
         ])
+}
+
+/// Registra el contexto de privilegios calculado al arrancar (solo lectura despues).
+pub fn manage_privileges<R: tauri::Runtime>(app: &impl Manager<R>, context: PrivilegeContext) {
+    app.manage(context);
 }
 
 /// Abre la base local y la registra como estado gestionado (`StoreHandle`).
 ///
 /// El directorio sale del override de desarrollo o, si no hay, de `%LOCALAPPDATA%` del perfil
-/// (costura para C-05: unico punto que depende del perfil). Nunca falla: una base no
+/// del token del proceso (DD-16, C-05 D-08): con una escalada over-the-shoulder es el perfil
+/// del administrador, no el del usuario interactivo; el aviso de privilegios lo informa.
+/// Nunca falla: una base no
 /// disponible queda como `StoreState::Unavailable` y la app arranca igual.
 pub fn manage_store<R: tauri::Runtime>(app: &impl Manager<R>, override_dir: Option<&Path>) {
     let local_app_data = app.path().local_data_dir().map_err(|e| e.to_string());
@@ -52,6 +62,7 @@ pub fn run() -> Result<(), AppError> {
     let data_dir_override = config.data_dir_override.clone();
     app_builder(tauri::Builder::default(), config)
         .setup(move |app| {
+            manage_privileges(app, detect(&SystemSessionIdentity));
             manage_store(app, data_dir_override.as_deref());
             Ok(())
         })
@@ -188,6 +199,37 @@ mod tests {
             handle.store(),
             Err(domain::ports::StoreError::Corrupt(_))
         ));
+    }
+
+    fn window_with_privileges(context: PrivilegeContext) -> tauri::WebviewWindow<MockRuntime> {
+        let app = mock_app();
+        manage_privileges(&app, context);
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        std::mem::forget(app);
+        window
+    }
+
+    #[test]
+    fn privilege_command_should_answer_match_and_mismatch_over_ipc() {
+        use domain::privileges::{MismatchReason, UserMatch};
+        let matching = window_with_privileges(PrivilegeContext::new(UserMatch::Match, true));
+        let first = invoke(&matching, "get_privilege_context", serde_json::json!({}));
+        assert_eq!(first["status"], "match");
+        assert_eq!(first["elevated"], true);
+        assert_eq!(
+            invoke(&matching, "get_privilege_context", serde_json::json!({})),
+            first
+        );
+
+        let other = window_with_privileges(PrivilegeContext::new(
+            UserMatch::Mismatch(MismatchReason::DifferentUser),
+            true,
+        ));
+        let value = invoke(&other, "get_privilege_context", serde_json::json!({}));
+        assert_eq!(value["status"], "mismatch");
+        assert_eq!(value["reason"], "different_user");
     }
 
     #[test]

@@ -9,6 +9,7 @@
     "allow-get-settings",
     "allow-set-setting",
     "allow-get-store-status",
-    "allow-recover-store"
+    "allow-recover-store",
+    "allow-get-privilege-context"
   ]
 }
