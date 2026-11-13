@@ -277,3 +277,11 @@ Vitest 137 tests (la primera corrida fue 136/137 con 1 fallo no reproducible, co
 ### 2.2 / 2.3 — Manifest: se logro con la opcion A (sin plan B)
 `build.rs` emite `cargo::rustc-link-arg-bins=/MANIFESTUAC:level='requireAdministrator'` solo con `PROFILE == "release"` en Windows; el linker lo combina con `/MANIFEST:EMBED` + `/MANIFESTDEPENDENCY` existentes (sin CVT1100). Evidencia: RED release = `left: Some("asInvoker") right: Some("requireAdministrator")`; GREEN debug y release (`asInvoker` / `requireAdministrator`, Common Controls v6 en ambos). En 2.3 el RED fue real: sin `test = false`, `cargo test --release` falla al ejecutar el arnes del bin con `os error 740`; con `[[bin]] test = false` la suite release completa corre sin elevar. Cargo.lock sin cambios.
 
+### 4.3 / 4.4 - Adaptador real y revision de unsafe
+- `GetTokenInformation` con clases de tamano fijo (`TokenElevation`) responde `ERROR_BAD_LENGTH` (24), no `ERROR_INSUFFICIENT_BUFFER`, en la llamada de dimensionado con longitud 0. Lo detecto el test real ignorado (RED: `win32 error 24`); `is_size_probe` acepta ambos codigos. `PSID` esta en `Win32::Security` (no `Foundation`).
+- `unsafe`: 22 bloques, todos en `adapters/windows/privileges.rs`, cada uno con `// SAFETY:`; sin `transmute`; ninguno envuelve logica pura (nombres, codigos de error y SID se procesan fuera). Handles: `Owned<HANDLE>` (CloseHandle una vez al soltar); buffer WTS: guard `WtsString` con `WTSFreeMemory` en `Drop` (una vez); buffers de token en `Vec<u64>` (alineacion 8) y el SID se copia a `Vec<u8>` antes de soltarlos.
+- Medicion real (terminal normal, sesion propia): `detect()` = ~2 ms (`Match`, `elevated=false`); logon y shell presentes y coinciden con el proceso. Muy por debajo de 200 ms: se mantiene en el hilo de `setup`.
+- Lanzamiento de `lib.rs`: `manage_privileges` se llama antes de `manage_store` en `setup`; en caso de panic de la deteccion no hay fallback (`detect` no falla por contrato).
+
+### 6 / 7 - Frontend y documentacion
+- `PrivilegeProvider` (fail-closed: error o respuesta invalida -> `mismatch/undetermined`), `PrivilegeBanner` antes de `StoreBanner`, catalogo `es.privilege`. Documentado: KB 09 (DD-16, SU-04 refutado, mecanismo de DD-02), 13, 04 y CHANGES.md (C-05, C-07, C-08, C-09, C-13, C-18, C-22).

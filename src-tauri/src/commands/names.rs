@@ -9,4 +9,5 @@ pub const APP_COMMANDS: &[&str] = &[
     "set_setting",
     "get_store_status",
     "recover_store",
+    "get_privilege_context",
 ];

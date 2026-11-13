@@ -2,6 +2,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   getAppInfo,
+  getPrivilegeContext,
   getSettings,
   getStoreStatus,
   recoverStore,
@@ -209,5 +210,52 @@ describe("getStoreStatus / recoverStore", () => {
       throw { kind: "store_not_recoverable", message: "x" };
     });
     await expect(recoverStore()).rejects.toMatchObject({ kind: "store_not_recoverable" });
+  });
+});
+
+describe("getPrivilegeContext", () => {
+  afterEach(() => {
+    clearMocks();
+  });
+
+  it("invoca get_privilege_context y decodifica las cuatro formas validas", async () => {
+    const calls: string[] = [];
+    const valid = [
+      { status: "match", elevated: true },
+      { status: "match", elevated: false },
+      { status: "mismatch", reason: "different_user", elevated: true },
+      { status: "mismatch", reason: "undetermined", elevated: false },
+    ];
+    for (const shape of valid) {
+      mockIPC((cmd) => {
+        calls.push(cmd);
+        return shape;
+      });
+      await expect(getPrivilegeContext()).resolves.toEqual(shape);
+    }
+    expect(calls).toEqual(Array(4).fill("get_privilege_context"));
+  });
+
+  it("rechaza con invalid_response las formas invalidas", async () => {
+    const bad: unknown[] = [
+      { status: "otro", elevated: true },
+      { status: "mismatch", reason: "x", elevated: true },
+      { status: "mismatch", elevated: true },
+      { status: "match", elevated: "si" },
+      { status: "match" },
+      null,
+      "match",
+    ];
+    for (const response of bad) {
+      mockIPC(() => response);
+      await expect(getPrivilegeContext()).rejects.toMatchObject({ kind: "invalid_response" });
+    }
+  });
+
+  it("propaga el error tipado del backend", async () => {
+    mockIPC(() => {
+      throw { kind: "internal", message: "x" };
+    });
+    await expect(getPrivilegeContext()).rejects.toMatchObject({ kind: "internal" });
   });
 });

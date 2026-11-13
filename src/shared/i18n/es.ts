@@ -69,6 +69,24 @@ export const es = {
         "No se puede acceder a la base de datos. Cerrá otros programas que la usen y reiniciá la aplicación.",
     },
   },
+  privilege: {
+    title: "Aviso sobre la cuenta de Windows",
+    reasons: {
+      different_user:
+        "La aplicación se abrió con la cuenta de otra persona (por ejemplo, al ingresar la contraseña de un administrador). Por eso no puede actuar sobre los archivos de la persona que tiene la sesión abierta.",
+      undetermined:
+        "No se pudo verificar con qué cuenta de Windows se abrió la aplicación. Por precaución se limita lo que depende de los datos de la persona que usa el equipo.",
+    },
+    blockedIntro: "Queda bloqueado todo lo que depende de la cuenta de la persona que usa el equipo:",
+    blocked: [
+      "La limpieza de archivos temporales, caché y otras carpetas personales.",
+      "Los ajustes y las mejoras que se guardan por usuario.",
+      "Los programas que se inician con la sesión.",
+    ],
+    restAvailable: "El resto de la aplicación sigue disponible.",
+    howToFix:
+      "Para resolverlo, cerrá la aplicación y volvé a abrirla con tu propia cuenta de Windows, sin usar otra cuenta para autorizarla.",
+  },
   errors: {
     internal: "Ocurrió un error inesperado.",
     unknown: "Ocurrió un error desconocido.",

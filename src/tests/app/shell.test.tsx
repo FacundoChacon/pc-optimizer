@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../app/App";
 import { SCREENS } from "../../app/navigation";
 import { es } from "../../shared/i18n/es";
-import { CORRUPT, installBackend } from "../support/mockBackend";
+import { CORRUPT, installBackend, OTHER_USER } from "../support/mockBackend";
 
 afterEach(() => {
   cleanup();
@@ -147,5 +147,50 @@ describe("StoreBanner (8.4)", () => {
     installBackend({ store: { status: "unavailable", reason: "schema_too_new", recoverable: false } });
     render(<App />);
     expect(await screen.findByRole("alert")).toHaveTextContent(es.store.reasons.schema_too_new);
+  });
+});
+
+describe("PrivilegeBanner (6.3)", () => {
+  it("different_user: aviso con icono y texto, en Inicio y Configuracion, en ambos modos, sin cierre", async () => {
+    installBackend({ privilege: OTHER_USER });
+    render(<App />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(es.privilege.title);
+    expect(alert).toHaveTextContent(es.privilege.reasons.different_user);
+    expect(alert.querySelector('[data-tone="warning"] svg')).toHaveAttribute("aria-hidden", "true");
+    expect(alert.querySelector("button")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: es.nav.settings }));
+    expect(await screen.findByRole("heading", { level: 1, name: es.settings.title })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(es.privilege.title);
+    fireEvent.click(await screen.findByRole("radio", { name: new RegExp(es.settings.appearance.advanced) }));
+    await screen.findByRole("complementary");
+    expect(screen.getByRole("alert")).toHaveTextContent(es.privilege.title);
+  });
+
+  it("undetermined: muestra el texto de no se pudo verificar", async () => {
+    installBackend({ privilege: { status: "mismatch", reason: "undetermined", elevated: false } });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(es.privilege.reasons.undetermined);
+  });
+
+  it("match: no hay aviso de privilegios", async () => {
+    installBackend();
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: es.home.title });
+    await waitFor(() => expect(screen.queryByText(es.privilege.title)).toBeNull());
+  });
+
+  it("si get_privilege_context falla, se muestra el aviso undetermined", async () => {
+    installBackend({ failures: { get_privilege_context: { kind: "internal", message: "x" } } });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(es.privilege.reasons.undetermined);
+  });
+
+  it("con base corrupta y mismatch se ven ambos avisos", async () => {
+    installBackend({ store: CORRUPT, privilege: OTHER_USER });
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+    expect(screen.getByText(es.store.bannerTitle)).toBeInTheDocument();
+    expect(screen.getByText(es.privilege.title)).toBeInTheDocument();
   });
 });
