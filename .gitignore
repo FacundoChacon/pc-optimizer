@@ -1,0 +1,22 @@
+# Engram project memory — intentionally NOT versioned (public repo, may contain sensitive context)
+.engram/
+
+# Node / Vite
+node_modules/
+dist/
+*.log
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Env
+.env
+.env.*
