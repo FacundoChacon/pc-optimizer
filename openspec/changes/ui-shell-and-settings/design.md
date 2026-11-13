@@ -280,3 +280,13 @@ Ninguna que cambie specs o tareas. Decisiones tomadas con recomendación y pendi
 - D-03 navegación sin router (alternativa: `wouter`/`react-router` → tareas 7.1 y 8.2).
 - D-06 guardia de literales con test propio (alternativa: ESLint + plugins → tarea 4.3).
 - D-12 autostart visible y deshabilitado (alternativa: ocultarlo → tarea 9.3).
+
+## Apply notes
+
+- D-03, D-06, D-12 confirmados por el dueño (navegación sin router, guardia por test Vitest, autostart visible con `aria-disabled`).
+- `styles.css?raw` devolvía cadena vacía en Vitest: se resolvió con `test.css.include: [/styles.css/]` en `vite.config.ts` (no hizo falta el plan B de tokens.ts).
+- `Switch` no maneja `keydown`: un `<button>` nativo activa `click` con Enter/Espacio; los tests verifican `click` y que `keyDown` no dispare IPC.
+- El banner global se renderiza en `Shell` (no dentro de cada pantalla) para evitar un ciclo de imports `navigation.ts` <-> pantallas.
+- Al cambiar de modo el layout se remonta; `AppearanceSection` devuelve el foco a la opción elegida (`setTimeout 0`).
+- `SettingsProvider.setUiMode` devuelve `Promise<boolean>` (éxito) para anunciar solo si se guardó.
+- Tarea 10.2 (smoke manual con `npm run tauri dev`) pendiente del dueño.
