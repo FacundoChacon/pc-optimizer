@@ -149,7 +149,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 > C-03, C-04 y C-05 son independientes entre sí una vez listo C-02.
 
 ### [C-01] `foundation-setup`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado 2026-11-13)
 - **Scope**:
   - Scaffold Tauri 2 + React + Vite + TS + Tailwind (tema oscuro base); estructura `src-tauri/src/{domain,adapters,commands}` y `src/{app,features,shared}`.
   - `tauri.conf.json`: CSP estricta (`default-src 'self'`, sin `unsafe-eval`, `connect-src` vacío); `capabilities/` mínimas sin plugins `shell`/`fs`.
