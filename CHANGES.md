@@ -212,7 +212,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/08_arquitectura_propuesta.md` §Estructura de directorios
 
 ### [C-05] `privilege-context-and-profile-check`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado 2026-11-13)
 - **Scope**:
   - `pc-optimizer.exe.manifest` con `requireAdministrator`; UAC cancelado = la app no inicia.
   - Adaptador `adapters/windows/privileges`: usuario del token vs usuario de la sesión interactiva; si no se puede determinar, se trata como mismatch.
