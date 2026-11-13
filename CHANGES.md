@@ -181,7 +181,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/09_decisiones_y_supuestos.md` §DD-08, DD-12
 
 ### [C-03] `protected-paths-domain`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado 2026-11-13)
 - **Scope**:
   - `domain/protection.rs`: `is_protected(path)` puro, fail-closed, algoritmo de 7 pasos (canonicalizar `\\?\`, `..`, 8.3, mayúsculas, reparse points; falla de canonicalización = protegida).
   - Rutas protegidas: `C:\Windows` (excepciones solo `Windows\Temp` y `SoftwareDistribution\Download`), Program Files (x86), `C:\ProgramData` (solo cachés whitelisted), perfiles de otros usuarios, placeholders OneDrive (`skipped_cloud`), `$Recycle.Bin`, System Volume Information, pagefile/hiberfil, raíces de volumen, perfiles de navegador.

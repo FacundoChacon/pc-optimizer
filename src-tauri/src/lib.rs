@@ -5,6 +5,8 @@ pub mod commands;
 pub mod config;
 pub mod domain;
 pub mod error;
+#[cfg(test)]
+pub(crate) mod test_util;
 
 use std::path::Path;
 

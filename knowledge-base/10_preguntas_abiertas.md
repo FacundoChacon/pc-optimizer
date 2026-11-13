@@ -35,6 +35,6 @@
 | PA-09 | Baja | Firma de código: ¿cuándo y con qué certificado (Azure Trusted Signing, EV, OV)? | Release 1.0 | Dueño del proyecto |
 | PA-10 | Baja | i18n: ¿se agregará inglés u otros idiomas? ¿librería (i18next) o catálogo propio? | Post v0.3 | Dueño del proyecto |
 | PA-11 | Baja | Auto-update: ¿cuándo y con qué mecanismo sin romper el principio de "sin red"? | Post v0.3 | Dueño del proyecto |
-| PA-12 | Baja | ¿Se soporta más de un disco/volumen en el análisis y la limpieza desde v0.1, o solo `C:`? | v0.1 | Dev |
+| PA-12 | ✅ Resuelta (v0.1) | ¿Se soporta más de un disco/volumen en el análisis y la limpieza desde v0.1, o solo `C:`? → **v0.1: solo volumen del sistema para limpieza; otros volúmenes protegidos. Análisis de solo lectura de otros volúmenes y limpieza multi-volumen se reevalúan en una versión posterior — decidido por el dueño 2026-11-13.** | v0.1 | Dueño del proyecto |
 | PA-13 | Baja | Política de retención final de `scan`, `cleanup_log` y `alert` (hoy **Suposición**) | v0.2 | Dev |
 | PA-14 | ✅ Resuelta | Detección over-the-shoulder: ¿bloqueo total o solo de las categorías por-usuario? (hoy: solo por-usuario) → **Bloqueo solo de categorías por-usuario, con aviso explicativo.** | v0.1 | Dueño del proyecto |

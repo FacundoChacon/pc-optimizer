@@ -9,21 +9,94 @@ use crate::domain::model::{
     Scan, ScanId, ScanStatus, scans_to_prune,
 };
 use crate::domain::ports::{
-    CleanupLogStore, Clock, DirEntry, EntryKind, FileMeta, FileSystem, PortError, ScanStore,
-    SensorSample, Sensors, SettingsStore, StoreError, Trash,
+    AncestorPin, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem,
+    PortError, ScanStore, SensorSample, Sensors, SettingsStore, StoreError, Trash,
 };
+
+/// Operacion del puerto de archivos (para registrar llamadas e inyectar fallas por operacion).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum FsOp {
+    Metadata,
+    Canonicalize,
+    ReadDir,
+    Pin,
+}
+
+/// Volumen de las identidades automaticas del fake.
+const FAKE_VOLUME_SERIAL: u64 = 1;
 
 #[derive(Default)]
 struct FsState {
     entries: BTreeMap<PathBuf, FileMeta>,
     canonical: BTreeMap<PathBuf, PathBuf>,
+    canonical_as_is: bool,
     failures: BTreeMap<PathBuf, PortError>,
+    op_failures: BTreeMap<(FsOp, PathBuf), PortError>,
+    calls: Vec<(FsOp, PathBuf)>,
+    pinned: Vec<PathBuf>,
+    next_identity: u128,
+}
+
+impl FsState {
+    fn auto_meta(
+        &mut self,
+        kind: EntryKind,
+        size_bytes: u64,
+        modified: Option<EpochMillis>,
+    ) -> FileMeta {
+        self.next_identity += 1;
+        FileMeta {
+            kind,
+            size_bytes,
+            modified,
+            cloud_placeholder: false,
+            identity: Some(FileIdentity {
+                volume_serial: FAKE_VOLUME_SERIAL,
+                file_id: self.next_identity,
+            }),
+            hard_links: Some(1),
+        }
+    }
+
+    /// Registra la llamada y devuelve la falla inyectada para esa ruta u operacion, si hay.
+    fn begin(&mut self, op: FsOp, path: &Path) -> Result<(), PortError> {
+        self.calls.push((op, path.to_path_buf()));
+        if let Some(error) = self.failures.get(path) {
+            return Err(error.clone());
+        }
+        if let Some(error) = self.op_failures.get(&(op, path.to_path_buf())) {
+            return Err(error.clone());
+        }
+        Ok(())
+    }
 }
 
 /// Sistema de archivos falso configurable.
+///
+/// Toda entrada nace con una identidad unica y `hard_links = Some(1)`; `read_dir` las omite.
 #[derive(Default)]
 pub(crate) struct FakeFileSystem {
-    state: Mutex<FsState>,
+    state: Arc<Mutex<FsState>>,
+}
+
+/// Fijacion falsa: libera sus rutas al soltarse.
+struct FakePin {
+    state: Arc<Mutex<FsState>>,
+    paths: Vec<PathBuf>,
+}
+
+impl AncestorPin for FakePin {}
+
+impl Drop for FakePin {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            for path in &self.paths {
+                if let Some(index) = state.pinned.iter().position(|p| p == path) {
+                    state.pinned.remove(index);
+                }
+            }
+        }
+    }
 }
 
 impl FakeFileSystem {
@@ -32,53 +105,168 @@ impl FakeFileSystem {
     }
 
     fn with_state(self, f: impl FnOnce(&mut FsState)) -> Self {
-        if let Ok(mut state) = self.state.lock() {
-            f(&mut state);
-        }
+        self.mutate(f);
         self
     }
 
-    fn meta(kind: EntryKind, size_bytes: u64, modified: Option<EpochMillis>) -> FileMeta {
-        FileMeta {
-            kind,
-            size_bytes,
-            modified,
-            cloud_placeholder: false,
+    fn mutate(&self, f: impl FnOnce(&mut FsState)) {
+        if let Ok(mut state) = self.state.lock() {
+            f(&mut state);
         }
     }
 
     pub(crate) fn with_dir(self, path: &str) -> Self {
         self.with_state(|s| {
-            s.entries.insert(
-                PathBuf::from(path),
-                Self::meta(EntryKind::Directory, 0, None),
-            );
+            let meta = s.auto_meta(EntryKind::Directory, 0, None);
+            s.entries.insert(PathBuf::from(path), meta);
         })
     }
 
     pub(crate) fn with_file(self, path: &str, size: u64, modified: Option<EpochMillis>) -> Self {
         self.with_state(|s| {
-            s.entries.insert(
-                PathBuf::from(path),
-                Self::meta(EntryKind::File, size, modified),
-            );
+            let meta = s.auto_meta(EntryKind::File, size, modified);
+            s.entries.insert(PathBuf::from(path), meta);
         })
     }
 
     pub(crate) fn with_reparse_point(self, path: &str) -> Self {
         self.with_state(|s| {
-            s.entries.insert(
-                PathBuf::from(path),
-                Self::meta(EntryKind::ReparsePoint, 0, None),
-            );
+            let meta = s.auto_meta(EntryKind::ReparsePoint, 0, None);
+            s.entries.insert(PathBuf::from(path), meta);
         })
     }
 
     pub(crate) fn with_cloud_placeholder(self, path: &str, size: u64) -> Self {
         self.with_state(|s| {
-            let mut meta = Self::meta(EntryKind::File, size, None);
+            let mut meta = s.auto_meta(EntryKind::File, size, None);
             meta.cloud_placeholder = true;
             s.entries.insert(PathBuf::from(path), meta);
+        })
+    }
+
+    /// Un reparse point de nube (tag de proveedor): `ReparsePoint` + `cloud_placeholder`.
+    pub(crate) fn with_cloud_reparse_point(self, path: &str) -> Self {
+        self.with_state(|s| {
+            let mut meta = s.auto_meta(EntryKind::ReparsePoint, 0, None);
+            meta.cloud_placeholder = true;
+            s.entries.insert(PathBuf::from(path), meta);
+        })
+    }
+
+    /// Fija la identidad de una entrada existente.
+    pub(crate) fn with_identity(self, path: &str, identity: FileIdentity) -> Self {
+        self.with_state(|s| {
+            if let Some(meta) = s.entries.get_mut(Path::new(path)) {
+                meta.identity = Some(identity);
+            }
+        })
+    }
+
+    /// Quita la identidad de una entrada (simula un FS que no la informa).
+    pub(crate) fn without_identity(self, path: &str) -> Self {
+        self.with_state(|s| {
+            if let Some(meta) = s.entries.get_mut(Path::new(path)) {
+                meta.identity = None;
+            }
+        })
+    }
+
+    /// Fija la cantidad de hard links de una entrada existente.
+    pub(crate) fn with_hard_links(self, path: &str, links: u32) -> Self {
+        self.with_state(|s| {
+            if let Some(meta) = s.entries.get_mut(Path::new(path)) {
+                meta.hard_links = Some(links);
+            }
+        })
+    }
+
+    /// Quita la cantidad de hard links de una entrada (simula un FS que no la informa).
+    pub(crate) fn without_hard_links(self, path: &str) -> Self {
+        self.with_state(|s| {
+            if let Some(meta) = s.entries.get_mut(Path::new(path)) {
+                meta.hard_links = None;
+            }
+        })
+    }
+
+    /// Crea `path` como segundo nombre de `existing`: misma identidad, 2 hard links en ambos.
+    pub(crate) fn with_hard_link(self, path: &str, existing: &str) -> Self {
+        self.with_state(|s| {
+            if let Some(original) = s.entries.get_mut(Path::new(existing)) {
+                original.hard_links = Some(2);
+                let copy = original.clone();
+                s.entries.insert(PathBuf::from(path), copy);
+            }
+        })
+    }
+
+    /// `canonicalize` devuelve la misma ruta si la entrada existe (el mapeo explicito gana).
+    pub(crate) fn canonical_as_is(self) -> Self {
+        self.with_state(|s| s.canonical_as_is = true)
+    }
+
+    /// Carrera: la entrada pasa a ser un reparse point.
+    pub(crate) fn replace_with_reparse_point(&self, path: &Path) {
+        self.mutate(|s| {
+            if let Some(meta) = s.entries.get_mut(path) {
+                meta.kind = EntryKind::ReparsePoint;
+            }
+        });
+    }
+
+    /// Carrera: el archivo se borra y se crea otro con el mismo nombre (otra identidad).
+    pub(crate) fn recreate_file(&self, path: &Path, new_identity: FileIdentity) {
+        self.mutate(|s| {
+            if let Some(meta) = s.entries.get_mut(path) {
+                meta.kind = EntryKind::File;
+                meta.identity = Some(new_identity);
+            }
+        });
+    }
+
+    /// Carrera: la entrada pasa a ser un directorio (otra identidad).
+    pub(crate) fn replace_with_directory(&self, path: &Path, new_identity: FileIdentity) {
+        self.mutate(|s| {
+            if let Some(meta) = s.entries.get_mut(path) {
+                meta.kind = EntryKind::Directory;
+                meta.identity = Some(new_identity);
+            }
+        });
+    }
+
+    /// Rutas fijadas ahora, en orden de fijacion.
+    pub(crate) fn pinned(&self) -> Vec<PathBuf> {
+        self.state
+            .lock()
+            .map(|s| s.pinned.clone())
+            .unwrap_or_default()
+    }
+
+    /// Llamadas registradas al puerto, en orden.
+    pub(crate) fn calls(&self) -> Vec<(FsOp, PathBuf)> {
+        self.state
+            .lock()
+            .map(|s| s.calls.clone())
+            .unwrap_or_default()
+    }
+
+    /// Cuantas veces se llamo a `op` con `path`.
+    pub(crate) fn call_count(&self, op: FsOp, path: &str) -> usize {
+        self.calls()
+            .iter()
+            .filter(|(o, p)| *o == op && p == Path::new(path))
+            .count()
+    }
+
+    /// Cantidad total de llamadas al puerto.
+    pub(crate) fn total_calls(&self) -> usize {
+        self.calls().len()
+    }
+
+    /// Falla solo la operacion `op` sobre `path`.
+    pub(crate) fn fail_on_op(self, path: &str, op: FsOp, error: PortError) -> Self {
+        self.with_state(|s| {
+            s.op_failures.insert((op, PathBuf::from(path)), error);
         })
     }
 
@@ -119,22 +307,20 @@ impl FakeFileSystem {
 
 impl FileSystem for FakeFileSystem {
     fn canonicalize(&self, path: &Path) -> Result<PathBuf, PortError> {
-        let state = self.lock()?;
-        if let Some(error) = state.failures.get(path) {
-            return Err(error.clone());
+        let mut state = self.lock()?;
+        state.begin(FsOp::Canonicalize, path)?;
+        if let Some(mapped) = state.canonical.get(path) {
+            return Ok(mapped.clone());
         }
-        state
-            .canonical
-            .get(path)
-            .cloned()
-            .ok_or_else(|| PortError::NotFound(path.display().to_string()))
+        if state.canonical_as_is && state.entries.contains_key(path) {
+            return Ok(path.to_path_buf());
+        }
+        Err(PortError::NotFound(path.display().to_string()))
     }
 
     fn metadata(&self, path: &Path) -> Result<FileMeta, PortError> {
-        let state = self.lock()?;
-        if let Some(error) = state.failures.get(path) {
-            return Err(error.clone());
-        }
+        let mut state = self.lock()?;
+        state.begin(FsOp::Metadata, path)?;
         state
             .entries
             .get(path)
@@ -142,11 +328,50 @@ impl FileSystem for FakeFileSystem {
             .ok_or_else(|| PortError::NotFound(path.display().to_string()))
     }
 
-    fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>, PortError> {
-        let state = self.lock()?;
-        if let Some(error) = state.failures.get(path) {
-            return Err(error.clone());
+    fn pin_ancestors(&self, path: &Path) -> Result<Box<dyn AncestorPin>, PortError> {
+        let mut state = self.lock()?;
+        state.begin(FsOp::Pin, path)?;
+        let mut ancestors: Vec<PathBuf> = path
+            .ancestors()
+            .skip(1)
+            .filter(|a| a.parent().is_some())
+            .map(Path::to_path_buf)
+            .collect();
+        ancestors.reverse();
+        for ancestor in &ancestors {
+            if let Some(error) = state.failures.get(ancestor) {
+                return Err(error.clone());
+            }
+            let meta = state
+                .entries
+                .get(ancestor)
+                .ok_or_else(|| PortError::NotFound(ancestor.display().to_string()))?;
+            match meta.kind {
+                EntryKind::Directory => {}
+                EntryKind::ReparsePoint => {
+                    return Err(PortError::Io(format!(
+                        "reparse point: {}",
+                        ancestor.display()
+                    )));
+                }
+                EntryKind::File => {
+                    return Err(PortError::Io(format!(
+                        "not a directory: {}",
+                        ancestor.display()
+                    )));
+                }
+            }
         }
+        state.pinned.extend(ancestors.iter().cloned());
+        Ok(Box::new(FakePin {
+            state: Arc::clone(&self.state),
+            paths: ancestors,
+        }))
+    }
+
+    fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>, PortError> {
+        let mut state = self.lock()?;
+        state.begin(FsOp::ReadDir, path)?;
         let own = state
             .entries
             .get(path)
@@ -164,7 +389,11 @@ impl FileSystem for FakeFileSystem {
                 .filter(|(child, _)| child.parent() == Some(path))
                 .map(|(child, meta)| DirEntry {
                     path: child.clone(),
-                    meta: meta.clone(),
+                    meta: FileMeta {
+                        identity: None,
+                        hard_links: None,
+                        ..meta.clone()
+                    },
                 })
                 .collect()),
         }
@@ -423,6 +652,7 @@ mod tests {
     fn ports_should_be_object_safe() {
         let fs = FakeFileSystem::new();
         let _: &dyn FileSystem = &fs;
+        let _: Option<Box<dyn AncestorPin>> = None;
         let trash = FakeTrash::new(Arc::new(FakeFileSystem::new()));
         let _: &dyn Trash = &trash;
         let clock = FixedClock(EpochMillis(1));
@@ -520,6 +750,275 @@ mod tests {
             Err(PortError::InUse("lock.dat".into()))
         );
         assert!(fs.metadata(&p(r"C:\otro.dat")).is_err());
+    }
+
+    // --- FakeFileSystem: identidad, hard links, canonicalize, carreras y pin (C-03) ---
+    fn id(n: u128) -> FileIdentity {
+        FileIdentity {
+            volume_serial: 7,
+            file_id: n,
+        }
+    }
+
+    #[test]
+    fn metadata_should_return_configured_identity_and_hard_links() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a.bin", 1, None)
+            .with_identity(r"C:\t\a.bin", id(99))
+            .with_hard_links(r"C:\t\a.bin", 3);
+        let meta = fs.metadata(&p(r"C:\t\a.bin")).unwrap();
+        assert_eq!(meta.identity, Some(id(99)));
+        assert_eq!(meta.hard_links, Some(3));
+    }
+
+    #[test]
+    fn metadata_should_give_distinct_default_identities_and_a_single_link() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a", 1, None)
+            .with_file(r"C:\t\b", 1, None);
+        let a = fs.metadata(&p(r"C:\t\a")).unwrap();
+        let b = fs.metadata(&p(r"C:\t\b")).unwrap();
+        assert!(a.identity.is_some());
+        assert_ne!(a.identity, b.identity);
+        assert_eq!(a.hard_links, Some(1));
+    }
+
+    #[test]
+    fn without_identity_should_report_none_from_metadata() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a", 1, None)
+            .without_identity(r"C:\t\a");
+        assert_eq!(fs.metadata(&p(r"C:\t\a")).unwrap().identity, None);
+    }
+
+    #[test]
+    fn read_dir_should_not_report_identity_nor_hard_links() {
+        let fs = FakeFileSystem::new()
+            .with_dir(r"C:\t")
+            .with_file(r"C:\t\a", 1, None);
+        let children = fs.read_dir(&p(r"C:\t")).unwrap();
+        assert_eq!(children[0].meta.identity, None);
+        assert_eq!(children[0].meta.hard_links, None);
+    }
+
+    #[test]
+    fn with_hard_link_should_share_identity_and_count_two_links() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a", 4, None)
+            .with_hard_link(r"C:\t\b", r"C:\t\a");
+        let a = fs.metadata(&p(r"C:\t\a")).unwrap();
+        let b = fs.metadata(&p(r"C:\t\b")).unwrap();
+        assert_eq!(a.identity, b.identity);
+        assert_eq!((a.hard_links, b.hard_links), (Some(2), Some(2)));
+    }
+
+    #[test]
+    fn canonical_as_is_should_resolve_existing_paths_only() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a", 1, None)
+            .canonical_as_is();
+        assert_eq!(fs.canonicalize(&p(r"C:\t\a")).unwrap(), p(r"C:\t\a"));
+        assert!(matches!(
+            fs.canonicalize(&p(r"C:\t\nope")),
+            Err(PortError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn canonical_as_is_should_give_priority_to_the_explicit_mapping() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\PROGRA~1\a", 1, None)
+            .with_canonical(r"C:\PROGRA~1\a", r"C:\Program Files\a")
+            .canonical_as_is();
+        assert_eq!(
+            fs.canonicalize(&p(r"C:\PROGRA~1\a")).unwrap(),
+            p(r"C:\Program Files\a")
+        );
+    }
+
+    #[test]
+    fn recreate_file_should_change_the_identity_keeping_the_path() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a", 1, None)
+            .with_identity(r"C:\t\a", id(1));
+        fs.recreate_file(&p(r"C:\t\a"), id(2));
+        assert_eq!(fs.metadata(&p(r"C:\t\a")).unwrap().identity, Some(id(2)));
+        assert_eq!(fs.metadata(&p(r"C:\t\a")).unwrap().kind, EntryKind::File);
+    }
+
+    #[test]
+    fn replace_with_reparse_point_should_turn_the_entry_into_a_link() {
+        let fs = FakeFileSystem::new().with_file(r"C:\t\a", 1, None);
+        fs.replace_with_reparse_point(&p(r"C:\t\a"));
+        assert_eq!(
+            fs.metadata(&p(r"C:\t\a")).unwrap().kind,
+            EntryKind::ReparsePoint
+        );
+    }
+
+    #[test]
+    fn replace_with_directory_should_change_the_kind() {
+        let fs = FakeFileSystem::new().with_file(r"C:\t\a", 1, None);
+        fs.replace_with_directory(&p(r"C:\t\a"), id(5));
+        let meta = fs.metadata(&p(r"C:\t\a")).unwrap();
+        assert_eq!(
+            (meta.kind, meta.identity),
+            (EntryKind::Directory, Some(id(5)))
+        );
+    }
+
+    #[test]
+    fn fail_on_op_should_fail_only_the_given_operation() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a", 1, None)
+            .canonical_as_is()
+            .fail_on_op(r"C:\t\a", FsOp::Canonicalize, PortError::InUse("x".into()));
+        assert!(fs.metadata(&p(r"C:\t\a")).is_ok());
+        assert_eq!(
+            fs.canonicalize(&p(r"C:\t\a")),
+            Err(PortError::InUse("x".into()))
+        );
+    }
+
+    #[test]
+    fn calls_should_record_operations_in_order() {
+        let fs = FakeFileSystem::new()
+            .with_dir(r"C:\t")
+            .with_file(r"C:\t\a", 1, None)
+            .canonical_as_is();
+        let _ = fs.metadata(&p(r"C:\t"));
+        let _ = fs.canonicalize(&p(r"C:\t\a"));
+        assert_eq!(
+            fs.calls(),
+            vec![
+                (FsOp::Metadata, p(r"C:\t")),
+                (FsOp::Canonicalize, p(r"C:\t\a"))
+            ]
+        );
+    }
+
+    #[test]
+    fn without_hard_links_should_report_none_from_metadata_only_for_that_entry() {
+        let fs = FakeFileSystem::new()
+            .with_file(r"C:\t\a", 1, None)
+            .with_file(r"C:\t\b", 1, None)
+            .without_hard_links(r"C:\t\a");
+        assert_eq!(fs.metadata(&p(r"C:\t\a")).unwrap().hard_links, None);
+        assert_eq!(fs.metadata(&p(r"C:\t\b")).unwrap().hard_links, Some(1));
+    }
+
+    #[test]
+    fn call_count_and_total_calls_should_count_per_path_and_overall() {
+        let fs = FakeFileSystem::new()
+            .with_dir(r"C:\t")
+            .with_file(r"C:\t\a", 1, None);
+        let _ = fs.metadata(&p(r"C:\t"));
+        let _ = fs.metadata(&p(r"C:\t"));
+        let _ = fs.metadata(&p(r"C:\t\a"));
+        let _ = fs.read_dir(&p(r"C:\t"));
+        assert_eq!(fs.call_count(FsOp::Metadata, r"C:\t"), 2);
+        assert_eq!(fs.call_count(FsOp::Metadata, r"C:\t\a"), 1);
+        assert_eq!(fs.call_count(FsOp::ReadDir, r"C:\t"), 1);
+        assert_eq!(fs.call_count(FsOp::Canonicalize, r"C:\t"), 0);
+        assert_eq!(fs.total_calls(), 4);
+    }
+
+    #[test]
+    fn with_cloud_reparse_point_should_be_a_reparse_point_flagged_as_cloud() {
+        let fs = FakeFileSystem::new().with_cloud_reparse_point(r"C:\od");
+        let meta = fs.metadata(&p(r"C:\od")).unwrap();
+        assert_eq!(
+            (meta.kind, meta.cloud_placeholder),
+            (EntryKind::ReparsePoint, true)
+        );
+        let plain = FakeFileSystem::new().with_reparse_point(r"C:\j");
+        assert!(!plain.metadata(&p(r"C:\j")).unwrap().cloud_placeholder);
+    }
+
+    fn fs_for_pin() -> FakeFileSystem {
+        FakeFileSystem::new()
+            .with_dir(r"C:\a")
+            .with_dir(r"C:\a\b")
+            .with_file(r"C:\a\b\f.txt", 1, None)
+    }
+
+    #[test]
+    fn pin_ancestors_should_pin_from_the_root_down_and_release_on_drop() {
+        let fs = fs_for_pin();
+        let pin = fs.pin_ancestors(&p(r"C:\a\b\f.txt")).unwrap();
+        assert_eq!(fs.pinned(), vec![p(r"C:\a"), p(r"C:\a\b")]);
+        drop(pin);
+        assert!(fs.pinned().is_empty());
+    }
+
+    #[test]
+    fn pin_ancestors_should_fail_on_a_reparse_ancestor_leaving_nothing_pinned() {
+        let fs = FakeFileSystem::new()
+            .with_dir(r"C:\a")
+            .with_reparse_point(r"C:\a\j")
+            .with_file(r"C:\a\j\f.txt", 1, None);
+        assert!(fs.pin_ancestors(&p(r"C:\a\j\f.txt")).is_err());
+        assert!(fs.pinned().is_empty());
+    }
+
+    #[test]
+    fn pin_ancestors_should_fail_when_an_ancestor_is_configured_to_fail() {
+        let fs = fs_for_pin().fail_on(r"C:\a\b", PortError::InUse("b".into()));
+        assert_eq!(
+            fs.pin_ancestors(&p(r"C:\a\b\f.txt")).err(),
+            Some(PortError::InUse("b".into()))
+        );
+        assert!(fs.pinned().is_empty());
+    }
+
+    #[test]
+    fn pin_ancestors_should_fail_with_not_found_when_an_ancestor_is_missing() {
+        let fs = FakeFileSystem::new().with_dir(r"C:\a");
+        assert!(matches!(
+            fs.pin_ancestors(&p(r"C:\a\b\f.txt")),
+            Err(PortError::NotFound(_))
+        ));
+        assert!(fs.pinned().is_empty());
+    }
+
+    // --- Contrato del puerto FileSystem contra el fake ---
+    fn fake_scenario() -> crate::domain::ports::fs_contract::Scenario<FakeFileSystem> {
+        let root = p(r"C:\fixture");
+        let target = root.join("target");
+        let junction = root.join("junction");
+        let fs = FakeFileSystem::new()
+            .with_dir(r"C:\fixture")
+            .with_file(r"C:\fixture\file.txt", 5, None)
+            .with_dir(r"C:\fixture\dir")
+            .with_file(r"C:\fixture\dir\inner.txt", 1, None)
+            .with_dir(r"C:\fixture\target")
+            .with_file(r"C:\fixture\target\secret.txt", 1, None)
+            .with_reparse_point(r"C:\fixture\junction")
+            .with_file(r"C:\fixture\hard_a.dat", 3, None)
+            .with_hard_link(r"C:\fixture\hard_b.dat", r"C:\fixture\hard_a.dat")
+            .with_canonical(
+                r"C:\fixture\junction\secret.txt",
+                r"C:\fixture\target\secret.txt",
+            )
+            .canonical_as_is();
+        crate::domain::ports::fs_contract::Scenario {
+            fs,
+            file: root.join("file.txt"),
+            dir: root.join("dir"),
+            dir_child: root.join("dir").join("inner.txt"),
+            target_child: target.join("secret.txt"),
+            target,
+            junction,
+            hard_a: root.join("hard_a.dat"),
+            hard_b: root.join("hard_b.dat"),
+            missing: root.join("missing"),
+            root,
+        }
+    }
+
+    mod fake_fs_contract {
+        use super::*;
+        crate::domain::ports::fs_contract::fs_contract_tests!(fake_scenario());
     }
 
     // --- FakeTrash ---

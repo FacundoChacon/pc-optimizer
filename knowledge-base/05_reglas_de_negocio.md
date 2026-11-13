@@ -20,7 +20,7 @@ Cada regla tiene un código único `RN-{DOMINIO}-{NN}`. Las reglas de LIMPIEZA y
 - **RN-PROT-02**: La verificación de ruta protegida se hace sobre la ruta **canónica** (resolviendo `..`, symlinks, junctions, mayúsculas, prefijos `\\?\`) antes de cada operación.
 - **RN-PROT-03**: Se evalúa la protección **en el momento de ejecutar** (no solo al escanear) para evitar carreras (TOCTOU).
 - **RN-PROT-04**: Los junctions/symlinks no se siguen durante el recorrido para evitar escapar de la whitelist (**Suposición**: no se siguen en v0.x).
-- **RN-PROT-05**: Archivos OneDrive placeholder (atributos `RECALL_ON_DATA_ACCESS` / `OFFLINE`) se omiten y reportan.
+- **RN-PROT-05**: Todo archivo sincronizado con la nube (OneDrive u otro proveedor) se omite y se reporta como `skipped_cloud`, sea placeholder (atributos `RECALL_ON_DATA_ACCESS` / `RECALL_ON_OPEN` / `OFFLINE`) o esté hidratado (tag de reanálisis de proveedor de nube), porque borrarlo se propaga a la nube y a otros dispositivos (decidido por el dueño 2026-11-13).
 - **RN-PROT-06**: La lista de rutas protegidas es código de dominio puro, con tests de tabla; no es editable por el usuario ni por reglas personalizadas.
 - **RN-PROT-07**: Ante duda (ruta no clasificable, error de canonicalización), la política es **no tocar**.
 
