@@ -289,4 +289,4 @@ Ninguna que cambie specs o tareas. Decisiones tomadas con recomendación y pendi
 - El banner global se renderiza en `Shell` (no dentro de cada pantalla) para evitar un ciclo de imports `navigation.ts` <-> pantallas.
 - Al cambiar de modo el layout se remonta; `AppearanceSection` devuelve el foco a la opción elegida (`setTimeout 0`).
 - `SettingsProvider.setUiMode` devuelve `Promise<boolean>` (éxito) para anunciar solo si se guardó.
-- Tarea 10.2 (smoke manual con `npm run tauri dev`) pendiente del dueño.
+- Tarea 10.2: smoke manual con `npm run tauri dev` (con `PCOPT_DATA_DIR` en un directorio temporal) ejecutado por el dueño el 2026-11-13, todo OK: modo simple por defecto y cambio a avanzado sin reinicio persistido tras relanzar; skip link y foco visible con teclado; autostart deshabilitado con explicación; DB corrupta → banner + selector de modo deshabilitado, diálogo con foco en "Cancelar", Escape sin `.bak`, confirmar crea `data.db.corrupt-<ms>.bak` y vuelve a "Lista"; sin transiciones con animaciones desactivadas; sin scroll horizontal al 200%.
