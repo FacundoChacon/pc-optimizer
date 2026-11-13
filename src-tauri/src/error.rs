@@ -3,7 +3,9 @@
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
+use crate::adapters::sqlite::state::RecoveryError;
 use crate::domain::ports::StoreError;
+use crate::domain::settings::{SettingsError, SettingsServiceError};
 
 /// Error de aplicacion devuelto por los comandos IPC.
 ///
@@ -25,6 +27,38 @@ pub enum AppError {
     /// La base no esta disponible (ruta, permisos, bloqueo).
     #[error("the local database is unavailable: {0}")]
     StoreUnavailable(String),
+    /// Valor o clave de ajuste invalidos.
+    #[error("invalid setting: {0}")]
+    SettingInvalid(String),
+    /// El ajuste existe pero no es escribible en esta version.
+    #[error("setting is read-only: {0}")]
+    SettingReadOnly(String),
+    /// La base no necesita o no admite recuperacion.
+    #[error("the local database cannot be recovered: {0}")]
+    StoreNotRecoverable(String),
+}
+
+impl From<SettingsServiceError> for AppError {
+    fn from(error: SettingsServiceError) -> Self {
+        match error {
+            SettingsServiceError::Settings(SettingsError::Invalid { key, reason }) => {
+                Self::SettingInvalid(format!("{key}: {reason}"))
+            }
+            SettingsServiceError::Settings(SettingsError::ReadOnly(key)) => {
+                Self::SettingReadOnly(key)
+            }
+            SettingsServiceError::Store(store) => store.into(),
+        }
+    }
+}
+
+impl From<RecoveryError> for AppError {
+    fn from(error: RecoveryError) -> Self {
+        match error {
+            RecoveryError::NotRecoverable(reason) => Self::StoreNotRecoverable(reason.to_string()),
+            RecoveryError::Failed(store) => store.into(),
+        }
+    }
 }
 
 impl From<StoreError> for AppError {
@@ -54,6 +88,9 @@ impl AppError {
             Self::StoreSchemaTooNew { .. } => "store_schema_too_new",
             Self::StoreMigrationFailed { .. } => "store_migration_failed",
             Self::StoreUnavailable(_) => "store_unavailable",
+            Self::SettingInvalid(_) => "setting_invalid",
+            Self::SettingReadOnly(_) => "setting_read_only",
+            Self::StoreNotRecoverable(_) => "store_not_recoverable",
         }
     }
 }
@@ -150,5 +187,39 @@ mod tests {
         assert_ne!(a["message"], b["message"]);
         assert_eq!(a["kind"], b["kind"]);
         assert_eq!(a["kind"], "internal");
+    }
+
+    #[test]
+    fn settings_errors_should_map_to_typed_kinds() {
+        use crate::adapters::sqlite::state::RecoveryError;
+        use crate::domain::settings::{SettingsError, SettingsServiceError};
+        let invalid = SettingsServiceError::Settings(SettingsError::Invalid {
+            key: "ui_mode".into(),
+            reason: "unsupported value",
+        });
+        let read_only = SettingsServiceError::Settings(SettingsError::ReadOnly("language".into()));
+        let corrupt = SettingsServiceError::Store(StoreError::Corrupt("x".into()));
+        let cases = [
+            (AppError::from(invalid), "setting_invalid"),
+            (AppError::from(read_only), "setting_read_only"),
+            (AppError::from(corrupt), "store_corrupt"),
+            (
+                AppError::from(RecoveryError::NotRecoverable("already ready")),
+                "store_not_recoverable",
+            ),
+            (
+                AppError::from(RecoveryError::Failed(StoreError::Unavailable("x".into()))),
+                "store_unavailable",
+            ),
+        ];
+        for (error, kind) in cases {
+            let value = serde_json::to_value(&error).unwrap();
+            assert_eq!(value["kind"], kind, "{error:?}");
+            let upper = value["message"].as_str().unwrap().to_ascii_uppercase();
+            assert!(
+                !upper.contains("SELECT") && !upper.contains("INSERT"),
+                "{upper}"
+            );
+        }
     }
 }

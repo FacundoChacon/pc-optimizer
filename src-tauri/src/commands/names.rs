@@ -3,4 +3,10 @@
 /// Lo incluye `build.rs` con `include!` para generar los permisos `allow-<comando>`
 /// y la lib lo expone como modulo para que los tests de baseline lo comparen
 /// con las capabilities.
-pub const APP_COMMANDS: &[&str] = &["get_app_info"];
+pub const APP_COMMANDS: &[&str] = &[
+    "get_app_info",
+    "get_settings",
+    "set_setting",
+    "get_store_status",
+    "recover_store",
+];

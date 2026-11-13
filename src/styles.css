@@ -6,6 +6,12 @@
   --color-content: #e6e8ee;
   --color-content-muted: #9aa1b2;
   --color-accent: #4f9cf9;
+  --color-focus: #7cb8ff;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-on-accent: #0f1115;
+  --color-border-strong: #6b7385;
 }
 
 :root {
@@ -17,4 +23,15 @@ body {
   background-color: var(--color-surface);
   color: var(--color-content);
   font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
