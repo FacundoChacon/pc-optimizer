@@ -6,6 +6,7 @@ pub mod clock;
 pub mod error;
 pub mod fs;
 pub mod sensors;
+pub mod session;
 pub mod store;
 pub mod trash;
 
@@ -20,5 +21,6 @@ pub use clock::Clock;
 pub use error::PortError;
 pub use fs::{AncestorPin, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem};
 pub use sensors::{SensorSample, Sensors};
+pub use session::SessionIdentity;
 pub use store::{CleanupLogStore, ScanStore, SettingsStore, Store, StoreError};
 pub use trash::Trash;

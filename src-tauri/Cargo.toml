@@ -10,6 +10,13 @@ publish = false
 name = "pc_optimizer_lib"
 crate-type = ["rlib"]
 
+# Sin tests unitarios en el bin: en release su manifest es `requireAdministrator` y el
+# arnes de `cargo test` no podria ejecutarlo sin elevar (error 740). La logica vive en la lib.
+[[bin]]
+name = "pc-optimizer"
+path = "src/main.rs"
+test = false
+
 [build-dependencies]
 tauri-build = { version = "=2.7.4", features = [] }
 

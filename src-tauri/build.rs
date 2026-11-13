@@ -10,7 +10,7 @@ include!("src/commands/names.rs");
 /// Cargo no ofrece un `rustc-link-arg` solo para tests, y combinar el manifest de
 /// `tauri-build` con uno propio da CVT1100 (recurso duplicado). Por eso se desactiva el
 /// manifest de `tauri-build` y se deja que el linker genere uno equivalente al default
-/// (Common Controls v6, `asInvoker`). El modelo de elevacion se decide en C-05.
+/// (Common Controls v6, `asInvoker`). La elevacion de la app la agrega `emit_app_elevation` (C-05, D-01).
 fn emit_linker_manifest() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
@@ -21,6 +21,20 @@ fn emit_linker_manifest() {
     );
 }
 
+/// Eleva solo el binario de la app y solo en release (C-05, D-01 opcion A).
+///
+/// `rustc-link-arg-bins` no alcanza a los binarios de test ni al arnes de `cargo test`,
+/// y en desarrollo el manifest sigue `asInvoker` para poder correr `tauri dev` sin elevar.
+/// El test `tests/manifest.rs` verifica el nivel resultante contra el binario real.
+fn emit_app_elevation() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
+        || std::env::var("PROFILE").as_deref() != Ok("release")
+    {
+        return;
+    }
+    println!("cargo::rustc-link-arg-bins=/MANIFESTUAC:level='requireAdministrator'");
+}
+
 fn main() {
     let attributes = Attributes::new()
         .app_manifest(AppManifest::new().commands(APP_COMMANDS))
@@ -29,4 +43,5 @@ fn main() {
         panic!("tauri-build failed: {error:#}");
     }
     emit_linker_manifest();
+    emit_app_elevation();
 }

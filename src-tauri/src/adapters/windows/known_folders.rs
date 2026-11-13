@@ -120,6 +120,10 @@ pub(crate) fn assemble(
 
 /// Resuelve el contexto crudo de la maquina. Nunca falla: lo que no se resuelve queda ausente y
 /// `ProtectionContext::from_raw` decide (fail-closed) si el contexto es utilizable.
+///
+/// C-08 DEBE pasar el resultado por `domain::privileges::restrict_protection_context` con el
+/// `PrivilegeContext` de la app antes de `from_raw`: en `mismatch` (over-the-shoulder) quita el
+/// usuario actual y todo el perfil queda protegido como ajeno (C-05, D-10).
 pub fn resolve_protection_context(
     user: UserFolderSource,
     app_dirs: Vec<String>,
