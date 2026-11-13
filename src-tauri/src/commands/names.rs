@@ -10,4 +10,8 @@ pub const APP_COMMANDS: &[&str] = &[
     "get_store_status",
     "recover_store",
     "get_privilege_context",
+    "start_scan",
+    "cancel_scan",
+    "get_last_junk_scan",
+    "list_junk_findings",
 ];

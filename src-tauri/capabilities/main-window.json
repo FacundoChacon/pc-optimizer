@@ -10,6 +10,10 @@
     "allow-set-setting",
     "allow-get-store-status",
     "allow-recover-store",
-    "allow-get-privilege-context"
+    "allow-get-privilege-context",
+    "allow-start-scan",
+    "allow-cancel-scan",
+    "allow-get-last-junk-scan",
+    "allow-list-junk-findings"
   ]
 }

@@ -23,10 +23,6 @@ use crate::domain::protection::service::{CheckSession, PathProtection};
 /// Cada cuantos archivos vistos se avisa el progreso (D-13): por conteo, sin reloj.
 pub const PROGRESS_EVERY_FILES: u64 = 256;
 
-/// Unidad de la Papelera cuando el contexto de proteccion no pudo construirse (el contexto de
-/// privilegios no depende de el). Solo se usa para MEDIR; nunca para recorrer ni limpiar.
-const FALLBACK_SYSTEM_DRIVE: char = 'C';
-
 /// Receptor del avance de un escaneo.
 pub trait ScanObserver {
     /// Empieza una categoria (se avisa por cada una, en el orden de `JunkCategory::ALL`).
@@ -38,11 +34,20 @@ pub trait ScanObserver {
 /// Escanea todas las categorias. `privileges` decide el bloqueo por-usuario y `protection` es el
 /// contexto ya restringido por privilegios (o el error si no pudo construirse).
 ///
+/// `system_drive` es la unidad del sistema resuelta por quien llama (solo para MEDIR la
+/// Papelera, que no depende del contexto de proteccion). Si es `None`, la Papelera queda
+/// `Unavailable`: nunca se adivina una letra.
+///
 /// Solo lee: ni mueve, ni borra, ni vacia la Papelera. Devuelve `Cancelled` en cuanto `cancel`
 /// se levanta (se consulta antes de cada categoria, carpeta y archivo).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "cada argumento es un puerto o una entrada independiente del escaneo; agruparlos solo agregaria una estructura sin significado"
+)]
 pub fn scan_junk<F: FileSystem, R: RecycleBinInfo, O: ScanObserver>(
     privileges: &PrivilegeContext,
     protection: Result<ProtectionContext, ContextError>,
+    system_drive: Option<char>,
     fs: &F,
     recycle_bin: &R,
     now: EpochMillis,
@@ -51,9 +56,6 @@ pub fn scan_junk<F: FileSystem, R: RecycleBinInfo, O: ScanObserver>(
 ) -> JunkScanOutcome {
     let locations = protection.as_ref().map(sources).unwrap_or_default();
     let usable_context = protection.is_ok();
-    let system_drive = protection
-        .as_ref()
-        .map_or(FALLBACK_SYSTEM_DRIVE, ProtectionContext::system_drive);
     let service = PathProtection::new(fs, protection);
     let session = service.session();
     let mut run = Run {
@@ -102,14 +104,17 @@ fn is_cancelled(cancel: &AtomicBool) -> bool {
 /// La Papelera se mide, nunca se lista: un fallo la deja `Unavailable`.
 fn measure_recycle_bin<R: RecycleBinInfo>(
     recycle_bin: &R,
-    system_drive: char,
+    system_drive: Option<char>,
     blocked: Option<MismatchReason>,
 ) -> CategoryResult {
     let category = JunkCategory::RecycleBin;
     if let Some(reason) = blocked {
         return CategoryResult::empty(category, CategoryStatus::Blocked, Some(reason));
     }
-    let root = PathBuf::from(format!("{system_drive}:\\"));
+    let Some(drive) = system_drive else {
+        return CategoryResult::empty(category, CategoryStatus::Unavailable, None);
+    };
+    let root = PathBuf::from(format!("{drive}:\\"));
     match recycle_bin.query(&root) {
         Ok(usage) => CategoryResult {
             item_count: usage.items,

@@ -234,3 +234,25 @@ fn context_error_should_describe_the_failing_location() {
     let rendered = ContextError::VolumeRootAnchor("temp").to_string();
     assert!(rendered.contains("temp"), "{rendered}");
 }
+
+#[test]
+fn raw_system_drive_should_follow_windows_dir_even_when_the_context_is_incomplete() {
+    let mut raw = RawProtectionContext {
+        windows_dir: Some(r"d:\Windows".to_owned()),
+        ..RawProtectionContext::default()
+    };
+    assert!(ProtectionContext::from_raw(raw.clone()).is_err());
+    assert_eq!(raw.system_drive(), Some('D'));
+    raw.windows_dir = Some(r"E:\WinNT".to_owned());
+    assert_eq!(raw.system_drive(), Some('E'));
+}
+
+#[test]
+fn raw_system_drive_should_be_none_when_windows_dir_is_missing_or_not_a_drive_path() {
+    let mut raw = RawProtectionContext::default();
+    assert_eq!(raw.system_drive(), None);
+    raw.windows_dir = Some("Windows".to_owned());
+    assert_eq!(raw.system_drive(), None);
+    raw.windows_dir = Some(String::new());
+    assert_eq!(raw.system_drive(), None);
+}

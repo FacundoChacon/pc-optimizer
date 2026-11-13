@@ -17,6 +17,7 @@ use crate::domain::protection::test_support::raw_c_ana;
 
 const NOW: EpochMillis = EpochMillis(1_800_000_000_000);
 const DAY: i64 = 86_400_000;
+const SYSTEM_DRIVE: Option<char> = Some('C');
 
 fn old() -> Option<EpochMillis> {
     Some(EpochMillis(NOW.0 - 3 * DAY))
@@ -137,10 +138,25 @@ fn run_with(
     fs: &FakeFileSystem,
     bin: &FakeRecycleBin,
 ) -> JunkScanOutcome {
+    // Como el comando: la unidad sale de la ancla de Windows aunque el contexto no se valide.
+    let drive = protection
+        .as_ref()
+        .map_or(SYSTEM_DRIVE, |ctx| Some(ctx.system_drive()));
+    run_with_drive(privileges, protection, drive, fs, bin)
+}
+
+fn run_with_drive(
+    privileges: &PrivilegeContext,
+    protection: Result<ProtectionContext, ContextError>,
+    system_drive: Option<char>,
+    fs: &FakeFileSystem,
+    bin: &FakeRecycleBin,
+) -> JunkScanOutcome {
     let cancel = AtomicBool::new(false);
     scan_junk(
         privileges,
         protection,
+        system_drive,
         fs,
         bin,
         NOW,
@@ -563,6 +579,7 @@ fn scan_should_announce_each_category_in_order_and_progress_every_256_files() {
     let outcome = scan_junk(
         &privileges,
         ctx_for(&privileges),
+        SYSTEM_DRIVE,
         &fs,
         &bin_12_items(),
         NOW,
@@ -611,6 +628,7 @@ fn scan_should_not_report_progress_below_the_threshold() {
     let _ = scan_junk(
         &privileges,
         ctx_for(&privileges),
+        SYSTEM_DRIVE,
         &fs,
         &bin_12_items(),
         NOW,
@@ -662,6 +680,7 @@ fn scan_should_stop_before_touching_the_disk_when_cancelled_at_the_first_categor
     let outcome = scan_junk(
         &privileges,
         ctx_for(&privileges),
+        SYSTEM_DRIVE,
         &fs,
         &bin,
         NOW,
@@ -689,6 +708,7 @@ fn scan_should_stop_midway_without_visiting_later_categories() {
     let outcome = scan_junk(
         &privileges,
         ctx_for(&privileges),
+        SYSTEM_DRIVE,
         &fs,
         &bin,
         NOW,
@@ -713,6 +733,7 @@ fn scan_should_return_cancelled_without_any_call_when_the_flag_is_already_set() 
     let outcome = scan_junk(
         &privileges,
         ctx_for(&privileges),
+        SYSTEM_DRIVE,
         &fs,
         &bin,
         NOW,
@@ -723,4 +744,50 @@ fn scan_should_return_cancelled_without_any_call_when_the_flag_is_already_set() 
     assert!(recorder.events.is_empty());
     assert_eq!(fs.total_calls(), 0);
     assert!(bin.queried().is_empty());
+}
+
+// ---- unidad del sistema inyectada (sin letra fija en el dominio) ----
+
+#[test]
+fn scan_should_measure_the_injected_drive_even_when_the_protection_context_is_invalid() {
+    let bin = bin_12_items();
+    let privileges = matched();
+    let broken = Err(ContextError::MissingRequired("program_data"));
+    let results = completed(run_with_drive(
+        &privileges,
+        broken,
+        Some('E'),
+        &FakeFileSystem::new(),
+        &bin,
+    ));
+    assert_eq!(bin.queried(), vec![PathBuf::from(r"E:\")]);
+    assert_eq!(
+        category(&results, JunkCategory::RecycleBin).status,
+        CategoryStatus::Done
+    );
+}
+
+#[test]
+fn scan_should_report_the_recycle_bin_unavailable_without_guessing_a_drive() {
+    let bin = bin_12_items();
+    let privileges = matched();
+    for protection in [
+        Err(ContextError::MissingRequired("windows_dir")),
+        ctx_for(&privileges),
+    ] {
+        let results = completed(run_with_drive(
+            &privileges,
+            protection,
+            None,
+            &populated_fs(),
+            &bin,
+        ));
+        let measured = category(&results, JunkCategory::RecycleBin);
+        assert_eq!(measured.status, CategoryStatus::Unavailable);
+        assert_eq!((measured.item_count, measured.size_bytes), (0, 0));
+    }
+    assert!(
+        bin.queried().is_empty(),
+        "nunca se consulta una unidad adivinada"
+    );
 }

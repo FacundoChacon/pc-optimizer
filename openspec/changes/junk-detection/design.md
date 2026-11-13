@@ -350,3 +350,16 @@ _(Completar durante el apply: firmas Win32 confirmadas, línea base de tests, co
 | Vitest | 150 | 150 |
 
 `Cargo.lock` y `package-lock.json` sin cambios; `cargo fmt --check` y `clippy -D warnings` en verde.
+
+### Lote 2 (grupos 6 a 9.1): adaptador, comandos, frontend y cierre
+
+#### Backend (grupos 6 y 7)
+
+- **Unidad del sistema (corrige la nota "Papelera con contexto invalido" del lote 1)**: se elimino `FALLBACK_SYSTEM_DRIVE` del dominio. `scan_junk` recibe ahora `system_drive: Option<char>`; el comando la obtiene con el nuevo `RawProtectionContext::system_drive()` (pura, de `windows_dir`, que el adaptador lee con `SHGetKnownFolderPath(FOLDERID_Windows)`) ANTES de restringir y validar el contexto, de modo que se mide la Papelera de la unidad real aunque el resto del contexto no sea valido. Si no se puede resolver (`None`), `recycle_bin` queda `unavailable` y nunca se consulta una letra adivinada. Specs sin cambios. `scan_junk` queda con 8 argumentos: `#[expect(clippy::too_many_arguments)]` con motivo.
+- **`SHQUERYRBINFO`**: el adaptador `WindowsRecycleBin` usa `i64Size`/`i64NumItems`; la conversion es pura (`usage_from_raw`) y rechaza negativos con `PortError::Io` (sin `as`). El `HRESULT` de error se tipifica con `port_error` de C-05 (acceso denegado -> `PermissionDenied`). Test real `#[ignore]` ejecutado a mano: verde.
+- **6.2**: los 3 tests de recorrido real sobre `TempDir` (archivo viejo/reciente/junction, ruta de mas de 260 caracteres, raiz ausente) pasaron sin cambiar el adaptador (`WindowsFileSystem` ya los cumplia); quedan como red de seguridad.
+- **6.3 revision de `unsafe`**: `rg unsafe src-tauri/src` -> 1 bloque nuevo, solo en `adapters/windows/recycle_bin.rs`, con `// SAFETY:` (buffer UTF-16 con nulo vivo durante la llamada, `cbSize` = `size_of`, puntero de salida unico). Clippy con `undocumented_unsafe_blocks = deny` en verde.
+- **`ScanEnvironment`** guarda el directorio de datos con un `Mutex` (se administra en `app_builder` y lo completa `manage_store`) para que el comando no falle en el runtime mock; las carpetas protegidas del escaneo son datos de la app + carpeta del ejecutable (`app_dirs`).
+- **Respuesta de un escaneo cancelado**: `status: "cancelled"`, `categories: []`, totales 0 y `finishedAt` (no hay resumen persistido de un escaneo cancelado). El frontend debe aceptar `categories` vacias solo con `cancelled`.
+- **Orden de comprobaciones de `start_scan`**: primero `kind` (`scan_kind_unsupported`), luego el lugar del escaneo (`scan_in_progress`), luego la base.
+- **TDD de 7.x**: el codigo de `commands/scan.rs` se escribio antes que sus tests (desvio del ciclo estricto; los 20 tests de `commands::scan` + los de IPC en `lib.rs` se escribieron a continuacion y cubren cada escenario de las tareas). Se anota para transparencia.

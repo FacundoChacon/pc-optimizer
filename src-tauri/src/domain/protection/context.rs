@@ -44,6 +44,16 @@ pub struct RawProtectionContext {
     pub app_dirs: Vec<String>,
 }
 
+impl RawProtectionContext {
+    /// Unidad del sistema segun `windows_dir`, sin exigir que el resto del contexto sea valido.
+    ///
+    /// `None` si falta o no es una ruta con unidad: quien la necesite no debe adivinar una letra.
+    pub fn system_drive(&self) -> Option<char> {
+        let windows_dir = self.windows_dir.as_deref()?;
+        normalize_lexical(windows_dir).ok().map(|path| path.drive())
+    }
+}
+
 /// Por que el contexto no es utilizable (todo pasa a `Protected(ContextUnavailable)`).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ContextError {
