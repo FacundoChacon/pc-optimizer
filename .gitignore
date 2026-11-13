@@ -20,3 +20,6 @@ Thumbs.db
 # Env
 .env
 .env.*
+
+# Skill registry (local absolute paths, regenerated per machine)
+.atl/
