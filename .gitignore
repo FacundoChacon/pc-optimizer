@@ -23,3 +23,7 @@ Thumbs.db
 
 # Skill registry (local absolute paths, regenerated per machine)
 .atl/
+
+# Test / TS build artifacts
+coverage/
+*.tsbuildinfo

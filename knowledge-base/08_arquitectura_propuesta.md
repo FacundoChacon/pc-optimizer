@@ -54,7 +54,8 @@ pc-optimizer/
 │   │   ├── dashboard/  disk/  cleanup/  duplicates/
 │   │   ├── startup/  improvements/  monitor/
 │   │   ├── alerts/  reports/  settings/
-│   ├── shared/                      # ui kit, hooks, ipc client, i18n (strings es)
+│   ├── shared/                      # ui kit, hooks, i18n (strings es)
+│   ├── lib/ipc.ts                   # único cliente IPC tipado (regla dura CLAUDE.md)
 │   └── tests/                       # Vitest
 ├── knowledge-base/
 ├── openspec/
