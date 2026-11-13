@@ -48,7 +48,7 @@ npm (`package.json` sin `^`/`~`, `.npmrc` con `save-exact=true` y `engine-strict
 | `typescript` | 6.0.3 | dev (ver D-03) |
 | `tailwindcss` / `@tailwindcss/vite` | 4.3.5 | dev |
 | `vitest` | 5.1.0 | dev (peer `vite ^6‖^7‖^8`, node `^22.12‖^24`) |
-| `jsdom` | 29.1.1 | dev (31.x exige node ^24.15; la máquina tiene 24.11.1 y `engine-strict` rechaza la instalación) |
+| `jsdom` | 31.0.0 | dev (requiere node ^24.15; la máquina se actualizó a 24.22.1) |
 | `@testing-library/react` | 16.3.3 | dev |
 | `@testing-library/dom` | 10.4.2 | dev (peer obligatorio de RTL 16) |
 | `@testing-library/jest-dom` | 7.0.1 | dev |
@@ -282,5 +282,5 @@ No aplica (greenfield). Rollback = descartar la rama `feat/foundation-setup`.
 ## Apply notes (implementación)
 
 - **STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) confirmado** en el primer `cargo test` con el smoke IPC (`tauri::test`). `cargo::rustc-link-arg-tests` NO es aceptado por cargo 1.100 ("invalid instruction") y un `rustc-link-arg` global junto al manifest de `tauri-build` produce CVT1100 (recurso duplicado) en el binario de la app. Solución adoptada en `build.rs`: `WindowsAttributes::new_without_app_manifest()` + `rustc-link-arg=/MANIFEST:EMBED` y `/MANIFESTDEPENDENCY` (Common Controls v6) para todos los binarios. El manifest resultante es equivalente al default (`asInvoker`, sin elevación); C-05 debe reemplazar esta estrategia al introducir `requireAdministrator`.
-- **`jsdom` 29.1.1** en lugar de 31.0.0 (ver D-02).
+- **`jsdom`**: se instaló 29.1.1 por node 24.11.1; tras actualizar node a 24.22.1 se subió a 31.0.0 (ver D-02).
 - Cargo 1.100 emite el lint `cargo::unused_dependencies` (warn) para las dependencias aún sin uso; se silencia con `[lints.cargo] unused_dependencies = "allow"` en `Cargo.toml` hasta que C-02+ las consuman (quitar entonces).
