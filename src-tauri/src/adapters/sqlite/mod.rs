@@ -2,6 +2,7 @@
 
 pub mod connection;
 pub mod errors;
+mod junk;
 pub mod migrations;
 pub mod recovery;
 mod rows;
@@ -35,6 +36,10 @@ const SQL_FINISH_SCAN: &str =
     "UPDATE scan SET status = ?1, finished_at = ?2 WHERE id = ?3 AND status = 'running'";
 const SQL_SCAN_COLUMNS: &str =
     "SELECT id, kind, triggered_by, status, started_at, finished_at FROM scan";
+const SQL_DROP_ORPHAN_FINDINGS: &str =
+    "DELETE FROM junk_finding WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_RESULTS: &str = "DELETE FROM junk_category_result WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_CLOSE_ORPHANS: &str = "UPDATE scan SET status = 'error', finished_at = max(started_at, CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE status = 'running'";
 const SQL_INSERT_LOG: &str = "INSERT INTO cleanup_log(ts, category, path, size_bytes, outcome, scan_id, error_detail) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 const SQL_RECENT_LOG: &str = "SELECT id, ts, category, path, size_bytes, outcome, scan_id, error_detail \
@@ -48,10 +53,13 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
-    /// Abre (o crea) la base en `path`, valida, configura y migra.
+    /// Abre (o crea) la base en `path`, valida, configura y migra. Cierra como `error` los
+    /// escaneos que un cierre inesperado dejo `running` (D-16).
     pub fn open(path: &Path) -> Result<Self, StoreError> {
+        let mut conn = connection::open_connection(path)?;
+        close_orphan_scans(&mut conn)?;
         Ok(Self {
-            conn: Mutex::new(connection::open_connection(path)?),
+            conn: Mutex::new(conn),
         })
     }
 
@@ -60,6 +68,25 @@ impl SqliteStore {
             .lock()
             .map_err(|_| StoreError::Unavailable("lock poisoned".into()))
     }
+}
+
+/// Un escaneo `running` al abrir la base es de una ejecucion anterior: la retencion nunca lo
+/// borraria. Termina en `error` con fin = ahora (o su inicio, si es posterior) y sin hallazgos.
+///
+/// Riesgo conocido: con dos instancias de la app a la vez se cerraria el escaneo vivo de la otra
+/// (la instancia unica llega con la bandeja, C-21).
+fn close_orphan_scans(conn: &mut Connection) -> Result<(), StoreError> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_sqlite_error)?;
+    for sql in [
+        SQL_DROP_ORPHAN_FINDINGS,
+        SQL_DROP_ORPHAN_RESULTS,
+        SQL_CLOSE_ORPHANS,
+    ] {
+        tx.execute(sql, []).map_err(map_sqlite_error)?;
+    }
+    tx.commit().map_err(map_sqlite_error)
 }
 
 fn scan_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Scan, StoreError>> {

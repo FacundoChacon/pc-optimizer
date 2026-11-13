@@ -62,6 +62,15 @@ impl MismatchReason {
             Self::Undetermined => "undetermined",
         }
     }
+
+    /// Inverso de `as_str`.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "different_user" => Some(Self::DifferentUser),
+            "undetermined" => Some(Self::Undetermined),
+            _ => None,
+        }
+    }
 }
 
 /// Resultado de comparar el usuario del token con el de la sesion.

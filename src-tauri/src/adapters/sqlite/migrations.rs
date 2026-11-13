@@ -13,10 +13,16 @@ pub struct Migration {
 }
 
 /// Migraciones publicadas. NUNCA editar una existente: agregar `00N_*.sql`.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("migrations/001_init.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("migrations/001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("migrations/002_junk.sql"),
+    },
+];
 
 /// Version mas alta de la lista.
 pub fn latest_version(migrations: &[Migration]) -> u32 {

@@ -5,6 +5,7 @@
 pub mod clock;
 pub mod error;
 pub mod fs;
+pub mod recycle_bin;
 pub mod sensors;
 pub mod session;
 pub mod store;
@@ -20,7 +21,8 @@ pub(crate) mod store_contract;
 pub use clock::Clock;
 pub use error::PortError;
 pub use fs::{AncestorPin, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem};
+pub use recycle_bin::{RecycleBinInfo, RecycleBinUsage};
 pub use sensors::{SensorSample, Sensors};
 pub use session::SessionIdentity;
-pub use store::{CleanupLogStore, ScanStore, SettingsStore, Store, StoreError};
+pub use store::{CleanupLogStore, JunkFindingStore, ScanStore, SettingsStore, Store, StoreError};
 pub use trash::Trash;

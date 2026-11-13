@@ -252,7 +252,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 - **Estado**: `[ ]` pendiente
 - **Scope**:
   - Nota C-05: aquí (primer consumidor) va el selector de carpeta como alternativa a drag & drop (UIPI), junto con C-21 si llega antes.
-  - Migración 002: `folder_snapshot` (UNIQUE(scan_id, path), índice (path, scan_id), `parent_id` autorreferencia).
+  - Migración 003 (la 002 la toma C-08, que se implementa primero; el runner exige versiones contiguas): `folder_snapshot` (UNIQUE(scan_id, path), índice (path, scan_id), `parent_id` autorreferencia).
   - Recorrido con `walkdir` sin seguir junctions/symlinks; progreso por eventos y cancelación; carpetas inaccesibles reportadas sin romper el escaneo.
   - Comandos `start_scan(kind=folders)`, `cancel_scan`; treemap/lista por carpeta y top de archivos pesados (US-006, US-007) ordenable por tamaño y fecha.
   - Acciones: revelar en Explorador o enviar a revisión de limpieza (nunca borra directo).
@@ -270,12 +270,14 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 - **Estado**: `[ ]` pendiente
 - **Scope**:
   - Nota C-05: consumir `scope_access(ctx, UserScope::PerUser)` para bloquear categorías por-usuario en mismatch y `restrict_protection_context` al resolver el contexto de protección.
-  - Migración 003: `junk_finding` (CHECK `category` en el enum whitelist, `protected_flag`).
+  - Migración 002 (`002_junk.sql`, aprobado 2026-11-13; C-07 pasa a 003): `junk_finding` (CHECK `category` en el enum whitelist, `protected_flag`, `skip_reason`, identidad de archivo) y `junk_category_result` (resumen por categoría).
+  - `old_logs` existe en la whitelist pero SIN ubicaciones en C-08 (las de KB 11 están protegidas por C-03); ubicaciones pendientes en KB 10 ("ubicaciones de `old_logs`", PA-15).
   - `domain/junk.rs`: whitelist `temp_user`, `temp_windows`, `browser_cache_{chrome,edge,firefox,brave}` (solo directorios de caché), `old_logs` (>= 30 días), `wu_cache`, `thumbnail_cache`, `crash_dumps`, `recycle_bin` (solo detección y tamaño).
   - Cada candidato pasa por `is_protected`; los protegidos se persisten como omitidos.
   - Con `privilege_context=mismatch`, las categorías por-usuario no se escanean y se informa por qué.
   - `start_scan(kind=junk)` con progreso; UI: tarjetas por categoría con tamaño (simple), rutas (avanzado). US-008.
   - Tests: tabla por categoría, ruta protegida omitida, mismatch bloquea por-usuario, junction no seguida.
+  - Notas para C-09: el preview solo se arma sobre el último escaneo `done` (`list_junk_findings` rechaza otros `scan_id`); usar la identidad persistida (`volume_serial`, `file_id`) con `prepare_delete`; la detección no prueba archivos en uso (se omiten como `skipped_locked` al mover); evaluar si Windows Update está descargando en `SoftwareDistribution\Download`.
 - **Dependencias**: `C-03, C-04, C-05`
 - **Governance**: ALTO (HIGH)
 - **Leer antes**:
@@ -308,6 +310,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - Comando `empty_recycle_bin`: única acción permanente declarada (PA-02); nunca automática, nunca invocable por scheduler ni por mejoras.
   - Doble confirmación propia en UI (dos pasos distintos, con tamaño a liberar); bloqueada en mismatch (la Papelera es por-usuario).
   - Registro en `cleanup_log` con outcome `recycle_bin_emptied`. US-010.
+  - Nota C-08: la Papelera se mide y se vacía solo en el volumen del sistema (misma raíz que consulta `RecycleBinInfo`).
   - Tests: no ejecuta sin ambas confirmaciones, no corre en mismatch, log escrito, ninguna otra ruta del código usa borrado permanente.
 - **Dependencias**: `C-09`
 - **Governance**: ALTO (HIGH)

@@ -131,6 +131,16 @@ fn mismatch_reason_should_use_stable_codes() {
     assert_eq!(MismatchReason::Undetermined.as_str(), "undetermined");
 }
 
+#[test]
+fn mismatch_reason_should_parse_only_its_stable_codes() {
+    for reason in [MismatchReason::DifferentUser, MismatchReason::Undetermined] {
+        assert_eq!(MismatchReason::parse(reason.as_str()), Some(reason));
+    }
+    for raw in ["", "Different_User", "match", " different_user"] {
+        assert_eq!(MismatchReason::parse(raw), None, "{raw:?}");
+    }
+}
+
 // ---- 3.3 detect ----
 
 fn session(process: u32, shell: Option<u32>, logon: Option<u32>) -> FakeSessionIdentity {

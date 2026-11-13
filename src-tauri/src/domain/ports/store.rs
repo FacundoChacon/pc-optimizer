@@ -1,5 +1,7 @@
-//! Puertos de persistencia: ajustes, escaneos y bitacora de limpieza.
+//! Puertos de persistencia: ajustes, escaneos, bitacora de limpieza y hallazgos de basura.
 
+use crate::domain::junk::category::JunkCategory;
+use crate::domain::junk::model::{JunkFindingPage, JunkScanResults, JunkScanSummary};
 use crate::domain::model::{
     CleanupLogEntry, EpochMillis, NewCleanupLogEntry, NewScan, Scan, ScanId, ScanStatus,
 };
@@ -55,6 +57,34 @@ pub trait CleanupLogStore {
     fn recent_cleanup_log(&self, limit: u32) -> Result<Vec<CleanupLogEntry>, StoreError>;
 }
 
+/// Hallazgos de basura (C-08). Solo registros de la base: ninguna operacion actua sobre archivos.
+pub trait JunkFindingStore {
+    /// Guarda de forma ATOMICA los hallazgos y el resumen por categoria de un escaneo de basura
+    /// `Running`, elimina los hallazgos de todo escaneo de basura anterior (se conserva su resumen)
+    /// y finaliza el escaneo como `Done`. Si algo falla no queda nada del escaneo nuevo y el
+    /// escaneo sigue `Running`.
+    ///
+    /// Errores: `NotFound` (escaneo inexistente), `InvalidState` (no es de basura o no esta
+    /// `Running`), `Constraint` (resumen o hallazgo invalido, p. ej. ruta repetida).
+    fn complete_junk_scan(
+        &self,
+        scan_id: ScanId,
+        results: &JunkScanResults,
+        finished_at: EpochMillis,
+    ) -> Result<(), StoreError>;
+    /// Resumen del escaneo de basura `Done` mas reciente; ignora `Cancelled`/`Error` y otros tipos.
+    fn last_done_junk_scan(&self) -> Result<Option<JunkScanSummary>, StoreError>;
+    /// Hallazgos de una categoria, `size_bytes DESC, id ASC`, con el total. Un escaneo sin
+    /// hallazgos (o desconocido) da una pagina vacia.
+    fn list_junk_findings(
+        &self,
+        scan_id: ScanId,
+        category: JunkCategory,
+        offset: u64,
+        limit: u32,
+    ) -> Result<JunkFindingPage, StoreError>;
+}
+
 /// Persistencia completa.
-pub trait Store: SettingsStore + ScanStore + CleanupLogStore {}
-impl<T: SettingsStore + ScanStore + CleanupLogStore> Store for T {}
+pub trait Store: SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore {}
+impl<T: SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore> Store for T {}
