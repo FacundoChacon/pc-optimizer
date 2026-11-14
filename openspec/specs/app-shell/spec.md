@@ -73,14 +73,14 @@ Cada comando IPC propio SHALL quedar sujeto al control de acceso del runtime y e
 
 #### Scenario: Lista exacta de comandos habilitados
 - **WHEN** la suite de tests compara los comandos propios declarados en el backend con los permisos de comandos de las capabilities
-- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan`, `list_junk_findings`, `preview_cleanup`, `confirm_cleanup`, `cancel_cleanup`, `prepare_empty_recycle_bin`, `acknowledge_empty_recycle_bin` y `empty_recycle_bin`)
+- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan`, `list_junk_findings`, `preview_cleanup`, `confirm_cleanup`, `cancel_cleanup`, `prepare_empty_recycle_bin`, `acknowledge_empty_recycle_bin`, `empty_recycle_bin`, `start_duplicate_scan`, `get_last_duplicate_scan`, `list_duplicate_groups`, `preview_duplicate_cleanup` y `confirm_duplicate_cleanup`)
 
 #### Scenario: Progreso sin permisos de eventos
-- **WHEN** se revisan las capabilities tras agregar el escaneo de basura, la limpieza y el vaciado de la Papelera
+- **WHEN** se revisan las capabilities tras agregar el escaneo de basura, la limpieza, el vaciado de la Papelera y la búsqueda de duplicados
 - **THEN** no contienen permisos `core:*` (de eventos ni de otro tipo) ni de plugins; el progreso viaja por el canal de la propia invocación
 
 ### Requirement: Navegación entre pantallas del shell
-La interfaz SHALL ofrecer un shell común con navegación entre las pantallas registradas (hoy: Inicio, Limpieza y Configuración, en ese orden), que muestra una sola pantalla a la vez, arranca en Inicio y marca la pantalla activa de forma accesible.
+La interfaz SHALL ofrecer un shell común con navegación entre las pantallas registradas (hoy: Inicio, Limpieza, Duplicados y Configuración, en ese orden), que muestra una sola pantalla a la vez, arranca en Inicio y marca la pantalla activa de forma accesible.
 
 #### Scenario: Arranque en Inicio
 - **WHEN** la app termina de cargar la configuración
@@ -93,6 +93,10 @@ La interfaz SHALL ofrecer un shell común con navegación entre las pantallas re
 #### Scenario: Ir a Limpieza
 - **WHEN** el usuario activa la entrada "Limpieza" de la navegación
 - **THEN** se muestra la pantalla Limpieza con su encabezado principal y la entrada queda marcada como actual
+
+#### Scenario: Ir a Duplicados
+- **WHEN** el usuario activa la entrada "Duplicados" de la navegación
+- **THEN** se muestra la pantalla Duplicados con su encabezado principal y la entrada queda marcada como actual
 
 #### Scenario: Solo pantallas implementadas
 - **WHEN** se renderiza la navegación
