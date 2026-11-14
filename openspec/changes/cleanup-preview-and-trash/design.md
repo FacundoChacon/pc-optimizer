@@ -407,3 +407,21 @@ _(Se completa durante el apply; lote 1 = grupos 1 a 5. Quedan para los lotes sig
 - El test real con `trash` y ancestros fijados (que el shell pueda mover con la fijación viva) queda en 6.3; en este lote solo se verifica con dobles que la fijación está viva durante el movimiento.
 
 **Conteos tras el lote 1**: Vitest 227 (sin cambios, no se tocó el frontend); `cargo test` lib **604 passed, 8 ignored** (+79 frente a 525); integración sin cambios (5 + 5 + 9 + 21); fmt y clippy `-D warnings` verdes; `package-lock.json` y `src-tauri/Cargo.lock` sin cambios; `openspec validate --strict` válido.
+
+### Lote 2 (grupo 6): adaptador de Papelera
+
+**Decisiones de implementacion**:
+- `adapters/windows/trash_error.rs`: `from_hresult(i32)` (tabla de 1.2 mas `HRESULT_FROM_WIN32(32|33|2|3)`) y `map_trash_error(&trash::Error)`. Las variantes de `trash::Error` no previstas se reducen a `Other("unsupported_error")`. `CouldNotAccess` (no existe o sin permiso; la tarea no lo especificaba) se mapea a `Other("could_not_access")` y NO a `NotFound`, para no tratar como benigno un acceso denegado. La descripcion del sistema nunca se propaga.
+- `adapters/windows/trash.rs::WindowsTrash`: hilo `pcopt-trash` por instancia, canal de pedidos + un canal de respuesta por pedido; `Drop` cierra el canal y une el hilo. Backend inyectable con `with_backend` (`pub(crate)`) para los tests de panico y errores; `new()` usa `trash::delete` (nuestro codigo nunca llama `delete_all`; `trash::delete` es internamente `delete_all` de un solo elemento, asi que "el primer error" es el unico).
+- Para reusar `make_junction` en `trash_tests.rs`: `fs::tests` pasa a `pub(super)` y `make_junction` a `pub(in crate::adapters::windows)` (solo cfg(test)).
+- 6.5: no existia un helper para quitar bloques `#[cfg(test)]`; se agrego en `tests/architecture.rs` (`strip_cfg_test_items`, sobre el texto ya sin comentarios). Archivos excluidos: `*_tests.rs`, `*_contract.rs`, `fakes.rs`, `test_util.rs`, `test_support.rs`. El test escanea toda `src/`; la unica coincidencia previa era `fs_tests.rs` (excluido).
+
+**Desvios de proceso TDD**: 6.1, 6.2 y 6.5 se escribieron implementacion y tests en el mismo paso; el RED se obtuvo saboteando a proposito la implementacion (mapeo anulado / panico mapeado a `Ok` / filtro de tokens anulado), viendo fallar los tests y restaurando. Los tests reales de 6.3 pasaron a la primera (caracterizacion del comportamiento del shell).
+
+**6.3, corrida real** (terminal NO elevada, `--ignored`, un test por vez y solo los de nombre `real_trash_*` salvo el de D-12; solo archivos `pcopt-test-*` dentro de un `TempDir`): los 5 tests de Papelera real pasaron: archivo movido y ausente de su ruta; ancestros fijados (el ancestro no se puede renombrar mientras la fijacion vive y aun asi el shell mueve el archivo); archivo abierto sin `FILE_SHARE_DELETE` -> `InUse` y sigue en su lugar; junction puesta en la ventana residual -> se mueve la junction, el destino y su contenido quedan intactos; ruta > 260 caracteres -> **`Ok(())`** (se movio; `PathTooLong` no se observo). El test de symlink (`#[ignore]` propio) se intento y fallo por `ERROR_PRIVILEGE_NOT_HELD` (1314): esta terminal no tiene el privilegio; queda sin verificar. Archivos que quedaron en la Papelera real: `pcopt-test-moved.txt`, `pcopt-test-pinned.txt`, `pcopt-test-long.txt` y la junction `pcopt-test-swapped.txt` (solo el enlace). `pcopt-test-inuse.txt` NO se movio (sigue en su tempdir, que se borro al terminar).
+
+**6.4 (solo codigo)**: escrito `real_trash_should_refuse_with_bin_unavailable_and_keep_the_file_when_the_recycle_bin_is_disabled` con `#[ignore = "requiere la Papelera de C: deshabilitada por el dueño"]`; compila, NO se corrio y la tarea sigue sin marcar (la ejecuta el orquestador con el dueño).
+
+**6.6 revision de `unsafe`**: cantidad de `unsafe {` por archivo identica a HEAD (fs 2, fs_tests 1, known_folders 4, privileges 22, recycle_bin 1): 0 bloques nuevos; `trash.rs` y `trash_error.rs` no tienen `unsafe`. Comentario de `[lints.cargo]` actualizado (trash ya tiene consumidor). clippy `-D warnings` verde, `Cargo.lock` y `package-lock.json` sin cambios.
+
+**Conteos tras el lote 2**: lib 612 passed, 15 ignored (antes 604 / 8: +8 activos, +7 ignorados); `architecture` 9 (antes 5, +4); resto igual; fmt, clippy y `openspec validate --strict` verdes.

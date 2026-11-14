@@ -40,7 +40,7 @@ impl FileSystem for TempFs {
 }
 
 /// Crea una junction `link` -> `target` con `mklink /J` (no requiere privilegios).
-fn make_junction(link: &Path, target: &Path) {
+pub(in crate::adapters::windows) fn make_junction(link: &Path, target: &Path) {
     let status = Command::new("cmd")
         .arg("/C")
         .arg("mklink")
