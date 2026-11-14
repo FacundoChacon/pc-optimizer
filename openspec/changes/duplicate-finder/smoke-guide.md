@@ -20,6 +20,8 @@
   - `select id,category,path,outcome,error_detail,scan_id from cleanup_log order by id` (categoría `duplicates`).
   - `select g.id,g.size_bytes,g.file_count,g.resolved_at,f.path,f.kept from duplicate_group g join duplicate_file f on f.group_id=g.id order by g.id,f.id`.
   - `select * from duplicate_scan_result` y `select * from duplicate_scan_root`.
+- **Orden de las copias**: la UI lista las copias de cada grupo ordenadas por ruta completa (sin distinguir mayúsculas), no por orden de recorrido. Para el grupo B se espera `B1`, `b\B2`, `b\B3`; los pasos 3 y 4 eligen por **nombre**, no por posición.
+- **Conducir la UI sin capturas (opcional, CDP)**: lanzar la app con `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` (junto con `PCOPT_DATA_DIR`) y, desde una carpeta scratch con `playwright-core` instalado, conectar con `chromium.connectOverCDP("http://127.0.0.1:9222")`; leer el texto del DOM (`innerText`, roles y estados) sin capturas de pantalla. Los clics finales de "Mover" siguen siendo del dueño.
 - Arranque en desarrollo sin elevar: Vite aparte (`npm run dev`) y el ejecutable debug `src-tauri\target\debug\pc-optimizer.exe` con `PCOPT_DATA_DIR` fijado (igual que en C-09 y C-10).
 - Contenido de la Papelera (solo lectura): `(New-Object -ComObject Shell.Application).NameSpace(10).Items() | % { $_.Name + ' | ' + $_.ExtendedProperty('System.Recycle.DeletedFrom') }`.
 
@@ -27,7 +29,10 @@
 
 ```powershell
 $root = Join-Path $env:USERPROFILE 'Downloads\pcopt-smoke-c11'
-New-Item -ItemType Directory -Force $root, "$root\a", "$root\b", "$root\c", "$root\d", "$root\sub2", "$root\node_modules\x", "$root\outside" | Out-Null
+New-Item -ItemType Directory -Force $root, "$root\a", "$root\b", "$root\c", "$root\d", "$root\sub2", "$root\node_modules\x" | Out-Null
+# El destino de la junction va FUERA de la carpeta escaneada (si no, OUT-A se encuentra por su ruta real y A queda con 4 copias).
+$outside = Join-Path $env:USERPROFILE 'Downloads\pcopt-smoke-c11-outside'
+New-Item -ItemType Directory -Force $outside | Out-Null
 
 function New-Bytes([int]$len, [int]$seed) { $r = New-Object System.Random($seed); $b = New-Object byte[] $len; $r.NextBytes($b); return ,$b }
 function Save([string]$path, [byte[]]$bytes, [int]$ageDays = 3) {
@@ -70,9 +75,9 @@ Save "$root\pcopt-smoke-S2.bin" $s
 # Par con hard link
 Save "$root\pcopt-smoke-H1.bin" (New-Bytes (2*$MiB) 8)
 New-Item -ItemType HardLink -Path "$root\pcopt-smoke-H2.bin" -Target "$root\pcopt-smoke-H1.bin" | Out-Null
-# Junction hacia 'outside' con una copia de A (no debe aparecer en ningun grupo)
-Save "$root\outside\pcopt-smoke-OUT-A.bin" $a
-New-Item -ItemType Junction -Path "$root\jct" -Target "$root\outside" | Out-Null
+# Junction hacia $outside (fuera del root) con una copia de A: no debe aparecer en ningun grupo
+Save "$outside\pcopt-smoke-OUT-A.bin" $a
+New-Item -ItemType Junction -Path "$root\jct" -Target $outside | Out-Null
 # node_modules con un par (excluida)
 $n = New-Bytes (2*$MiB) 9
 Save "$root\node_modules\x\pcopt-smoke-N1.bin" $n
@@ -87,7 +92,7 @@ Crear la fixture con el script de arriba y anotar `Get-FileHash` (SHA256) de A1,
 ### 2. Escaneo (aviso de 10 s antes de lanzar; modo avanzado)
 1. Lanzar la app sin elevar con la base temporal. Configuración → Modo avanzado. Ir a **Duplicados**.
 2. En "Carpetas a revisar" dejar marcada **solo Descargas** (desmarcar las otras cinco; verificar que la última no se puede desmarcar); tamaño mínimo "1 MB". Pulsar "Buscar duplicados". El agente anota la hora de inicio y fin (para D-24) y los eventos de progreso vistos por etapa.
-3. Esperado entre los archivos `pcopt-smoke-*`: **exactamente** los grupos A (3 copias, 2 MB), B (3 copias, 5 MB), C y D (3 copias, 2 MB); ninguna `OUT-A`, `N1/N2`, `F1/F2`, `U`, `S1/S2` ni `H1/H2`. Contadores avanzados (como mínimo): con varios nombres 2, carpetas excluidas 1, menores que el mínimo 2. Carpetas: Descargas "Revisada", las otras "No elegida". Ninguna copia viene elegida.
+3. Esperado entre los archivos `pcopt-smoke-*`: **exactamente** los grupos A (3 copias, 2 MB; `OUT-A` NO aparece porque su carpeta está fuera de la raíz), B (3 copias, 5 MB), C y D (3 copias, 2 MB); ninguna `OUT-A`, `N1/N2`, `F1/F2`, `U`, `S1/S2` ni `H1/H2`. Contadores avanzados (como mínimo): con varios nombres 2, carpetas excluidas 1, menores que el mínimo 2. Carpetas: Descargas "Revisada", las otras "No elegida". Ninguna copia viene elegida.
 4. El agente lee la base: `duplicate_scan_result` con `min_size_bytes = 1048576`; los `duplicate_file.kept` están todos en 0; `cleanup_log` vacío.
 
 ### 3. Esc no mueve nada
@@ -95,6 +100,8 @@ Elegir en A (modo simple o avanzado) conservar `A1`, y en B conservar `B1` y `B2
 
 ### 4. Confirmación del dueño
 El dueño vuelve a pulsar "Revisar…" y luego **"Mover 2 copias a la Papelera"** (clic del dueño; un doble clic no debe duplicar nada). Esperado: progreso por copia y resumen "Se movieron 2 copias…" con el foco en su título.
+
+> **Después de mover hay que volver a buscar.** Tras la ejecución del paso 4 los grupos resueltos se pliegan y "Revisar y mover" queda deshabilitado con el motivo "Para mover más copias, buscá de nuevo." Antes del paso 6 pulsar **"Buscar de nuevo"** con **solo Descargas** marcada (en avanzado la pantalla propone las carpetas y el tamaño de la última búsqueda; verificarlo antes de pulsar). Una búsqueda nueva descarta las elecciones previas: los pasos 6 y 7 se deciden después de ella.
 
 ### 5. Verificación de la ejecución (solo lectura)
 1. Papelera: aparecen `pcopt-smoke-A2.bin` y `pcopt-smoke-B3.bin` con origen en la carpeta del smoke.
@@ -120,6 +127,6 @@ El agente anota por etapa (recorrido, parcial, completo) los tiempos del paso 2 
 - **Variante elevada (release; aviso de 10 s antes del UAC)**: el dueño acepta UAC con su propia cuenta (`match`); solo escaneo de la carpeta del smoke, sin mover nada; verificar que los resultados coinciden con el paso 2. Over-the-shoulder solo si el dueño quiere (otra cuenta admin): se espera "No se pueden buscar duplicados con esta cuenta" sin recorrer nada.
 
 ### 10. Cierre
-1. Cerrar la app. Quitar la junction **primero** con `rmdir "$root\jct"` (sin `/s` ni `/q`), luego la carpeta `pcopt-smoke-c11` completa y la base temporal.
+1. Cerrar la app. Quitar la junction **primero** con `rmdir "$root\jct"` (sin `/s` ni `/q`), luego la carpeta `pcopt-smoke-c11` completa, la carpeta de destino `Downloads\pcopt-smoke-c11-outside` y la base temporal.
 2. Lo que quedó en la Papelera (A2, B3, D3 y los de pruebas anteriores) queda a criterio del dueño.
 3. Anotar los resultados de cada paso, los tiempos y cualquier diferencia en `design.md` §Apply notes (tarea 10.3).
