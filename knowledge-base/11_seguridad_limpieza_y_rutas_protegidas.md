@@ -77,6 +77,10 @@ Detalle de la re-verificación al confirmar (C-09), por ítem y en este orden:
 - **Guarda de 24 h**: ningún archivo con última escritura en las últimas 24 horas (o sin fecha) se mueve, en todas las categorías; se evalúa al previsualizar con la fecha persistida y al confirmar con la fecha del handle.
 - **Aborto por Papelera no disponible**: si la Papelera del volumen no está disponible (deshabilitada, inexistente) o su mecanismo no puede usarse, la ejecución se aborta en el primer caso (el ítem queda como `error`) y no se intenta ningún otro; nunca se borra de forma permanente. Un fallo por ítem (en uso, demasiado grande, acceso denegado) no detiene el resto.
 
+## Duplicados: re-verificación de contenido (C-11)
+
+Las copias de un grupo se mueven por `run_cleanup` con un gancho adicional que, con la fijación viva y antes de mover, re-hashea el archivo abierto: hash distinto del grupo → `skipped_locked` / `content_changed`; no se puede leer → `skipped_locked` / `content_unreadable` (o `in_use`); identidad distinta → `skipped_protected` / `identity_changed`. Antes de mover la primera copia de un grupo se verifica que al menos una copia conservada sigue en su ruta con la misma identidad, tamaño, fecha y hash; si ninguna, todas las del grupo quedan `skipped_protected` / `kept_copy_unavailable`. El escaneo nunca abre lo que la protección no declaró `allowed` ni contenido en la nube.
+
 ## Casos borde a cubrir con tests
 
 - Rutas con `..`, mayúsculas/minúsculas mezcladas, `\\?\`, nombres cortos 8.3.

@@ -34,7 +34,7 @@ Gobernanza: **LOW** (UI, catálogos, tipos).
 | Inicio / Dashboard | Score + tarjetas | Gauges + gráficos + sidebar | v0.1 / v0.2 |
 | Espacio en disco | Resumen + top 5 | Treemap/lista completa, top archivos | v0.1 |
 | Limpieza | Tarjetas por categoría + preview | Rutas, categorías, log | v0.1 |
-| Duplicados | Grupos con elección guiada | Hashes, rutas, filtros | v0.1 |
+| Duplicados | Grupos con elección guiada (sin preselección ni recomendación) | Carpetas y tamaño mínimo, hashes, rutas completas, casillas "Conservar", filtros por carpeta y tamaño mínimo | v0.1 |
 | Inicio de Windows | Lista con impacto | Detalle de entradas | v0.2 |
 | Mejoras | Cartas con riesgo/impacto + undo | Snapshots, historial | v0.2 |
 | Monitor | Resumen | Gráficos en vivo, procesos | v0.1 |

@@ -3,6 +3,7 @@
 //! El puerto `Registry` (snapshot/undo de mejoras) lo define C-16; C-17 lo extiende.
 
 pub mod clock;
+pub mod content;
 pub mod error;
 pub mod fs;
 pub mod recycle_bin;
@@ -14,13 +15,18 @@ pub mod store;
 pub mod trash;
 
 #[cfg(test)]
+pub(crate) mod content_contract;
+#[cfg(test)]
 pub(crate) mod fakes;
+#[cfg(test)]
+pub(crate) mod fakes_content;
 #[cfg(test)]
 pub(crate) mod fs_contract;
 #[cfg(test)]
 pub(crate) mod store_contract;
 
 pub use clock::Clock;
+pub use content::{ContentHandle, ContentReader};
 pub use error::PortError;
 pub use fs::{AncestorPin, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem};
 pub use recycle_bin::{RecycleBinInfo, RecycleBinUsage};

@@ -318,6 +318,29 @@ impl FakeFileSystem {
         })
     }
 
+    /// Metadatos actuales de `path` SIN registrar la llamada (los usa `FakeContentReader`).
+    pub(crate) fn peek(&self, path: &Path) -> Option<FileMeta> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|s| s.entries.get(path).cloned())
+    }
+
+    /// Carrera: cambia el tamano y la fecha de una entrada existente.
+    pub(crate) fn set_size_and_time(
+        &self,
+        path: &Path,
+        size_bytes: u64,
+        modified: Option<EpochMillis>,
+    ) {
+        self.mutate(|s| {
+            if let Some(meta) = s.entries.get_mut(path) {
+                meta.size_bytes = size_bytes;
+                meta.modified = modified;
+            }
+        });
+    }
+
     /// Quita la ruta (la usa `FakeTrash`).
     pub(crate) fn remove(&self, path: &Path) {
         if let Ok(mut s) = self.state.lock() {

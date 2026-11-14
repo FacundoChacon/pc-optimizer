@@ -1,6 +1,8 @@
 //! Contextos de prueba reutilizables (solo tests).
 
-use super::context::{ProtectionContext, RawProtectionContext, RawUserFolders, UserSource};
+use super::context::{
+    ContentFolder, ProtectionContext, RawProtectionContext, RawUserFolders, UserSource,
+};
 
 /// Contexto crudo de una maquina con Windows en `<drive>:\Windows` y usuario `user`.
 pub(crate) fn raw_for(drive: char, user: &str) -> RawProtectionContext {
@@ -15,17 +17,18 @@ pub(crate) fn raw_for(drive: char, user: &str) -> RawProtectionContext {
             local_app_data: format!(r"{profile}\AppData\Local"),
             roaming_app_data: format!(r"{profile}\AppData\Roaming"),
             temp: Some(format!(r"{profile}\AppData\Local\Temp")),
-            content_folders: [
-                "Desktop",
-                "Documents",
-                "Downloads",
-                "Music",
-                "Pictures",
-                "Videos",
-            ]
-            .iter()
-            .map(|name| format!(r"{profile}\{name}"))
-            .collect(),
+            content_folders: ContentFolder::ALL
+                .iter()
+                .zip([
+                    "Desktop",
+                    "Documents",
+                    "Downloads",
+                    "Music",
+                    "Pictures",
+                    "Videos",
+                ])
+                .map(|(key, name)| (*key, format!(r"{profile}\{name}")))
+                .collect(),
             profile,
             source: UserSource::ProcessToken,
         }),

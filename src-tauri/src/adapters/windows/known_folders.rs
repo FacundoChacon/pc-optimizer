@@ -20,7 +20,9 @@ use windows::core::GUID;
 
 use super::fs::WindowsFileSystem;
 use crate::domain::ports::FileSystem;
-use crate::domain::protection::context::{RawProtectionContext, RawUserFolders, UserSource};
+use crate::domain::protection::context::{
+    ContentFolder, RawProtectionContext, RawUserFolders, UserSource,
+};
 
 /// De donde salen las carpetas del usuario actual.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,13 +58,13 @@ pub(crate) trait FolderResolver {
 }
 
 /// Carpetas de contenido del usuario (anclas `Content`).
-const CONTENT_FOLDERS: [KnownFolder; 6] = [
-    KnownFolder::Desktop,
-    KnownFolder::Documents,
-    KnownFolder::Downloads,
-    KnownFolder::Music,
-    KnownFolder::Pictures,
-    KnownFolder::Videos,
+const CONTENT_FOLDERS: [(ContentFolder, KnownFolder); 6] = [
+    (ContentFolder::Desktop, KnownFolder::Desktop),
+    (ContentFolder::Documents, KnownFolder::Documents),
+    (ContentFolder::Downloads, KnownFolder::Downloads),
+    (ContentFolder::Music, KnownFolder::Music),
+    (ContentFolder::Pictures, KnownFolder::Pictures),
+    (ContentFolder::Videos, KnownFolder::Videos),
 ];
 
 /// Ensambla el contexto crudo con lo que informa `resolver` (funcion pura).
@@ -102,7 +104,7 @@ pub(crate) fn assemble(
             temp: resolver.temp(),
             content_folders: CONTENT_FOLDERS
                 .iter()
-                .filter_map(|folder| resolver.known(*folder))
+                .filter_map(|(key, folder)| resolver.known(*folder).map(|path| (*key, path)))
                 .collect(),
             source,
         }),
@@ -328,7 +330,7 @@ mod tests {
         assert!(
             user.content_folders
                 .iter()
-                .all(|path| !path.ends_with("Downloads") && !path.ends_with("Music"))
+                .all(|(_, path)| !path.ends_with("Downloads") && !path.ends_with("Music"))
         );
     }
 

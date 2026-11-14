@@ -113,9 +113,9 @@ Organizadas por épica y luego por historia (US-NNN). Cada historia lleva **hito
 **Hito**: v0.1 · **Gobernanza**: HIGH
 **Como** usuario **quiero** ver grupos de duplicados y elegir cuál conservar **para** liberar espacio sin perder datos.
 
-- [ ] Etapas tamaño → hash parcial → blake3.
-- [ ] Nunca auto-borrado; al menos una copia queda.
-- [ ] Borrado por flujo de limpieza estándar.
+- [ ] Etapas tamaño → hash parcial → blake3, solo en las 6 carpetas de contenido del usuario, sin seguir enlaces ni leer contenido en la nube.
+- [ ] Nunca auto-borrado ni copia preseleccionada o recomendada; al menos una copia queda (la conservada se re-verifica por contenido antes de mover las demás).
+- [ ] Borrado por flujo de limpieza estándar (`run_cleanup`, solo Papelera) con re-verificación del contenido de cada copia.
 
 **Reglas relacionadas**: RN-DUP-01..06
 
