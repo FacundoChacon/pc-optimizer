@@ -495,7 +495,13 @@ Smoke conducido con el dueño sobre `smoke-guide.md`; la tarea 10.3 sigue sin ma
 
 Conteos tras la Parte 6: Vitest 23 archivos, **466** tests (antes 445); `cargo test`: lib 935 passed + 19 ignored (el contrato nuevo se suma a los tests de contrato existentes de ambos stores), `architecture` 19, `manifest` 5, `no_network_crates` 9, `security_baseline` 22; `cargo fmt --check`, clippy `--all-targets --all-features --locked -D warnings`, `npm run build` y `openspec validate duplicate-finder --strict` verdes. Sin dependencias nuevas.
 
-### Pendiente para el smoke (tareas 10.3 y 10.4)
+### Re-verificación en la app (2026-11-14)
 
-El smoke guiado con el dueño sigue `smoke-guide.md` (escrita, sin ejecutar nada). Tras el smoke: anotar sus resultados y tiempos (D-24) acá, cerrar `CHANGES.md` C-11 con estado y desvíos, y confirmar `openspec validate duplicate-finder --strict`.
+Hecha por el orquestador por CDP sobre el binario debug reconstruido con el commit `2e952fc`, base temporal, solo la carpeta Descargas.
+
+- **F1 (orden)**: las copias se listan por ruta completa, sin distinguir mayúsculas. Los grupos reales mostraron `b\B2`, `b\B3` | `c\C2`, `c\C3`, `sub2\C1` | `a\A3-reciente`, `pcopt-smoke-A1`. Nota: en el grupo B original, `b\B2` y `b\B3` seguirían antes de `pcopt-smoke-B1`, porque `b\` ordena antes que `p`. El orden ahora es predecible y coincide con las rutas mostradas, pero no es por nombre de archivo.
+- **F2**: tras mover 1 copia, el botón de revisión deshabilitado mostró el motivo "Para mover más copias, buscá de nuevo."
+- **F3**: tras relanzar, las opciones de carpeta volvieron a Descargas y 1 MB (último escaneo). Sin escaneo previo serían las seis.
+- **F4**: el diálogo mostró "1 copia de 1 grupo (5 MB)" y "Mover 1 copia a la Papelera"; el resumen mostró "Se movió 1 copia (5 MB) a la Papelera."
+- **Limpieza**: app y Vite cerrados y junction eliminada. El dueño elimina manualmente la carpeta del smoke y la base temporal (su regla global deniega `rm -rf`).
 

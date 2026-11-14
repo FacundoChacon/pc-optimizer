@@ -329,7 +329,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/11_seguridad_limpieza_y_rutas_protegidas.md` §Categorías limpiables
 
 ### [C-11] `duplicate-finder`
-- **Estado**: `[~]` en curso (decisiones D-01..D-28 aprobadas por el dueño el 2026-11-14)
+- **Estado**: `[x]` completado (smoke guiado con el dueño 2026-11-14; rama `feat/duplicate-finder`)
 - **Scope**:
   - Migración 003 (`003_duplicates.sql`; C-07 pasa a 004): `duplicate_scan_result`, `duplicate_scan_root`, `duplicate_group` (índices (scan_id, size_bytes), (blake3)) y `duplicate_file` (`kept` solo por decisión del usuario, escrito únicamente al resolver un grupo).
   - `domain/duplicates.rs`: etapas tamaño -> hash parcial -> blake3 completo; excluye < 1 MB por defecto (SU-06); sin seguir links.
@@ -339,6 +339,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - Decisiones aprobadas (2026-11-14): alcance = las 6 carpetas de contenido del usuario actual por clave (carpetas arbitrarias diferidas, PA-16); exclusiones `.git`, `.hg`, `.svn`, `node_modules`; tamaño mínimo 1 MiB por escaneo (100 KiB / 1 / 10 / 100 MiB, no persistido); escaneo secuencial; nada preseleccionado ni recomendado (elecciones en el frontend, `kept` solo al resolver); preview sobre el `PreviewSlot` de C-09 y ejecución con `run_cleanup` + gancho `ItemGuard` que re-hashea cada copia y verifica la conservada; guarda de 24 h y `changed_since_scan` también para duplicados; 5 comandos IPC y 5 permisos nuevos (21 en total).
   - Nota para C-13: los duplicados nunca entran en flujos automáticos (ni escaneos programados C-23 ni la bandeja C-22 deciden copias).
   - Nota para C-19: el escaneo de duplicados lee el contenido de archivos personales y puede actualizar su fecha de último acceso (PA-03).
+  - Desvíos del smoke (2026-11-14, commit `2e952fc`): copias ordenadas por ruta completa sin distinguir mayúsculas (no por nombre de archivo); las opciones de carpeta y tamaño de avanzado se inicializan desde el último escaneo; el botón de revisión deshabilitado tras una limpieza muestra su motivo; plurales en español. Detalle en `design.md` §Apply notes.
 - **Dependencias**: `C-09`
 - **Governance**: ALTO (HIGH)
 - **Leer antes**:
