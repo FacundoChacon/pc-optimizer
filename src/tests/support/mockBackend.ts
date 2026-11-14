@@ -5,6 +5,11 @@ import type {
   CleanupEvent,
   CleanupPreview,
   CleanupSummary,
+  DuplicateCleanupPreview,
+  DuplicateCleanupSummary,
+  DuplicateGroup,
+  DuplicateScanEvent,
+  DuplicateScanSummary,
   EmptyAck,
   EmptyRequest,
   EmptyResult,
@@ -17,6 +22,7 @@ import type {
   StoreStatus,
 } from "../../lib/ipc";
 import { preview } from "./cleanupFixtures";
+import { duplicatePreview } from "./duplicateFixtures";
 import { sendChannelMessages } from "./junkFixtures";
 
 export type BackendCommand =
@@ -35,7 +41,12 @@ export type BackendCommand =
   | "cancel_cleanup"
   | "prepare_empty_recycle_bin"
   | "acknowledge_empty_recycle_bin"
-  | "empty_recycle_bin";
+  | "empty_recycle_bin"
+  | "start_duplicate_scan"
+  | "get_last_duplicate_scan"
+  | "list_duplicate_groups"
+  | "preview_duplicate_cleanup"
+  | "confirm_duplicate_cleanup";
 
 export interface BackendCall {
   cmd: string;
@@ -70,6 +81,20 @@ export interface BackendState {
     EmptyResult,
     "status" | "itemsAfter" | "bytesAfter" | "freedBytes" | "detail" | "logged"
   >;
+  /** Respuesta de get_last_duplicate_scan (`null` = todavia no hay escaneos de duplicados). */
+  dupLast: DuplicateScanSummary | null;
+  /** Lo que devuelve start_duplicate_scan al terminar; un resumen `done` pasa a ser `dupLast`. */
+  dupScanResult: DuplicateScanSummary | null;
+  /** Eventos que start_duplicate_scan envia por el canal apenas llega la invocacion. */
+  dupScanEvents: DuplicateScanEvent[];
+  /** Grupos para list_duplicate_groups (filtra por carpeta y tamano y pagina con offset y limit). */
+  dupGroups: DuplicateGroup[];
+  /** Plantilla de preview_duplicate_cleanup: cada llamada recibe un id nuevo. */
+  dupPreview: DuplicateCleanupPreview;
+  /** Eventos que confirm_duplicate_cleanup envia por el canal. */
+  dupCleanupEvents: CleanupEvent[];
+  /** Lo que devuelve confirm_duplicate_cleanup; sus grupos resueltos quedan resueltos en dupGroups. */
+  dupCleanupResult: DuplicateCleanupSummary | null;
   /** Comandos que deben fallar con este error. */
   failures: Partial<Record<BackendCommand, AppError>>;
   /** Errores de una sola vez por comando: cada llamada consume el primero de la cola. */
@@ -86,6 +111,10 @@ export interface MockBackend {
   emit: (events: readonly ScanEvent[]) => void;
   /** Envia eventos al canal de la ultima invocacion de confirm_cleanup (simula progreso). */
   emitCleanup: (events: readonly CleanupEvent[]) => void;
+  /** Envia eventos al canal de la ultima invocacion de start_duplicate_scan. */
+  emitDuplicates: (events: readonly DuplicateScanEvent[]) => void;
+  /** Envia eventos al canal de la ultima invocacion de confirm_duplicate_cleanup. */
+  emitDuplicateCleanup: (events: readonly CleanupEvent[]) => void;
 }
 
 export const READY: StoreStatus = { status: "ready" };
@@ -124,6 +153,13 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
       detail: null,
       logged: true,
     },
+    dupLast: null,
+    dupScanResult: null,
+    dupScanEvents: [],
+    dupGroups: [],
+    dupPreview: duplicatePreview(),
+    dupCleanupEvents: [],
+    dupCleanupResult: null,
     failures: {},
     failureQueue: {},
     gates: {},
@@ -134,6 +170,11 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
   let sentEvents = 0;
   let cleanupChannel: Channel<unknown> | null = null;
   let sentCleanupEvents = 0;
+  let dupChannel: Channel<unknown> | null = null;
+  let sentDup = 0;
+  let dupCleanupChannel: Channel<unknown> | null = null;
+  let sentDupCleanup = 0;
+  let dupPreviewCounter = 0;
   let previewCounter = 0;
   let emptyCounter = 0;
   // Protocolo de 3 pasos del backend simulado: una solicitud vigente, con lo medido al prepararla.
@@ -164,6 +205,18 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     sentCleanupEvents += events.length;
   };
 
+  const emitDuplicates = (events: readonly DuplicateScanEvent[]): void => {
+    if (dupChannel === null) return;
+    sendChannelMessages(dupChannel, events, sentDup);
+    sentDup += events.length;
+  };
+
+  const emitDuplicateCleanup = (events: readonly CleanupEvent[]): void => {
+    if (dupCleanupChannel === null) return;
+    sendChannelMessages(dupCleanupChannel, events, sentDupCleanup);
+    sentDupCleanup += events.length;
+  };
+
   mockIPC(async (cmd, args) => {
     calls.push({ cmd, args });
     const command = cmd as BackendCommand;
@@ -176,6 +229,16 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
       cleanupChannel = (args as { onProgress: Channel<unknown> }).onProgress;
       sentCleanupEvents = 0;
       emitCleanup(state.cleanupEvents);
+    }
+    if (command === "start_duplicate_scan") {
+      dupChannel = (args as { onProgress: Channel<unknown> }).onProgress;
+      sentDup = 0;
+      emitDuplicates(state.dupScanEvents);
+    }
+    if (command === "confirm_duplicate_cleanup") {
+      dupCleanupChannel = (args as { onProgress: Channel<unknown> }).onProgress;
+      sentDupCleanup = 0;
+      emitDuplicateCleanup(state.dupCleanupEvents);
     }
     const gate = state.gates[command];
     if (gate !== undefined) await gate;
@@ -242,6 +305,66 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
       }
       case "cancel_cleanup":
         return null;
+      case "start_duplicate_scan": {
+        const result = state.dupScanResult;
+        if (result !== null && result.status === "done") state.dupLast = result;
+        return result;
+      }
+      case "get_last_duplicate_scan":
+        return state.dupLast;
+      case "list_duplicate_groups": {
+        const request = args as { offset: number; limit: number; root?: string; minSizeBytes?: number };
+        const matching = state.dupGroups.filter(
+          (g) =>
+            (request.root === undefined || g.files.some((f) => f.root === request.root)) &&
+            (request.minSizeBytes === undefined || g.sizeBytes >= request.minSizeBytes),
+        );
+        return {
+          scanId: state.dupLast?.scanId ?? 1,
+          total: matching.length,
+          groups: matching.slice(request.offset, request.offset + request.limit),
+        };
+      }
+      case "preview_duplicate_cleanup": {
+        const request = args as { scanId: number; decisions: Array<{ groupId: number; keepFileIds: number[] }> };
+        dupPreviewCounter += 1;
+        const items = request.decisions.reduce((n, d) => {
+          const g = state.dupGroups.find((candidate) => candidate.groupId === d.groupId);
+          return n + (g === undefined ? 0 : g.files.length - d.keepFileIds.length);
+        }, 0);
+        return {
+          ...state.dupPreview,
+          previewId: state.dupPreview.previewId + dupPreviewCounter - 1,
+          scanId: request.scanId,
+          groupCount: request.decisions.length,
+          totalItems: items,
+          categories: [
+            {
+              category: "duplicates",
+              status: "included",
+              itemCount: items,
+              sizeBytes: state.dupPreview.totalBytes,
+              recentCount: state.dupPreview.recentCount,
+              recentBytes: state.dupPreview.recentBytes,
+            },
+          ],
+        };
+      }
+      case "confirm_duplicate_cleanup": {
+        const result = state.dupCleanupResult;
+        if (result !== null) {
+          state.dupGroups = state.dupGroups.map((g) =>
+            result.resolvedGroupIds.includes(g.groupId) ? { ...g, resolvedAt: result.finishedAt } : g,
+          );
+          if (state.dupLast !== null) {
+            state.dupLast = {
+              ...state.dupLast,
+              openGroupCount: Math.max(0, state.dupLast.openGroupCount - result.resolvedGroupIds.length),
+            };
+          }
+        }
+        return result === null ? null : { ...result, categories: [{ category: "duplicates" }] };
+      }
       case "prepare_empty_recycle_bin": {
         blockedInMismatch();
         if (state.bin.itemCount === 0) throw { kind: "recycle_bin_already_empty", message: "empty" };
@@ -308,5 +431,7 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     count: (cmd) => calls.filter((call) => call.cmd === cmd).length,
     emit,
     emitCleanup,
+    emitDuplicates,
+    emitDuplicateCleanup,
   };
 }

@@ -44,6 +44,9 @@ const DETAIL_FAMILIES: Readonly<Record<string, ReasonFamily>> = {
   permission_denied: "permission_denied",
   not_moved: "error",
   io: "error",
+  content_changed: "changed",
+  content_unreadable: "unreadable",
+  kept_copy_unavailable: "kept_missing",
 };
 
 const OUTCOME_FAMILIES: Readonly<Record<CleanupReasonOutcome, ReasonFamily>> = {

@@ -831,3 +831,398 @@ export async function emptyRecycleBin(requestId: number, confirmToken: number): 
     "empty_recycle_bin",
   );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Duplicados (C-11)
+// ---------------------------------------------------------------------------------------------
+
+/** Las 6 carpetas de contenido (espejo de `ContentFolder::as_str`), en el orden de la UI. */
+export const ROOT_KEYS = ["desktop", "documents", "downloads", "music", "pictures", "videos"] as const;
+export type RootKey = (typeof ROOT_KEYS)[number];
+
+/** Opciones cerradas del tamano minimo por escaneo (bytes): 100 KiB, 1, 10 y 100 MiB. */
+export const MIN_SIZE_OPTIONS = [102_400, 1_048_576, 10_485_760, 104_857_600] as const;
+export const DEFAULT_MIN_SIZE = 1_048_576;
+
+export type RootStatusKind = "done" | "not_selected" | "nested" | "unavailable";
+
+/** Espejo de `commands::duplicates::RootDto`. `reason` solo con `unavailable`. */
+export interface RootResult {
+  root: RootKey;
+  status: RootStatusKind;
+  reason: string | null;
+  filesSeen: number;
+}
+
+/** Espejo de `commands::duplicates::DuplicateScanSummaryDto` (Rust). Un escaneo `cancelled` no trae carpetas. */
+export interface DuplicateScanSummary {
+  scanId: number;
+  status: "done" | "cancelled";
+  startedAt: number;
+  finishedAt: number | null;
+  minSizeBytes: number;
+  roots: RootResult[];
+  filesSeen: number;
+  belowMinSize: number;
+  protectedCount: number;
+  cloudCount: number;
+  hardLinkedCount: number;
+  changedCount: number;
+  unreadableCount: number;
+  inaccessibleDirs: number;
+  excludedDirs: number;
+  hashedBytes: number;
+  groupCount: number;
+  duplicateFileCount: number;
+  /** Bytes que aun se pueden recuperar (grupos sin resolver). */
+  reclaimableBytes: number;
+  openGroupCount: number;
+}
+
+/** Espejo de `commands::duplicates::DuplicateScanEventDto`. */
+export type DuplicateScanEvent =
+  | { type: "started"; scanId: number }
+  | { type: "walking"; filesSeen: number }
+  | { type: "partial"; done: number; total: number }
+  | { type: "full"; doneBytes: number; totalBytes: number };
+
+/** Espejo de `DuplicateFileDto`: una copia. `relativePath` es relativa a su carpeta de contenido. */
+export interface DuplicateFile {
+  fileId: number;
+  root: RootKey;
+  path: string;
+  relativePath: string;
+  modifiedAt: number | null;
+  kept: boolean;
+}
+
+/** Espejo de `DuplicateGroupDto`. */
+export interface DuplicateGroup {
+  groupId: number;
+  sizeBytes: number;
+  blake3: string;
+  reclaimableBytes: number;
+  resolvedAt: number | null;
+  files: DuplicateFile[];
+}
+
+/** Espejo de `DuplicateGroupPageDto`. */
+export interface DuplicateGroupPage {
+  scanId: number;
+  total: number;
+  groups: DuplicateGroup[];
+}
+
+/** Decision del usuario sobre un grupo: las copias que se CONSERVAN. */
+export interface DuplicateDecision {
+  groupId: number;
+  keepFileIds: number[];
+}
+
+/** Espejo de `DuplicateCleanupPreviewDto` (aplanado): la categoria unica `duplicates` se resume en `recent*`. */
+export interface DuplicateCleanupPreview {
+  previewId: number;
+  scanId: number;
+  createdAt: number;
+  expiresAt: number;
+  totalItems: number;
+  totalBytes: number;
+  recycleBinAvailable: boolean;
+  groupCount: number;
+  /** Copias excluidas por haberse escrito hace menos de 24 h: se informan, no se mueven. */
+  recentCount: number;
+  recentBytes: number;
+}
+
+/** Espejo de `DuplicateCleanupSummaryDto`: el resumen de la limpieza mas la resolucion de grupos. */
+export interface DuplicateCleanupSummary extends Omit<CleanupSummary, "categories"> {
+  /** `false` si no se pudo guardar la resolucion: los grupos siguen abiertos. */
+  groupsResolved: boolean;
+  resolvedGroupIds: number[];
+}
+
+const HEX_64 = /^[0-9a-f]{64}$/;
+
+function isRootKey(value: unknown): value is RootKey {
+  return ROOT_KEYS.some((key) => key === value);
+}
+
+function decodeRootStatus(value: unknown): RootStatusKind | null {
+  return value === "done" || value === "not_selected" || value === "nested" || value === "unavailable"
+    ? value
+    : null;
+}
+
+function decodeRoot(raw: unknown): RootResult | null {
+  if (!isRecord(raw)) return null;
+  const { root, filesSeen, reason } = raw;
+  const status = decodeRootStatus(raw["status"]);
+  if (!isRootKey(root) || status === null || !isCount(filesSeen)) return null;
+  if (status === "unavailable") {
+    return typeof reason === "string" && DETAIL_CODE.test(reason)
+      ? { root, status, reason, filesSeen }
+      : null;
+  }
+  return reason === null ? { root, status, reason: null, filesSeen } : null;
+}
+
+const SCAN_COUNTERS = [
+  "scanId",
+  "startedAt",
+  "minSizeBytes",
+  "filesSeen",
+  "belowMinSize",
+  "protectedCount",
+  "cloudCount",
+  "hardLinkedCount",
+  "changedCount",
+  "unreadableCount",
+  "inaccessibleDirs",
+  "excludedDirs",
+  "hashedBytes",
+  "groupCount",
+  "duplicateFileCount",
+  "reclaimableBytes",
+  "openGroupCount",
+] as const;
+
+function decodeDuplicateScanSummary(raw: unknown, command: string): DuplicateScanSummary {
+  if (isRecord(raw) && Array.isArray(raw["roots"])) {
+    const decoded = raw["roots"].map(decodeRoot);
+    const roots = decoded.filter((root): root is RootResult => root !== null);
+    const status = raw["status"];
+    const finishedAt = raw["finishedAt"];
+    const n = (key: (typeof SCAN_COUNTERS)[number]): number => raw[key] as number;
+    const valid =
+      (status === "done" || status === "cancelled") &&
+      roots.length === decoded.length &&
+      (finishedAt === null || isCount(finishedAt)) &&
+      SCAN_COUNTERS.every((key) => isCount(raw[key])) &&
+      MIN_SIZE_OPTIONS.some((option) => option === raw["minSizeBytes"]) &&
+      new Set(roots.map((root) => root.root)).size === roots.length &&
+      (status === "cancelled" ? roots.length === 0 : roots.length === ROOT_KEYS.length);
+    if (valid) {
+      return {
+        scanId: n("scanId"),
+        status,
+        startedAt: n("startedAt"),
+        finishedAt: finishedAt as number | null,
+        minSizeBytes: n("minSizeBytes"),
+        roots,
+        filesSeen: n("filesSeen"),
+        belowMinSize: n("belowMinSize"),
+        protectedCount: n("protectedCount"),
+        cloudCount: n("cloudCount"),
+        hardLinkedCount: n("hardLinkedCount"),
+        changedCount: n("changedCount"),
+        unreadableCount: n("unreadableCount"),
+        inaccessibleDirs: n("inaccessibleDirs"),
+        excludedDirs: n("excludedDirs"),
+        hashedBytes: n("hashedBytes"),
+        groupCount: n("groupCount"),
+        duplicateFileCount: n("duplicateFileCount"),
+        reclaimableBytes: n("reclaimableBytes"),
+        openGroupCount: n("openGroupCount"),
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeDuplicateScanEvent(raw: unknown): DuplicateScanEvent | null {
+  if (!isRecord(raw)) return null;
+  switch (raw["type"]) {
+    case "started":
+      return isCount(raw["scanId"]) ? { type: "started", scanId: raw["scanId"] } : null;
+    case "walking":
+      return isCount(raw["filesSeen"]) ? { type: "walking", filesSeen: raw["filesSeen"] } : null;
+    case "partial": {
+      const { done, total } = raw;
+      return isCount(done) && isCount(total) ? { type: "partial", done, total } : null;
+    }
+    case "full": {
+      const { doneBytes, totalBytes } = raw;
+      return isCount(doneBytes) && isCount(totalBytes) ? { type: "full", doneBytes, totalBytes } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+function decodeDuplicateFile(raw: unknown): DuplicateFile | null {
+  if (!isRecord(raw)) return null;
+  const { fileId, root, path, relativePath, modifiedAt, kept } = raw;
+  if (
+    isCount(fileId) &&
+    isRootKey(root) &&
+    typeof path === "string" &&
+    path.length > 0 &&
+    typeof relativePath === "string" &&
+    (modifiedAt === null || isCount(modifiedAt)) &&
+    typeof kept === "boolean"
+  ) {
+    return { fileId, root, path, relativePath, modifiedAt, kept };
+  }
+  return null;
+}
+
+function decodeDuplicateGroup(raw: unknown): DuplicateGroup | null {
+  if (!isRecord(raw) || !Array.isArray(raw["files"])) return null;
+  const { groupId, sizeBytes, blake3, reclaimableBytes, resolvedAt } = raw;
+  const decoded = raw["files"].map(decodeDuplicateFile);
+  const files = decoded.filter((file): file is DuplicateFile => file !== null);
+  if (
+    isCount(groupId) &&
+    isCount(sizeBytes) &&
+    typeof blake3 === "string" &&
+    HEX_64.test(blake3) &&
+    isCount(reclaimableBytes) &&
+    (resolvedAt === null || isCount(resolvedAt)) &&
+    files.length === decoded.length &&
+    files.length >= 2
+  ) {
+    return { groupId, sizeBytes, blake3, reclaimableBytes, resolvedAt, files };
+  }
+  return null;
+}
+
+function decodeDuplicateGroupPage(raw: unknown, command: string): DuplicateGroupPage {
+  if (isRecord(raw) && Array.isArray(raw["groups"]) && isCount(raw["scanId"]) && isCount(raw["total"])) {
+    const decoded = raw["groups"].map(decodeDuplicateGroup);
+    const groups = decoded.filter((group): group is DuplicateGroup => group !== null);
+    if (groups.length === decoded.length) return { scanId: raw["scanId"], total: raw["total"], groups };
+  }
+  throw invalidResponse(command);
+}
+
+function decodeDuplicateCleanupPreview(raw: unknown, command: string): DuplicateCleanupPreview {
+  if (isRecord(raw) && Array.isArray(raw["categories"])) {
+    const { previewId, scanId, createdAt, expiresAt, totalItems, totalBytes, recycleBinAvailable, groupCount } = raw;
+    const [only, ...others] = raw["categories"];
+    const category = isRecord(only) ? only : null;
+    if (
+      others.length === 0 &&
+      category !== null &&
+      category["category"] === "duplicates" &&
+      category["status"] === "included" &&
+      isCount(category["recentCount"]) &&
+      isCount(category["recentBytes"]) &&
+      isCount(previewId) &&
+      isCount(scanId) &&
+      isCount(createdAt) &&
+      isCount(expiresAt) &&
+      isCount(totalItems) &&
+      isCount(totalBytes) &&
+      typeof recycleBinAvailable === "boolean" &&
+      isCount(groupCount)
+    ) {
+      return {
+        previewId,
+        scanId,
+        createdAt,
+        expiresAt,
+        totalItems,
+        totalBytes,
+        recycleBinAvailable,
+        groupCount,
+        recentCount: category["recentCount"],
+        recentBytes: category["recentBytes"],
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeDuplicateCleanupSummary(raw: unknown, command: string): DuplicateCleanupSummary {
+  if (isRecord(raw) && Array.isArray(raw["resolvedGroupIds"]) && typeof raw["groupsResolved"] === "boolean") {
+    const ids = raw["resolvedGroupIds"];
+    // Las categorias del resumen (`duplicates`) no se usan: el decodificador de basura las rechazaria.
+    const { categories: _ignored, ...rest } = decodeCleanupSummary({ ...raw, categories: [] }, command);
+    if (ids.every(isCount)) return { ...rest, groupsResolved: raw["groupsResolved"], resolvedGroupIds: ids };
+  }
+  throw invalidResponse(command);
+}
+
+/** Opciones de un escaneo de duplicados: carpetas (por clave) y tamano minimo. Nunca rutas. */
+export interface DuplicateScanOptions {
+  roots?: readonly RootKey[];
+  minSizeBytes?: number;
+}
+
+/**
+ * Inicia un escaneo de duplicados. El progreso llega por el canal de la invocacion (los eventos
+ * invalidos se ignoran) y la promesa se resuelve con el resumen final (`done` o `cancelled`).
+ */
+export async function startDuplicateScan(
+  options: DuplicateScanOptions,
+  onEvent: (event: DuplicateScanEvent) => void,
+): Promise<DuplicateScanSummary> {
+  const channel = new Channel<unknown>((raw) => {
+    const event = decodeDuplicateScanEvent(raw);
+    if (event !== null) onEvent(event);
+  });
+  const raw = await call<unknown>("start_duplicate_scan", {
+    ...(options.roots === undefined ? {} : { roots: [...options.roots] }),
+    ...(options.minSizeBytes === undefined ? {} : { minSizeBytes: options.minSizeBytes }),
+    onProgress: channel,
+  });
+  return decodeDuplicateScanSummary(raw, "start_duplicate_scan");
+}
+
+/** Resumen del ultimo escaneo de duplicados terminado, o `null` si todavia no hay ninguno. */
+export async function getLastDuplicateScan(): Promise<DuplicateScanSummary | null> {
+  const raw = await call<unknown>("get_last_duplicate_scan");
+  return raw === null ? null : decodeDuplicateScanSummary(raw, "get_last_duplicate_scan");
+}
+
+/** Filtros opcionales de `listDuplicateGroups`. */
+export interface DuplicateGroupFilters {
+  root?: RootKey;
+  minSizeBytes?: number;
+}
+
+/** Una pagina de grupos del ultimo escaneo terminado (1 a 200 por pagina). */
+export async function listDuplicateGroups(
+  scanId: number,
+  offset: number,
+  limit: number,
+  filters: DuplicateGroupFilters = {},
+): Promise<DuplicateGroupPage> {
+  return decodeDuplicateGroupPage(
+    await call<unknown>("list_duplicate_groups", {
+      scanId,
+      offset,
+      limit,
+      ...(filters.root === undefined ? {} : { root: filters.root }),
+      ...(filters.minSizeBytes === undefined ? {} : { minSizeBytes: filters.minSizeBytes }),
+    }),
+    "list_duplicate_groups",
+  );
+}
+
+/** Pide el preview de las copias a eliminar: solo identificadores de grupo y de copias a CONSERVAR. */
+export async function previewDuplicateCleanup(
+  scanId: number,
+  decisions: readonly DuplicateDecision[],
+): Promise<DuplicateCleanupPreview> {
+  return decodeDuplicateCleanupPreview(
+    await call<unknown>("preview_duplicate_cleanup", {
+      scanId,
+      decisions: decisions.map((d) => ({ groupId: d.groupId, keepFileIds: [...d.keepFileIds] })),
+    }),
+    "preview_duplicate_cleanup",
+  );
+}
+
+/** Confirma el preview de duplicados; el progreso llega por el canal (mismos eventos que la limpieza). */
+export async function confirmDuplicateCleanup(
+  previewId: number,
+  onEvent: (event: CleanupEvent) => void,
+): Promise<DuplicateCleanupSummary> {
+  const channel = new Channel<unknown>((raw) => {
+    const event = decodeCleanupEvent(raw);
+    if (event !== null) onEvent(event);
+  });
+  const raw = await call<unknown>("confirm_duplicate_cleanup", { previewId, onProgress: channel });
+  return decodeDuplicateCleanupSummary(raw, "confirm_duplicate_cleanup");
+}

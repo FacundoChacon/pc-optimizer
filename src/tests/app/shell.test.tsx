@@ -60,7 +60,12 @@ describe("Layouts y NavList (8.2)", () => {
     const settings = screen.getByRole("button", { name: es.nav.settings });
     expect(home).toHaveAttribute("aria-current", "page");
     expect(settings).not.toHaveAttribute("aria-current");
-    expect(SCREENS.map((s) => s.label)).toEqual([es.nav.home, es.nav.cleanup, es.nav.settings]);
+    expect(SCREENS.map((s) => s.label)).toEqual([
+      es.nav.home,
+      es.nav.cleanup,
+      es.nav.duplicates,
+      es.nav.settings,
+    ]);
   });
 
   it("avanzado: aside con nav y las mismas entradas, layout responsivo", async () => {
@@ -71,6 +76,7 @@ describe("Layouts y NavList (8.2)", () => {
     expect(aside).toContainElement(nav);
     expect(screen.getByRole("button", { name: es.nav.home })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: es.nav.cleanup })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: es.nav.duplicates })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: es.nav.settings })).toBeInTheDocument();
     const root = container.firstElementChild;
     expect(root).toHaveAttribute("data-density", "advanced");
