@@ -26,13 +26,19 @@ pub fn app_builder<R: tauri::Runtime>(
 ) -> tauri::Builder<R> {
     builder
         .manage(config)
+        .manage(commands::scan::ActiveScan::default())
+        .manage(commands::scan::ScanEnvironment::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
             commands::settings::get_settings,
             commands::settings::set_setting,
             commands::store::get_store_status,
             commands::store::recover_store,
-            commands::privileges::get_privilege_context
+            commands::privileges::get_privilege_context,
+            commands::scan::start_scan,
+            commands::scan::cancel_scan,
+            commands::scan::get_last_junk_scan,
+            commands::scan::list_junk_findings
         ])
 }
 
@@ -50,10 +56,12 @@ pub fn manage_privileges<R: tauri::Runtime>(app: &impl Manager<R>, context: Priv
 /// disponible queda como `StoreState::Unavailable` y la app arranca igual.
 pub fn manage_store<R: tauri::Runtime>(app: &impl Manager<R>, override_dir: Option<&Path>) {
     let local_app_data = app.path().local_data_dir().map_err(|e| e.to_string());
-    app.manage(StoreHandle::new(open_store_state(resolve_data_dir(
-        override_dir,
-        local_app_data,
-    ))));
+    let data_dir = resolve_data_dir(override_dir, local_app_data);
+    // El escaneo veta tambien la carpeta de datos de la app (C-08, D-17).
+    if let Some(environment) = app.try_state::<commands::scan::ScanEnvironment>() {
+        environment.set_data_dir(data_dir.as_ref().ok().cloned());
+    }
+    app.manage(StoreHandle::new(open_store_state(data_dir)));
 }
 
 /// Arranca la aplicacion Tauri.
@@ -230,6 +238,75 @@ mod tests {
         let value = invoke(&other, "get_privilege_context", serde_json::json!({}));
         assert_eq!(value["status"], "mismatch");
         assert_eq!(value["reason"], "different_user");
+    }
+
+    fn invoke_error(
+        window: &tauri::WebviewWindow<MockRuntime>,
+        cmd: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut req = request(cmd);
+        req.body = InvokeBody::Json(body);
+        match get_ipc_response(window, req) {
+            Ok(_) => panic!("{cmd} debia fallar"),
+            Err(error) => error,
+        }
+    }
+
+    /// Ventana con base en `dir` (un `TempDir`) y privilegios `match`; nunca toca el disco real.
+    fn window_for_scans(dir: &std::path::Path) -> tauri::WebviewWindow<MockRuntime> {
+        let app = mock_app();
+        manage_store(&app, Some(dir));
+        manage_privileges(
+            &app,
+            PrivilegeContext::new(domain::privileges::UserMatch::Match, false),
+        );
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        std::mem::forget(app);
+        window
+    }
+
+    #[test]
+    fn scan_commands_should_answer_their_error_and_empty_cases_over_ipc() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let window = window_for_scans(dir.path());
+
+        let unsupported = invoke_error(
+            &window,
+            "start_scan",
+            serde_json::json!({"kind": "folders", "onProgress": "__CHANNEL__:1"}),
+        );
+        assert_eq!(unsupported["kind"], "scan_kind_unsupported");
+
+        assert_eq!(
+            invoke(&window, "get_last_junk_scan", serde_json::json!({})),
+            serde_json::Value::Null
+        );
+        let not_found = invoke_error(&window, "cancel_scan", serde_json::json!({"scanId": 3}));
+        assert_eq!(not_found["kind"], "scan_not_found");
+        let invalid = invoke_error(
+            &window,
+            "list_junk_findings",
+            serde_json::json!({"scanId": 1, "category": "temp_user", "offset": 0, "limit": 0}),
+        );
+        assert_eq!(invalid["kind"], "invalid_argument");
+        let unknown_scan = invoke_error(
+            &window,
+            "list_junk_findings",
+            serde_json::json!({"scanId": 1, "category": "temp_user", "offset": 0, "limit": 10}),
+        );
+        assert_eq!(unknown_scan["kind"], "scan_not_found");
+    }
+
+    #[test]
+    fn manage_store_should_hand_the_data_dir_to_the_scan_environment() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = mock_app();
+        manage_store(&app, Some(dir.path()));
+        let environment = app.state::<commands::scan::ScanEnvironment>();
+        assert_eq!(environment.data_dir(), Some(dir.path().to_path_buf()));
     }
 
     #[test]

@@ -524,3 +524,134 @@ fn pin_ancestors_should_fail_for_missing_ancestors_files_and_relative_paths() {
         Err(PortError::Unsupported(_))
     ));
 }
+
+// ---- C-08 6.2: recorrido de basura sobre el sistema de archivos real (solo TempDir) ----
+
+mod junk_walk {
+    use std::fs::File;
+    use std::time::{Duration, SystemTime};
+
+    use super::*;
+    use crate::domain::junk::category::JunkCategory;
+    use crate::domain::junk::filter::{Filter, NameFilter, TEMP_MIN_AGE_MS};
+    use crate::domain::junk::sources::{Depth, JunkSource, Layout};
+    use crate::domain::junk::walk::{WalkEnd, WalkVisitor, walk_source};
+    use crate::domain::privileges::UserScope;
+    use crate::domain::protection::path::normalize_lexical;
+
+    #[derive(Default)]
+    struct Collect {
+        candidates: Vec<PathBuf>,
+        reparse: Vec<PathBuf>,
+    }
+
+    impl WalkVisitor for Collect {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+        fn file_seen(&mut self) {}
+        fn candidate(&mut self, entry: DirEntry) {
+            self.candidates.push(entry.path);
+        }
+        fn reparse_point(&mut self, path: PathBuf) {
+            self.reparse.push(path);
+        }
+    }
+
+    fn write_aged(path: &Path, age_days: u64) {
+        fs::write(path, b"x").unwrap();
+        let file = OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(age_days * 86_400))
+            .unwrap();
+        drop::<File>(file);
+    }
+
+    fn now() -> EpochMillis {
+        let millis = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        EpochMillis(i64::try_from(millis).unwrap())
+    }
+
+    fn walk(root: &Path, filter: Filter) -> (crate::domain::junk::walk::WalkReport, Collect) {
+        let source = JunkSource {
+            category: JunkCategory::TempWindows,
+            root: normalize_lexical(root.to_str().unwrap()).unwrap(),
+            scope: UserScope::Machine,
+            filter,
+            depth: Depth::Recursive,
+            layout: Layout::Direct,
+        };
+        let mut visitor = Collect::default();
+        let report = walk_source(&WindowsFileSystem, &source, now(), &mut visitor);
+        (report, visitor)
+    }
+
+    const AGED: Filter = Filter {
+        min_age_ms: Some(TEMP_MIN_AGE_MS),
+        name: NameFilter::Any,
+    };
+
+    #[test]
+    fn walk_should_return_old_files_skip_recent_ones_and_never_enter_a_junction() {
+        let (_dir, root) = temp_root();
+        let outside = TempDir::new().unwrap();
+        let outside_root = WindowsFileSystem.canonicalize(outside.path()).unwrap();
+        write_aged(&outside_root.join("outside_old.tmp"), 30);
+
+        write_aged(&root.join("old.tmp"), 3);
+        write_aged(&root.join("recent.tmp"), 0);
+        fs::create_dir(root.join("sub")).unwrap();
+        write_aged(&root.join("sub").join("deep_old.tmp"), 10);
+        make_junction(&root.join("link"), &outside_root);
+
+        let (report, visitor) = walk(&root, AGED);
+
+        assert_eq!(report.end, WalkEnd::Completed);
+        assert!(report.present);
+        let mut found: Vec<String> = visitor
+            .candidates
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        found.sort();
+        assert_eq!(found, ["deep_old.tmp", "old.tmp"]);
+        assert_eq!(visitor.reparse, vec![root.join("link")]);
+        assert!(
+            visitor.candidates.iter().all(|p| p.starts_with(&root)),
+            "nada del destino de la junction: {:?}",
+            visitor.candidates
+        );
+    }
+
+    #[test]
+    fn walk_should_find_files_beyond_the_260_character_limit() {
+        let (_dir, root) = temp_root();
+        let mut deep = root.clone();
+        for index in 0..6 {
+            deep.push(format!("{index}_{}", "d".repeat(48)));
+        }
+        fs::create_dir_all(&deep).unwrap();
+        assert!(
+            deep.as_os_str().len() > 260,
+            "la ruta debe superar MAX_PATH"
+        );
+        write_aged(&deep.join("long.tmp"), 5);
+
+        let (report, visitor) = walk(&root, AGED);
+
+        assert_eq!(report.end, WalkEnd::Completed);
+        assert_eq!(report.inaccessible, 0);
+        assert_eq!(visitor.candidates, vec![deep.join("long.tmp")]);
+    }
+
+    #[test]
+    fn walk_should_report_a_missing_root_as_absent_without_inaccessible_folders() {
+        let (_dir, root) = temp_root();
+        let (report, visitor) = walk(&root.join("no-existe"), Filter::NONE);
+        assert!(!report.present);
+        assert_eq!(report.inaccessible, 0);
+        assert!(visitor.candidates.is_empty());
+    }
+}

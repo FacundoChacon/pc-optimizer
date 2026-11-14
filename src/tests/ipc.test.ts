@@ -1,14 +1,21 @@
+import { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  cancelScan,
   getAppInfo,
+  getLastJunkScan,
   getPrivilegeContext,
   getSettings,
   getStoreStatus,
+  listJunkFindings,
   recoverStore,
+  type ScanEvent,
   setSetting,
+  startJunkScan,
   toAppError,
 } from "../lib/ipc";
+import { sendChannelMessages, summary } from "./support/junkFixtures";
 
 describe("toAppError", () => {
   it("preserva un objeto { kind, message } valido", () => {
@@ -257,5 +264,197 @@ describe("getPrivilegeContext", () => {
       throw { kind: "internal", message: "x" };
     });
     await expect(getPrivilegeContext()).rejects.toMatchObject({ kind: "internal" });
+  });
+});
+
+describe("escaneo de basura", () => {
+  afterEach(() => {
+    clearMocks();
+  });
+
+  const RAW = summary({ temp_user: { scope: "per_user", itemCount: 2, sizeBytes: 3000 } });
+
+  it("startJunkScan invoca start_scan con kind junk y un Channel, entrega los eventos y devuelve el resumen", async () => {
+    const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args: args as Record<string, unknown> });
+      const channel = (args as { onProgress: Channel<unknown> }).onProgress;
+      sendChannelMessages(channel, [
+        { type: "started", scanId: 1 },
+        { type: "category", category: "temp_user" },
+        { type: "progress", category: "temp_user", filesSeen: 256, eligibleBytes: 9 },
+      ]);
+      return RAW;
+    });
+    const events: ScanEvent[] = [];
+    await expect(startJunkScan((event) => events.push(event))).resolves.toEqual(RAW);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cmd).toBe("start_scan");
+    expect(calls[0]?.args["kind"]).toBe("junk");
+    expect(calls[0]?.args["onProgress"]).toBeInstanceOf(Channel);
+    expect(events).toEqual([
+      { type: "started", scanId: 1 },
+      { type: "category", category: "temp_user" },
+      { type: "progress", category: "temp_user", filesSeen: 256, eligibleBytes: 9 },
+    ]);
+  });
+
+  it("startJunkScan ignora los eventos invalidos sin cortar el escaneo", async () => {
+    mockIPC((_cmd, args) => {
+      const channel = (args as { onProgress: Channel<unknown> }).onProgress;
+      sendChannelMessages(channel, [
+        { type: "progress", category: "documents", filesSeen: 1, eligibleBytes: 1 },
+        { type: "teleport" },
+        { type: "progress", category: "wu_cache", filesSeen: -1, eligibleBytes: 1 },
+        { type: "progress", category: "wu_cache", filesSeen: 1.5, eligibleBytes: 1 },
+        null,
+        "texto",
+        { type: "category", category: "wu_cache" },
+      ]);
+      return RAW;
+    });
+    const events: ScanEvent[] = [];
+    await startJunkScan((event) => events.push(event));
+    expect(events).toEqual([{ type: "category", category: "wu_cache" }]);
+  });
+
+  it("startJunkScan acepta un escaneo cancelado con categorias vacias", async () => {
+    const cancelled = { ...RAW, status: "cancelled", categories: [], totalItems: 0, totalBytes: 0 };
+    mockIPC(() => cancelled);
+    await expect(startJunkScan(() => undefined)).resolves.toMatchObject({
+      status: "cancelled",
+      categories: [],
+    });
+  });
+
+  it("startJunkScan propaga el error tipado del backend", async () => {
+    mockIPC(() => {
+      throw { kind: "scan_in_progress", message: "a scan is already in progress" };
+    });
+    await expect(startJunkScan(() => undefined)).rejects.toEqual({
+      kind: "scan_in_progress",
+      message: "a scan is already in progress",
+    });
+  });
+
+  it("los decodificadores rechazan con invalid_response un resumen mal formado", async () => {
+    const withCategory = (index: number, patch: Record<string, unknown>) => ({
+      ...RAW,
+      categories: RAW.categories.map((c, i) => (i === index ? { ...c, ...patch } : c)),
+    });
+    const blocked = { status: "blocked", scope: "per_user" };
+    const bad: unknown[] = [
+      withCategory(0, { category: "documents" }),
+      withCategory(0, { category: "custom_rule" }),
+      withCategory(0, { status: "exploded" }),
+      withCategory(0, { scope: "everywhere" }),
+      withCategory(0, blocked),
+      withCategory(0, { ...blocked, blockReason: "mystery" }),
+      withCategory(0, { sizeBytes: -1 }),
+      withCategory(0, { itemCount: 1.5 }),
+      withCategory(0, { skippedCount: "3" }),
+      withCategory(0, { inaccessibleCount: -2 }),
+      { ...RAW, categories: RAW.categories.slice(1) },
+      { ...RAW, categories: [...RAW.categories, RAW.categories[0]] },
+      { ...RAW, status: "running" },
+      { ...RAW, totalBytes: -5 },
+      { ...RAW, scanId: "uno" },
+      { ...RAW, startedAt: 1.5 },
+      { ...RAW, finishedAt: "ayer" },
+      null,
+      "texto",
+      [],
+    ];
+    for (const response of bad) {
+      mockIPC(() => response);
+      await expect(startJunkScan(() => undefined)).rejects.toMatchObject({ kind: "invalid_response" });
+      // `null` es la respuesta valida de "todavia no hay escaneos".
+      if (response !== null) {
+        await expect(getLastJunkScan()).rejects.toMatchObject({ kind: "invalid_response" });
+      }
+    }
+  });
+
+  it("acepta blocked y partial con su motivo de bloqueo", async () => {
+    const response = summary({
+      temp_user: { scope: "per_user", status: "blocked", blockReason: "different_user" },
+      crash_dumps: { scope: "mixed", status: "partial", blockReason: "undetermined", itemCount: 1, sizeBytes: 10 },
+      old_logs: { status: "unavailable" },
+    });
+    mockIPC(() => response);
+    const decoded = await getLastJunkScan();
+    expect(decoded?.categories.find((c) => c.category === "temp_user")).toMatchObject({
+      status: "blocked",
+      blockReason: "different_user",
+    });
+    expect(decoded?.categories.find((c) => c.category === "crash_dumps")).toMatchObject({
+      status: "partial",
+      blockReason: "undetermined",
+    });
+  });
+
+  it("getLastJunkScan devuelve null cuando no hay escaneos y el resumen cuando existe", async () => {
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd);
+      return null;
+    });
+    await expect(getLastJunkScan()).resolves.toBeNull();
+    expect(calls).toEqual(["get_last_junk_scan"]);
+    mockIPC(() => RAW);
+    await expect(getLastJunkScan()).resolves.toEqual(RAW);
+  });
+
+  it("cancelScan invoca cancel_scan con { scanId } y propaga scan_not_found", async () => {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args });
+      return null;
+    });
+    await expect(cancelScan(7)).resolves.toBeUndefined();
+    expect(calls).toEqual([{ cmd: "cancel_scan", args: { scanId: 7 } }]);
+    mockIPC(() => {
+      throw { kind: "scan_not_found", message: "scan not found: 7" };
+    });
+    await expect(cancelScan(7)).rejects.toMatchObject({ kind: "scan_not_found" });
+  });
+
+  it("listJunkFindings envia los argumentos y decodifica la pagina", async () => {
+    const page = {
+      total: 3,
+      items: [
+        { id: 1, path: "C:/a", sizeBytes: 10, modifiedAt: 5, skipReason: null },
+        { id: 2, path: "C:/b", sizeBytes: 0, modifiedAt: null, skipReason: "reparse_point" },
+      ],
+    };
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args });
+      return page;
+    });
+    await expect(listJunkFindings(4, "temp_user", 100, 100)).resolves.toEqual(page);
+    expect(calls).toEqual([
+      { cmd: "list_junk_findings", args: { scanId: 4, category: "temp_user", offset: 100, limit: 100 } },
+    ]);
+  });
+
+  it("listJunkFindings rechaza paginas mal formadas con invalid_response", async () => {
+    const item = { id: 1, path: "C:/a", sizeBytes: 10, modifiedAt: 5, skipReason: null };
+    const bad: unknown[] = [
+      { total: -1, items: [] },
+      { total: 1, items: [{ ...item, sizeBytes: -1 }] },
+      { total: 1, items: [{ ...item, path: 5 }] },
+      { total: 1, items: [{ ...item, skipReason: 7 }] },
+      { total: 1, items: [{ ...item, modifiedAt: "ayer" }] },
+      { total: 1, items: "no" },
+      { items: [] },
+      null,
+    ];
+    for (const response of bad) {
+      mockIPC(() => response);
+      await expect(listJunkFindings(1, "temp_user", 0, 10)).rejects.toMatchObject({
+        kind: "invalid_response",
+      });
+    }
   });
 });

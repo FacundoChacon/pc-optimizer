@@ -4,13 +4,19 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::domain::junk::category::JunkCategory;
+use crate::domain::junk::model::{
+    CategoryResult, CategoryStatus, JunkFinding, JunkFindingPage, JunkScanResults, JunkScanSummary,
+    StoredFinding,
+};
 use crate::domain::model::{
     CleanupLogEntry, DEFAULT_SETTINGS, EpochMillis, NewCleanupLogEntry, NewScan, SCAN_RETENTION,
-    Scan, ScanId, ScanStatus, scans_to_prune,
+    Scan, ScanId, ScanKind, ScanStatus, scans_to_prune,
 };
 use crate::domain::ports::{
     AncestorPin, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem,
-    PortError, ScanStore, SensorSample, Sensors, SessionIdentity, SettingsStore, StoreError, Trash,
+    JunkFindingStore, PortError, RecycleBinInfo, RecycleBinUsage, ScanStore, SensorSample, Sensors,
+    SessionIdentity, SettingsStore, StoreError, Trash,
 };
 use crate::domain::privileges::UserSid;
 
@@ -452,6 +458,43 @@ impl Trash for FakeTrash {
     }
 }
 
+/// Consulta de la Papelera falsa: devuelve un valor o un error configurado y registra las raices
+/// consultadas.
+pub(crate) struct FakeRecycleBin {
+    result: Result<RecycleBinUsage, PortError>,
+    queried: Mutex<Vec<PathBuf>>,
+}
+
+impl FakeRecycleBin {
+    pub(crate) fn with_usage(items: u64, bytes: u64) -> Self {
+        Self {
+            result: Ok(RecycleBinUsage { items, bytes }),
+            queried: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn failing(error: PortError) -> Self {
+        Self {
+            result: Err(error),
+            queried: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Raices consultadas, en orden.
+    pub(crate) fn queried(&self) -> Vec<PathBuf> {
+        self.queried.lock().map(|q| q.clone()).unwrap_or_default()
+    }
+}
+
+impl RecycleBinInfo for FakeRecycleBin {
+    fn query(&self, volume_root: &Path) -> Result<RecycleBinUsage, PortError> {
+        if let Ok(mut queried) = self.queried.lock() {
+            queried.push(volume_root.to_path_buf());
+        }
+        self.result.clone()
+    }
+}
+
 /// Sensores guionados.
 pub(crate) struct FakeSensors {
     queue: VecDeque<Result<SensorSample, PortError>>,
@@ -489,6 +532,10 @@ struct StoreInner {
     next_scan_id: i64,
     log: Vec<CleanupLogEntry>,
     next_log_id: i64,
+    /// `(id, escaneo, hallazgo)`.
+    junk_findings: Vec<(i64, ScanId, JunkFinding)>,
+    junk_results: Vec<(ScanId, CategoryResult)>,
+    next_finding_id: i64,
 }
 
 /// Persistencia en memoria con el mismo comportamiento observable que SQLite.
@@ -511,6 +558,7 @@ impl InMemoryStore {
                 settings,
                 next_scan_id: 1,
                 next_log_id: 1,
+                next_finding_id: 1,
                 ..StoreInner::default()
             }),
         }
@@ -561,6 +609,13 @@ impl ScanStore for InMemoryStore {
         });
         let pruned = scans_to_prune(&inner.scans, SCAN_RETENTION);
         inner.scans.retain(|s| !pruned.contains(&s.id));
+        // Cascada como `ON DELETE CASCADE`: los hallazgos y resumenes caen con su escaneo.
+        inner
+            .junk_findings
+            .retain(|(_, scan, _)| !pruned.contains(scan));
+        inner
+            .junk_results
+            .retain(|(scan, _)| !pruned.contains(scan));
         Ok(id)
     }
 
@@ -637,6 +692,129 @@ impl CleanupLogStore for InMemoryStore {
         log.sort_by_key(|e| std::cmp::Reverse((e.ts, e.id)));
         log.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         Ok(log)
+    }
+}
+
+impl JunkFindingStore for InMemoryStore {
+    fn complete_junk_scan(
+        &self,
+        scan_id: ScanId,
+        results: &JunkScanResults,
+        finished_at: EpochMillis,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.lock()?;
+        let scan = inner
+            .scans
+            .iter()
+            .find(|s| s.id == scan_id)
+            .ok_or_else(|| StoreError::NotFound(format!("scan {}", scan_id.0)))?;
+        if scan.kind != ScanKind::Junk || scan.status != ScanStatus::Running {
+            return Err(StoreError::InvalidState(format!(
+                "scan {} is not a running junk scan",
+                scan_id.0
+            )));
+        }
+        // Se valida TODO antes de tocar el estado: el guardado es atomico.
+        let mut paths = std::collections::BTreeSet::new();
+        for finding in &results.findings {
+            if finding.path.is_empty() || i64::try_from(finding.size_bytes).is_err() {
+                return Err(StoreError::Constraint("invalid finding".into()));
+            }
+            if !paths.insert(finding.path.clone()) {
+                return Err(StoreError::Constraint("duplicate finding path".into()));
+            }
+        }
+        let mut categories = std::collections::BTreeSet::new();
+        for result in &results.categories {
+            let reasoned = matches!(
+                result.status,
+                CategoryStatus::Partial | CategoryStatus::Blocked
+            );
+            let counters = [
+                result.item_count,
+                result.size_bytes,
+                result.skipped_count,
+                result.inaccessible_count,
+            ];
+            if reasoned != result.block_reason.is_some()
+                || counters.iter().any(|c| i64::try_from(*c).is_err())
+                || !categories.insert(result.category.as_str())
+            {
+                return Err(StoreError::Constraint("invalid category result".into()));
+            }
+        }
+        let other_junk: Vec<ScanId> = inner
+            .scans
+            .iter()
+            .filter(|s| s.kind == ScanKind::Junk && s.id != scan_id)
+            .map(|s| s.id)
+            .collect();
+        inner
+            .junk_findings
+            .retain(|(_, scan, _)| !other_junk.contains(scan));
+        for finding in &results.findings {
+            let id = inner.next_finding_id;
+            inner.next_finding_id += 1;
+            inner.junk_findings.push((id, scan_id, finding.clone()));
+        }
+        inner
+            .junk_results
+            .extend(results.categories.iter().map(|r| (scan_id, *r)));
+        if let Some(scan) = inner.scans.iter_mut().find(|s| s.id == scan_id) {
+            scan.status = ScanStatus::Done;
+            scan.finished_at = Some(finished_at);
+        }
+        Ok(())
+    }
+
+    fn last_done_junk_scan(&self) -> Result<Option<JunkScanSummary>, StoreError> {
+        let inner = self.lock()?;
+        let latest = inner
+            .scans
+            .iter()
+            .filter(|s| s.kind == ScanKind::Junk && s.status == ScanStatus::Done)
+            .max_by_key(|s| (s.started_at, s.id));
+        Ok(latest.map(|scan| {
+            let mut categories: Vec<CategoryResult> = inner
+                .junk_results
+                .iter()
+                .filter(|(id, _)| *id == scan.id)
+                .map(|(_, result)| *result)
+                .collect();
+            categories.sort_by_key(|r| JunkCategory::ALL.iter().position(|c| *c == r.category));
+            JunkScanSummary {
+                scan: scan.clone(),
+                categories,
+            }
+        }))
+    }
+
+    fn list_junk_findings(
+        &self,
+        scan_id: ScanId,
+        category: JunkCategory,
+        offset: u64,
+        limit: u32,
+    ) -> Result<JunkFindingPage, StoreError> {
+        let inner = self.lock()?;
+        let mut mine: Vec<(i64, &JunkFinding)> = inner
+            .junk_findings
+            .iter()
+            .filter(|(_, scan, finding)| *scan == scan_id && finding.category == category)
+            .map(|(id, _, finding)| (*id, finding))
+            .collect();
+        mine.sort_by_key(|(id, finding)| (std::cmp::Reverse(finding.size_bytes), *id));
+        let total = mine.len() as u64;
+        let items = mine
+            .into_iter()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .map(|(id, finding)| StoredFinding {
+                id,
+                finding: finding.clone(),
+            })
+            .collect();
+        Ok(JunkFindingPage { total, items })
     }
 }
 
@@ -720,8 +898,36 @@ mod tests {
         let _: &dyn Trash = &trash;
         let clock = FixedClock(EpochMillis(1));
         let _: &dyn Clock = &clock;
+        let bin = FakeRecycleBin::with_usage(0, 0);
+        let _: &dyn RecycleBinInfo = &bin;
         let mut sensors = FakeSensors::new(vec![]);
         let _: &mut dyn Sensors = &mut sensors;
+    }
+
+    // --- FakeRecycleBin ---
+    #[test]
+    fn recycle_bin_fake_should_return_the_configured_usage_and_record_each_root() {
+        let bin = FakeRecycleBin::with_usage(12, 340_000_000);
+        let usage = bin.query(Path::new(r"C:\")).unwrap();
+        assert_eq!(
+            usage,
+            RecycleBinUsage {
+                items: 12,
+                bytes: 340_000_000
+            }
+        );
+        assert_eq!(bin.query(Path::new(r"D:\")).unwrap().items, 12);
+        assert_eq!(bin.queried(), vec![p(r"C:\"), p(r"D:\")]);
+    }
+
+    #[test]
+    fn recycle_bin_fake_should_return_the_configured_error_and_still_record_the_root() {
+        let bin = FakeRecycleBin::failing(PortError::PermissionDenied("papelera".into()));
+        assert_eq!(
+            bin.query(Path::new(r"C:\")),
+            Err(PortError::PermissionDenied("papelera".into()))
+        );
+        assert_eq!(bin.queried(), vec![p(r"C:\")]);
     }
 
     // --- FakeFileSystem ---
@@ -1195,5 +1401,46 @@ mod tests {
     fn in_memory_store_should_satisfy_log_contracts() {
         contract::contract_log(InMemoryStore::new);
         contract::contract_log_batch_is_atomic(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_junk_scan_round_trip() {
+        contract::contract_junk_scan_round_trip(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_junk_second_scan_purges_previous_findings_keeping_summaries()
+     {
+        contract::contract_junk_second_scan_purges_previous_findings_keeping_summaries(
+            InMemoryStore::new,
+        );
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_junk_failed_save_is_atomic() {
+        contract::contract_junk_failed_save_is_atomic(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_junk_complete_requires_a_running_junk_scan() {
+        contract::contract_junk_complete_requires_a_running_junk_scan(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_junk_findings_pagination() {
+        contract::contract_junk_findings_pagination(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_last_done_junk_scan_ignores_unfinished_and_other_kinds()
+     {
+        contract::contract_last_done_junk_scan_ignores_unfinished_and_other_kinds(
+            InMemoryStore::new,
+        );
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_junk_findings_follow_scan_retention() {
+        contract::contract_junk_findings_follow_scan_retention(InMemoryStore::new);
     }
 }

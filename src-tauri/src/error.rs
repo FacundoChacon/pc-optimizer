@@ -36,6 +36,18 @@ pub enum AppError {
     /// La base no necesita o no admite recuperacion.
     #[error("the local database cannot be recovered: {0}")]
     StoreNotRecoverable(String),
+    /// Ya hay un escaneo en curso (solo se admite uno a la vez).
+    #[error("a scan is already in progress")]
+    ScanInProgress,
+    /// El escaneo pedido no existe, no esta en curso o no es el ultimo terminado.
+    #[error("scan not found: {0}")]
+    ScanNotFound(String),
+    /// El tipo de escaneo pedido no esta soportado en esta version.
+    #[error("unsupported scan kind: {0}")]
+    ScanKindUnsupported(String),
+    /// Argumento fuera de rango o desconocido.
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
 }
 
 impl From<SettingsServiceError> for AppError {
@@ -91,6 +103,10 @@ impl AppError {
             Self::SettingInvalid(_) => "setting_invalid",
             Self::SettingReadOnly(_) => "setting_read_only",
             Self::StoreNotRecoverable(_) => "store_not_recoverable",
+            Self::ScanInProgress => "scan_in_progress",
+            Self::ScanNotFound(_) => "scan_not_found",
+            Self::ScanKindUnsupported(_) => "scan_kind_unsupported",
+            Self::InvalidArgument(_) => "invalid_argument",
         }
     }
 }
@@ -220,6 +236,35 @@ mod tests {
                 !upper.contains("SELECT") && !upper.contains("INSERT"),
                 "{upper}"
             );
+        }
+    }
+
+    #[test]
+    fn scan_errors_should_serialize_with_stable_kinds_and_context() {
+        let cases = [
+            (AppError::ScanInProgress, "scan_in_progress", None),
+            (
+                AppError::ScanNotFound("7".into()),
+                "scan_not_found",
+                Some("7"),
+            ),
+            (
+                AppError::ScanKindUnsupported("folders".into()),
+                "scan_kind_unsupported",
+                Some("folders"),
+            ),
+            (
+                AppError::InvalidArgument("limit".into()),
+                "invalid_argument",
+                Some("limit"),
+            ),
+        ];
+        for (error, kind, detail) in cases {
+            let value = serde_json::to_value(&error).unwrap();
+            assert_eq!(value["kind"], kind);
+            if let Some(detail) = detail {
+                assert!(value["message"].as_str().unwrap().contains(detail));
+            }
         }
     }
 }

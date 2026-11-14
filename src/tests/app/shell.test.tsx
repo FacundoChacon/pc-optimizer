@@ -60,7 +60,7 @@ describe("Layouts y NavList (8.2)", () => {
     const settings = screen.getByRole("button", { name: es.nav.settings });
     expect(home).toHaveAttribute("aria-current", "page");
     expect(settings).not.toHaveAttribute("aria-current");
-    expect(SCREENS.map((s) => s.label)).toEqual([es.nav.home, es.nav.settings]);
+    expect(SCREENS.map((s) => s.label)).toEqual([es.nav.home, es.nav.cleanup, es.nav.settings]);
   });
 
   it("avanzado: aside con nav y las mismas entradas, layout responsivo", async () => {
@@ -70,6 +70,7 @@ describe("Layouts y NavList (8.2)", () => {
     const nav = screen.getByRole("navigation", { name: es.nav.label });
     expect(aside).toContainElement(nav);
     expect(screen.getByRole("button", { name: es.nav.home })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: es.nav.cleanup })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: es.nav.settings })).toBeInTheDocument();
     const root = container.firstElementChild;
     expect(root).toHaveAttribute("data-density", "advanced");
@@ -120,6 +121,20 @@ describe("SkipLink y foco (8.3)", () => {
     expect(await screen.findByRole("heading", { level: 1, name: es.settings.title })).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveFocus();
     expect(screen.getByRole("button", { name: es.nav.settings })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Limpieza queda entre Inicio y Configuracion y se abre desde la navegacion", async () => {
+    installBackend();
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: es.home.title });
+    const labels = screen.getAllByRole("button").map((button) => button.textContent);
+    const expected: string[] = [es.nav.home, es.nav.cleanup, es.nav.settings];
+    const nav = labels.filter((text) => expected.includes(text ?? ""));
+    expect(nav).toEqual([es.nav.home, es.nav.cleanup, es.nav.settings]);
+    fireEvent.click(screen.getByRole("button", { name: es.nav.cleanup }));
+    expect(await screen.findByRole("heading", { level: 1, name: es.cleanup.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: es.nav.cleanup })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("main")).toHaveFocus();
   });
 });
 

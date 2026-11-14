@@ -23,6 +23,23 @@ Dominio de gobernanza **HIGH**. Este documento es la referencia operativa de RN-
 | `recycle_bin` | Papelera | Única acción permanente; doble confirmación; pregunta abierta PA-02 |
 | `custom_rule` | Reglas del usuario (v0.3) | Siempre sujetas a rutas protegidas |
 
+### Ubicaciones concretas de la detección (C-08)
+
+Derivadas de las carpetas que informa el SO (nunca rutas fijas). Cada hallazgo es un archivo y pasa por la verificación de protección.
+
+| Categoría | Ubicaciones | Alcance |
+|-----------|-------------|---------|
+| `temp_user` | Temporal del usuario; solo archivos con última escritura >= 24 h | Por-usuario |
+| `temp_windows` | `<Windows>\Temp`; solo archivos con última escritura >= 24 h | Máquina |
+| `browser_cache_chrome` / `_edge` / `_brave` | `<Local>\Google\Chrome` / `Microsoft\Edge` / `BraveSoftware\Brave-Browser`, luego `\User Data\<perfil>\{Cache, Code Cache, GPUCache}` | Por-usuario |
+| `browser_cache_firefox` | `<Local>\Mozilla\Firefox\Profiles\<perfil>\cache2` (nunca `<Roaming>`) | Por-usuario |
+| `old_logs` | Sin ubicaciones en esta versión (PA-15); antigüedad prevista >= 30 días | - |
+| `wu_cache` | `<Windows>\SoftwareDistribution\Download` | Máquina |
+| `thumbnail_cache` | `<Local>\Microsoft\Windows\Explorer`, solo primer nivel y solo `thumbcache_*.db` | Por-usuario |
+| `crash_dumps` | `<Local>\CrashDumps` (por-usuario); `<Windows>\Minidump`, `<ProgramData>\Microsoft\Windows\WER\ReportArchive` y `\ReportQueue` (máquina) | Mixto |
+| `recycle_bin` | Solo medida (cantidad y tamaño) de la Papelera del usuario en el volumen del sistema; sin listar ni modificar | Por-usuario |
+
+La detección no abre archivos para probar si están en uso: se omiten al limpiar.
 ## Rutas protegidas (nunca se tocan)
 
 | Ruta | Excepción permitida |

@@ -3,6 +3,7 @@
 pub mod app_info;
 pub mod names;
 pub mod privileges;
+pub mod scan;
 pub mod settings;
 pub mod store;
 

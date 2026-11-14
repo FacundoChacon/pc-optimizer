@@ -64,8 +64,14 @@ erDiagram
 - Retención: snapshots periódicos ~90 días (**Suposición:** solo top-N carpetas por nivel para acotar tamaño).
 
 ### junk_finding
-- `id`, `scan_id` FK, `category` TEXT (enum: `temp_user`, `temp_windows`, `browser_cache_chrome|edge|firefox|brave`, `old_logs`, `wu_cache`, `thumbnail_cache`, `crash_dumps`, `recycle_bin`, `custom_rule`), `path`, `size_bytes`, `protected_flag` (si cayó en ruta protegida, se persiste como omitido), `cleanup_rule_id` FK nullable.
-- Constraint: `category` en el enum de la whitelist (CHECK).
+- `id`, `scan_id` FK (ON DELETE CASCADE), `category` TEXT (enum: `temp_user`, `temp_windows`, `browser_cache_chrome|edge|firefox|brave`, `old_logs`, `wu_cache`, `thumbnail_cache`, `crash_dumps`, `recycle_bin`, `custom_rule`), `path` (ruta real), `size_bytes`, `modified_at` (epoch ms, nullable), `protected_flag` (si cayó en ruta protegida, se persiste como omitido), `skip_reason` (código estable del motivo; obligatorio solo si `protected_flag = 1`), `volume_serial` y `file_id` (identidad de archivo, hex de 32 caracteres; obligatorias solo si es elegible).
+- Un hallazgo es un archivo (nunca una carpeta). `cleanup_rule_id` se agrega con `custom_rule` en v0.3.
+- Constraints: `category` en el enum de la whitelist (CHECK); `UNIQUE(scan_id, path)`; índice `(scan_id, category, size_bytes DESC)`. Migración 002.
+- Retención: solo se conservan los hallazgos del último escaneo de basura `done`; al guardar uno nuevo se purgan los de los anteriores.
+
+### junk_category_result
+- `scan_id` FK (ON DELETE CASCADE), `category`, `scope` (`machine|per_user|mixed`), `status` (`done|partial|blocked|unavailable`), `block_reason` (`different_user|undetermined`, obligatorio solo en `partial`/`blocked`), `item_count`, `size_bytes`, `skipped_count`, `inaccessible_count`.
+- PK `(scan_id, category)`: una fila por categoría y escaneo, incluida `recycle_bin` (sin hallazgos). Retención: junto con su `scan` (cascada).
 
 ### duplicate_group / duplicate_file
 - `duplicate_group`: `id`, `scan_id`, `size_bytes`, `blake3` (hash completo, hex).
