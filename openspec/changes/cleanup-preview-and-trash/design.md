@@ -158,7 +158,14 @@ El riesgo más grave de usar el shell es que, si el volumen no tiene Papelera (d
 
 - **A (recomendada)**: compuerta en el apply (tarea 6.4) **antes de conectar la UI**: el dueño desactiva temporalmente la Papelera de `C:` para su usuario ("No mover archivos a la Papelera" en sus propiedades) y se corre un test `#[ignore]` que mueve **un archivo creado por el test en un `tempdir`**. Resultado esperado: `Err(BinUnavailable)` y el archivo sigue en su lugar, sin diálogos. Si en cambio el archivo desaparece o aparece un diálogo → **DETENER** y volver al dueño (opciones: preflight de la política en el registro — `HKCU/HKLM …\Policies\Explorer\NoRecycleFiles` y `…\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete` — o el adaptador propio de D-08 B). Se restaura la configuración al terminar.
 - Defensa adicional siempre activa: ante el primer `BinUnavailable` se **aborta** la ejecución (D-17), así un escenario no previsto afecta a lo sumo a un ítem.
-- B: preflight del registro desde el inicio (sin esperar la verificación). Agrega un adaptador de registro antes de C-16 y lee claves no documentadas formalmente; se reserva como contingencia.
+- B: preflight del registro desde el inicio (sin esperar la verificación). Agrega un adaptador de registro (solo lectura) y lee claves no documentadas formalmente. **ADOPTADA tras el fallo de la compuerta A (ver el resultado abajo).**
+- **Resultado de la compuerta (2026-11-14): A FALLÓ con `trash` solo → el dueño adoptó B (preflight del registro), y D-08 A (crate `trash`) se mantiene.** Con `C:` en `NukeOnDelete = 1`, `trash::delete` devolvió `Ok(())` y el archivo de prueba quedó destruido, ausente de la Papelera y sin diálogo: el crate NO falla por ítem, así que el aborto al primer `BinUnavailable` (D-17) nunca se dispara por sí solo. Diseño adoptado:
+  - **Puerto `RecycleBinPolicy`** (dominio, con doble `FakeRecycleBinPolicy`): `availability(path) -> Result<BinAvailability, PortError>`. La decisión es una **función pura** `evaluate_policy(RawBinPolicy)`: deshabilitada si `NoRecycleFiles != 0` en `HKLM` o `HKCU` (`Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`), o `NukeOnDelete != 0` global (`HKCU\...\Explorer\BitBucket`) o del volumen (`...\BitBucket\Volume\{GUID}\NukeOnDelete`); si no, habilitada con capacidad `MaxCapacity` (DWORD en **MB**; ausente = desconocida, no se omite por tamaño). `check_move` la cruza con el tamaño del archivo (`> capacidad` → `TooLarge`).
+  - **Adaptador de Windows** `adapters/windows/recycle_bin_policy.rs` (solo lectura; `RegGetValueW`, `GetVolumePathNameW`, `GetVolumeNameForVolumeMountPointW`; feature `Win32_System_Registry`, sin cambio en `Cargo.lock`). **Fail-closed**: clave o valor inexistente = default de Windows (habilitada); cualquier otro error de lectura (acceso denegado, tipo inesperado, volumen sin GUID) = `Err` = no disponible.
+  - **Control dentro del adaptador de Papelera, no salteable**: `WindowsTrash::move_to_trash` consulta la política del volumen del objetivo justo antes de cada `trash::delete`: deshabilitada o ilegible → `Err(BinUnavailable)`; tamaño verificado `>` capacidad → `Err(TooLarge)`; en ambos casos SIN llamar al shell.
+  - **Preflight de UX en el dominio**: `Trash::preflight(&Path)` se ejecuta una vez, con la ruta del primer ítem, antes de mover nada; si falla, `run_cleanup` aborta con `recycle_bin_unavailable` (o `trash_unavailable` si el mecanismo es inutilizable) sin mover ni registrar nada. El preview debe exponer la disponibilidad para advertir en la UI (campo `recycleBinAvailable` del DTO; tareas 7.3a y 8.4a).
+  - `TooLarge` por ítem sigue siendo `error` / `recycle_bin_too_small` y la ejecución continúa (sin cambios).
+  - Riesgos aceptados: ver Risks (claves de registro no documentadas formalmente; TOCTOU residual si el usuario deshabilita la Papelera a mitad de la ejecución).
 - "Ítem demasiado grande" (> capacidad máxima de la Papelera) también se verifica (`TooLarge`) en la misma compuerta si el dueño lo permite reduciendo la capacidad a 1 MB con un archivo de prueba de 2 MB; si no, queda como riesgo documentado.
 
 ### D-13 — Archivos bloqueados o en uso
@@ -186,7 +193,7 @@ Los detecta `prepare_delete` (C-03): atributos `RECALL_ON_DATA_ACCESS | RECALL_O
 
 Se detiene el bucle (sin procesar más ítems) y la respuesta trae `status: "aborted"` con `abortReason`:
 - `log_unavailable`: falla `append_cleanup_log` → no se sigue moviendo sin auditoría.
-- `recycle_bin_unavailable`: primer `BinUnavailable` (el ítem queda registrado como `error`).
+- `recycle_bin_unavailable`: el preflight de D-12 B falla antes de mover nada (no se registra ningún ítem) o, en la ventana de carrera, el primer `BinUnavailable` por ítem (el ítem queda registrado como `error`). Ya no se confía en que el crate `trash` produzca este error por sí solo (la compuerta mostró que destruye sin avisar): lo produce el control de política del adaptador.
 - `trash_unavailable`: `BackendUnavailable` (COM o pánico de `trash`).
 Lo ya movido queda en la Papelera y registrado.
 
@@ -302,6 +309,8 @@ Ninguna dependencia nueva. `trash` ya está fijado (pasa a tener consumidor; el 
 ## Risks / Trade-offs
 
 - [El shell destruye en vez de reciclar si la Papelera está deshabilitada o el ítem no entra] → `FOF_WANTNUKEWARNING` del crate, limpieza solo en el volumen del sistema (PA-12), compuerta empírica D-12 antes de la UI y aborto al primer `BinUnavailable`.
+- [Claves de registro no documentadas formalmente por Microsoft (`NukeOnDelete` y `MaxCapacity` por volumen, `NukeOnDelete` global)] → solo lectura, fail-closed ante cualquier error distinto de "no existe", decisión pura con tests por tabla y un test ignorado de solo lectura que imprime la política real; si Windows cambiara su significado, el efecto es negarse a mover, nunca destruir.
+- [TOCTOU residual: el usuario deshabilita la Papelera o reduce su capacidad DESPUÉS de la comprobación por ítem y antes de que el shell actúe] → la política se lee justo antes de cada `trash::delete` (ventana de milisegundos); aceptado por el dueño: a lo sumo afecta a un ítem elegible de la whitelist (temporales y cachés).
 - [Rendimiento: un `IFileOperation` por archivo] → progreso + cancelación; medición en el smoke; contingencia por lotes con aprobación (D-09).
 - [Pánico de `trash` al inicializar COM] → hilo dedicado + `catch_unwind` → `trash_unavailable` y aborto (D-10, D-17).
 - [Rutas largas (> 260) que el shell no acepta] → `error` / `path_too_long`, reportado; la caché con rutas largas queda.
@@ -334,7 +343,7 @@ Ninguna dependencia nueva. `trash` ya está fijado (pasa a tener consumidor; el 
 | D-07 | Migración | Ninguna (003 sigue reservada a C-07) |
 | D-08 | Backend de Papelera | Crate `trash` 5.3.0 (ya fijado), con hilo dedicado |
 | D-09 | Granularidad | Una llamada por ítem; lotes solo si el smoke supera ~20 ms/ítem y con nueva aprobación |
-| D-12 | Nunca permanente | Compuerta empírica con la Papelera deshabilitada antes de la UI + aborto al primer `BinUnavailable` |
+| D-12 | Nunca permanente | **B adoptada (2026-11-14, tras el fallo de la compuerta A)**: preflight de política del registro dentro del adaptador de Papelera + preflight de UX en el dominio; D-08 A (crate `trash`) se mantiene |
 | D-18 | Progreso/cancelación | `Channel`, aviso cada 32 ítems, cancelación entre ítems |
 | D-20 | Escaneo tras limpiar | `junk_finding` intacto; escaneo "limpiado" derivado del log; exige re-escanear |
 | D-21 | Superficie IPC | 3 comandos nuevos + `cleanedAt` en `get_last_junk_scan` |
@@ -425,3 +434,13 @@ _(Se completa durante el apply; lote 1 = grupos 1 a 5. Quedan para los lotes sig
 **6.6 revision de `unsafe`**: cantidad de `unsafe {` por archivo identica a HEAD (fs 2, fs_tests 1, known_folders 4, privileges 22, recycle_bin 1): 0 bloques nuevos; `trash.rs` y `trash_error.rs` no tienen `unsafe`. Comentario de `[lints.cargo]` actualizado (trash ya tiene consumidor). clippy `-D warnings` verde, `Cargo.lock` y `package-lock.json` sin cambios.
 
 **Conteos tras el lote 2**: lib 612 passed, 15 ignored (antes 604 / 8: +8 activos, +7 ignorados); `architecture` 9 (antes 5, +4); resto igual; fmt, clippy y `openspec validate --strict` verdes.
+
+### Lote 3 (grupo 6, D-12): compuerta FALLÓ con `trash` solo → preflight del registro (B)
+
+**Compuerta D-12: FALLÓ con `trash` solo** (2026-11-14, tarea 6.4 ejecutada por el orquestador con autorización del dueño): con `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{55d47c52-c40e-45dd-8616-c6f1342ecb74}\NukeOnDelete = 1` (Papelera de `C:` deshabilitada), `trash::delete` (trash 5.3.0; `IFileOperation` con `FOF_NO_UI | FOF_ALLOWUNDO | FOF_WANTNUKEWARNING`) devolvió `Ok(())` y el archivo de prueba fue **borrado de forma permanente** (confirmado ausente de la Papelera), sin diálogo. Se detuvo el apply; el dueño decidió D-12 B (gobernanza HIGH) y mantener D-08 A. El aborto de D-17 al primer `BinUnavailable` no se dispara porque el crate no devuelve error.
+
+**Política real leída de `C:`** (test ignorado de solo lectura `real_policy_should_print_the_values_read_for_the_system_volume`; no se escribe nada): `NoRecycleFiles` en HKLM y en HKCU = no existe; `BitBucket\NukeOnDelete` global = **no existe** en esta máquina (el adaptador lo lee igual y trata `!= 0` como deshabilitada; no se pudo confirmar que Windows lo honre); `Volume\{GUID}\NukeOnDelete` = 0; `MaxCapacity` = 24907 → `Enabled { max_capacity_bytes: Some(26116882432) }`. **Unidad de `MaxCapacity`: MB**, inferida: `C:` mide 456868 MB y 24907 MB es el 5,45 % del disco (en KB serían 24 MB, absurdo para una Papelera); no se pudo leer la ventana de propiedades de la Papelera desde el agente, por eso se pide al dueño confirmar el valor en pantalla. Si la clave del volumen no existiera, la capacidad queda desconocida (no se omite por tamaño) y la disponibilidad depende solo de los demás valores; esa situación no se observó y no se escribió el registro para provocarla.
+
+**Código del lote 3**: puerto `domain/ports/recycle_bin_policy.rs` (decisión pura + `check_move` / `check_for_move` + doble), `Trash::preflight` (puerto) usado una vez por `run_cleanup`, adaptador `adapters/windows/recycle_bin_policy.rs`, y control en `WindowsTrash::move_to_trash` antes de cada `trash::delete` (constructor inyectable `with_backend_and_policy`). `unsafe`: 3 bloques nuevos, todos en `recycle_bin_policy.rs` (`RegGetValueW`, `GetVolumePathNameW`, `GetVolumeNameForVolumeMountPointW`), cada uno con `// SAFETY:`; feature `Win32_System_Registry` habilitada sin cambios en `Cargo.lock`. El test de la compuerta (`real_trash_should_refuse_with_bin_unavailable_and_keep_the_file_when_the_recycle_bin_is_disabled`) mantiene su contrato y NO se corrió en este lote; la tarea 6.4 queda para que el orquestador la repita con el registro alternado.
+
+**Conteos tras el lote 3**: lib 632 passed, 16 ignored (antes 612 / 15: +20 activos, +1 ignorado de solo lectura); `architecture` 9, resto igual; Vitest 227 sin cambios; fmt, clippy `-D warnings`, `Cargo.lock` y `package-lock.json` sin cambios, `openspec validate --strict` válido.

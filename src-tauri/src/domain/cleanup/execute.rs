@@ -1,5 +1,6 @@
 //! Ejecucion de la limpieza (design D-05, D-06, D-13..D-18).
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::domain::junk::category::CategoryScope;
@@ -82,6 +83,17 @@ where
     let mut tally = Tally::new(&preview);
     let mut status = CleanupStatus::Completed;
     let mut last_reported = 0;
+    // D-12 B: una sola comprobacion de la Papelera antes de mover el primer elemento. Si falla
+    // (o su politica no pudo leerse) no se toca nada ni se registra nada como movido.
+    if let Some(first) = preview.items().first()
+        && let Err(error) = trash.preflight(Path::new(&first.path))
+    {
+        status = CleanupStatus::Aborted(match error {
+            TrashError::BackendUnavailable => AbortReason::TrashUnavailable,
+            _ => AbortReason::RecycleBinUnavailable,
+        });
+        return tally.finish(status, started_at, clock.now());
+    }
     for item in preview.items() {
         // El item en curso siempre termina: la cancelacion solo se mira entre items.
         if cancel.load(Ordering::SeqCst) {

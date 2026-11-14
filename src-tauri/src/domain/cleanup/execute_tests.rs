@@ -871,6 +871,82 @@ fn run_cleanup_should_abort_at_the_first_unavailable_recycle_bin() {
 }
 
 #[test]
+fn run_cleanup_should_abort_before_any_move_when_the_preflight_says_the_bin_is_unavailable() {
+    let specs = three_temp();
+    let fs = Arc::new(fs_of(&specs));
+    let trash = FakeTrash::new(Arc::clone(&fs)).preflight_fails(TrashError::BinUnavailable);
+    let log = InMemoryStore::new();
+
+    let summary = run(preview_of(&specs), &fs, &trash, &log);
+
+    assert_eq!(
+        summary.status,
+        CleanupStatus::Aborted(AbortReason::RecycleBinUnavailable)
+    );
+    assert!(logged(&log).is_empty(), "nada se registra como movido");
+    assert!(trash.moved().is_empty());
+    for spec in &specs {
+        assert!(fs.exists(Path::new(&spec.path)));
+        assert_eq!(fs.call_count(FsOp::Pin, &spec.path), 0);
+    }
+    assert_eq!(
+        (
+            summary.processed,
+            summary.not_processed,
+            summary.moved_count
+        ),
+        (0, 3, 0)
+    );
+}
+
+#[test]
+fn run_cleanup_should_abort_before_any_move_when_the_preflight_says_the_backend_is_unusable() {
+    let specs = three_temp();
+    let fs = Arc::new(fs_of(&specs));
+    let trash = FakeTrash::new(Arc::clone(&fs)).preflight_fails(TrashError::BackendUnavailable);
+    let log = InMemoryStore::new();
+
+    let summary = run(preview_of(&specs), &fs, &trash, &log);
+
+    assert_eq!(
+        summary.status,
+        CleanupStatus::Aborted(AbortReason::TrashUnavailable)
+    );
+    assert!(logged(&log).is_empty());
+    assert!(trash.moved().is_empty());
+}
+
+#[test]
+fn run_cleanup_should_treat_any_other_preflight_failure_as_an_unavailable_recycle_bin() {
+    let specs = three_temp();
+    let fs = Arc::new(fs_of(&specs));
+    let trash = FakeTrash::new(Arc::clone(&fs)).preflight_fails(TrashError::Other("io_0x5".into()));
+    let log = InMemoryStore::new();
+
+    let summary = run(preview_of(&specs), &fs, &trash, &log);
+
+    assert_eq!(
+        summary.status,
+        CleanupStatus::Aborted(AbortReason::RecycleBinUnavailable)
+    );
+    assert!(trash.moved().is_empty());
+}
+
+#[test]
+fn run_cleanup_should_run_the_preflight_exactly_once_on_the_first_item_path() {
+    let specs = three_temp();
+    let fs = Arc::new(fs_of(&specs));
+    let trash = FakeTrash::new(Arc::clone(&fs));
+    let log = InMemoryStore::new();
+
+    let summary = run(preview_of(&specs), &fs, &trash, &log);
+
+    assert_eq!(summary.status, CleanupStatus::Completed);
+    assert_eq!(trash.preflight_calls(), vec![PathBuf::from(&specs[0].path)]);
+    assert_eq!(trash.moved().len(), 3);
+}
+
+#[test]
 fn run_cleanup_should_abort_when_the_trash_backend_is_unusable() {
     let specs = three_temp();
     let fs = Arc::new(fs_of(&specs));

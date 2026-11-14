@@ -14,9 +14,10 @@ use crate::domain::model::{
     Scan, ScanId, ScanKind, ScanStatus, scans_to_prune,
 };
 use crate::domain::ports::{
-    AncestorPin, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem,
-    JunkFindingStore, PortError, RecycleBinInfo, RecycleBinUsage, ScanStore, SensorSample, Sensors,
-    SessionIdentity, SettingsStore, StoreError, Trash, TrashError,
+    AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity,
+    FileMeta, FileSystem, JunkFindingStore, PortError, RecycleBinInfo, RecycleBinPolicy,
+    RecycleBinUsage, ScanStore, SensorSample, Sensors, SessionIdentity, SettingsStore, StoreError,
+    Trash, TrashError,
 };
 use crate::domain::privileges::UserSid;
 use crate::domain::protection::service::DeleteTarget;
@@ -444,9 +445,26 @@ pub(crate) struct FakeTrash {
     hooks: Mutex<BTreeMap<PathBuf, BeforeMove>>,
     no_ops: Mutex<std::collections::BTreeSet<PathBuf>>,
     moved: Mutex<Vec<PathBuf>>,
+    preflight_error: Mutex<Option<TrashError>>,
+    preflight_calls: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeTrash {
+    /// La comprobacion previa falla con `error` (Papelera no disponible).
+    pub(crate) fn preflight_fails(self, error: TrashError) -> Self {
+        if let Ok(mut e) = self.preflight_error.lock() {
+            *e = Some(error);
+        }
+        self
+    }
+
+    pub(crate) fn preflight_calls(&self) -> Vec<PathBuf> {
+        self.preflight_calls
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn new(fs: Arc<FakeFileSystem>) -> Self {
         Self {
             fs,
@@ -454,6 +472,8 @@ impl FakeTrash {
             hooks: Mutex::new(BTreeMap::new()),
             no_ops: Mutex::new(std::collections::BTreeSet::new()),
             moved: Mutex::new(Vec::new()),
+            preflight_error: Mutex::new(None),
+            preflight_calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -491,6 +511,17 @@ fn poisoned() -> TrashError {
 }
 
 impl Trash for FakeTrash {
+    fn preflight(&self, sample: &Path) -> Result<(), TrashError> {
+        self.preflight_calls
+            .lock()
+            .map_err(|_| poisoned())?
+            .push(sample.to_path_buf());
+        match self.preflight_error.lock().map_err(|_| poisoned())?.clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     fn move_to_trash(&self, target: &DeleteTarget) -> Result<(), TrashError> {
         let path = target.path();
         if let Some(hook) = self.hooks.lock().map_err(|_| poisoned())?.get(path) {
@@ -982,6 +1013,42 @@ impl SessionIdentity for FakeSessionIdentity {
 
     fn logon_user(&self) -> Result<Option<UserSid>, PortError> {
         self.logon_user.clone()
+    }
+}
+
+/// Politica de la Papelera falsa: devuelve una disponibilidad o un error configurado y registra
+/// las rutas consultadas.
+pub(crate) struct FakeRecycleBinPolicy {
+    result: Result<BinAvailability, PortError>,
+    queried: Mutex<Vec<PathBuf>>,
+}
+
+impl FakeRecycleBinPolicy {
+    pub(crate) fn with(availability: BinAvailability) -> Self {
+        Self {
+            result: Ok(availability),
+            queried: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn failing(error: PortError) -> Self {
+        Self {
+            result: Err(error),
+            queried: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn queried(&self) -> Vec<PathBuf> {
+        self.queried.lock().map(|q| q.clone()).unwrap_or_default()
+    }
+}
+
+impl RecycleBinPolicy for FakeRecycleBinPolicy {
+    fn availability(&self, path: &Path) -> Result<BinAvailability, PortError> {
+        if let Ok(mut q) = self.queried.lock() {
+            q.push(path.to_path_buf());
+        }
+        self.result.clone()
     }
 }
 

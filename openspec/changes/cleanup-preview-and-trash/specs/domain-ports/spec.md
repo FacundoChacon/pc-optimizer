@@ -48,3 +48,30 @@ La persistencia SHALL ofrecer a la limpieza, en contratos separados, la lectura 
 #### Scenario: Consumidor de la limpieza
 - **WHEN** la limpieza arma un preview y registra resultados
 - **THEN** depende solo de los contratos de escaneos, hallazgos y log de limpieza, sin depender de configuración
+
+### Requirement: Política de la Papelera antes de mover
+El sistema SHALL ofrecer un puerto de política de la Papelera que, para el volumen de una ruta, informe si la Papelera está disponible (no deshabilitada por `NukeOnDelete` del volumen o global ni por la política `NoRecycleFiles` de máquina o de usuario) y su capacidad máxima; la decisión MUST ser una función pura de los valores crudos. Una lectura que falle por cualquier motivo distinto de "no existe la clave o el valor" MUST tratarse como Papelera no disponible (fail-closed); "no existe" equivale al valor por defecto de Windows (habilitada, capacidad desconocida: no se omite por tamaño). El adaptador de Papelera MUST consultar esta política inmediatamente antes de mover cada elemento y negarse sin invocar al mecanismo del sistema cuando esté deshabilitada (o ilegible) o el tamaño verificado del elemento supere la capacidad, porque el mecanismo del sistema destruye el archivo sin informar error en esos casos. El puerto de Papelera MUST ofrecer además una comprobación previa única por ejecución.
+
+#### Scenario: Papelera deshabilitada por NukeOnDelete
+- **WHEN** el valor `NukeOnDelete` del volumen vale 1 y se intenta mover un archivo
+- **THEN** el puerto devuelve "Papelera no disponible", no invoca al mecanismo del sistema y el archivo sigue en su lugar
+
+#### Scenario: Papelera deshabilitada por política
+- **WHEN** `NoRecycleFiles` vale 1 en la política de máquina o de usuario
+- **THEN** la decisión es "no disponible" aunque no haya `NukeOnDelete`
+
+#### Scenario: Política ilegible
+- **WHEN** la lectura de la política falla por un error distinto de "no existe" (por ejemplo acceso denegado o tipo inesperado)
+- **THEN** el puerto devuelve "Papelera no disponible" y no invoca al mecanismo del sistema
+
+#### Scenario: Clave o valor inexistente
+- **WHEN** ninguna clave ni valor de política existe para el volumen
+- **THEN** la Papelera se considera habilitada y sin límite de tamaño conocido
+
+#### Scenario: Elemento mayor que la capacidad
+- **WHEN** el tamaño verificado del elemento supera la capacidad máxima de la Papelera del volumen
+- **THEN** el puerto devuelve "elemento demasiado grande", no invoca al mecanismo del sistema y el archivo sigue en su lugar
+
+#### Scenario: Comprobación previa
+- **WHEN** la limpieza comprueba la Papelera antes de mover el primer elemento y la política la declara no disponible
+- **THEN** devuelve "Papelera no disponible" sin mover nada

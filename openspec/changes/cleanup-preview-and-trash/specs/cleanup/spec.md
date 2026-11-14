@@ -153,11 +153,27 @@ Todo ítem que se limpie SHALL moverse a la Papelera; el sistema MUST NOT borrar
 
 #### Scenario: Papelera deshabilitada en el volumen
 - **WHEN** la Papelera del volumen del sistema está deshabilitada y se confirma una limpieza
-- **THEN** el primer ítem queda `error` con detalle `recycle_bin_unavailable`, el archivo sigue en su lugar y la ejecución se aborta sin intentar los demás
+- **THEN** el archivo sigue en su lugar, no se destruye nada y la ejecución se aborta con `recycle_bin_unavailable` sin intentar los demás (por la comprobación previa, o por el control por ítem del adaptador si la política cambió a mitad de la ejecución)
 
 #### Scenario: Ítem más grande que la Papelera
 - **WHEN** la Papelera rechaza un ítem por tamaño
 - **THEN** el ítem queda `error` con detalle `recycle_bin_too_small`, el archivo sigue en su lugar y el resto continúa
+
+#### Scenario: Papelera deshabilitada detectada antes de mover
+- **WHEN** la política de la Papelera del volumen del sistema la declara deshabilitada (`NukeOnDelete`, `NoRecycleFiles`) o no puede leerse, y se confirma una limpieza
+- **THEN** la ejecución se aborta con `recycle_bin_unavailable` antes de mover el primer ítem, no se mueve ni se registra ningún ítem y todos los archivos siguen en su lugar
+
+#### Scenario: Control por ítem dentro del adaptador
+- **WHEN** la política cambia a deshabilitada o ilegible entre el preflight y un ítem
+- **THEN** el adaptador de Papelera se niega a moverlo sin invocar al shell, el ítem queda `error` con detalle `recycle_bin_unavailable` y la ejecución se aborta
+
+#### Scenario: Ítem mayor que la capacidad máxima de la Papelera
+- **WHEN** el tamaño verificado de un ítem supera la capacidad máxima configurada de la Papelera del volumen
+- **THEN** el adaptador se niega a moverlo sin invocar al shell, el ítem queda `error` con detalle `recycle_bin_too_small` y el resto continúa
+
+#### Scenario: Aviso en el preview
+- **WHEN** se arma el preview con la Papelera deshabilitada o con política ilegible
+- **THEN** el preview informa que la Papelera no está disponible para que la interfaz advierta y no ofrezca confirmar
 
 #### Scenario: Ninguna ruta de código borra de forma permanente
 - **WHEN** se revisa el código de producción

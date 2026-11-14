@@ -6,6 +6,7 @@ pub mod clock;
 pub mod error;
 pub mod fs;
 pub mod recycle_bin;
+pub mod recycle_bin_policy;
 pub mod sensors;
 pub mod session;
 pub mod store;
@@ -22,6 +23,10 @@ pub use clock::Clock;
 pub use error::PortError;
 pub use fs::{AncestorPin, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem};
 pub use recycle_bin::{RecycleBinInfo, RecycleBinUsage};
+pub use recycle_bin_policy::{
+    BinAvailability, DisabledReason, RawBinPolicy, RecycleBinPolicy, check_for_move, check_move,
+    evaluate_policy,
+};
 pub use sensors::{SensorSample, Sensors};
 pub use session::SessionIdentity;
 pub use store::{CleanupLogStore, JunkFindingStore, ScanStore, SettingsStore, Store, StoreError};

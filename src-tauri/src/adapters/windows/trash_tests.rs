@@ -116,6 +116,148 @@ fn drop_should_finish_the_dedicated_thread() {
     ));
 }
 
+// ---------------------------------------------------------------- politica (D-12 B)
+
+const POLICY_FILE: &str = r"C:\Users\ana\AppData\Local\Temp\pcopt-policy.tmp";
+const POLICY_MB: u64 = 1024 * 1024;
+
+/// `DeleteTarget` de un archivo falso de `size` bytes (sin tocar el disco real).
+fn fake_target(size: u64) -> crate::domain::protection::service::DeleteTarget {
+    use crate::domain::ports::fakes::FakeFileSystem;
+    use crate::domain::protection::decision::ProtectionDecision;
+    use crate::domain::protection::test_support::ctx_c_ana;
+
+    let old = crate::domain::model::EpochMillis(1_000);
+    let fs = FakeFileSystem::new()
+        .canonical_as_is()
+        .with_dir(r"C:\Users")
+        .with_dir(r"C:\Users\ana")
+        .with_dir(r"C:\Users\ana\AppData")
+        .with_dir(r"C:\Users\ana\AppData\Local")
+        .with_dir(r"C:\Users\ana\AppData\Local\Temp")
+        .with_file(POLICY_FILE, size, Some(old));
+    let service = PathProtection::new(&fs, Ok(ctx_c_ana()));
+    let checked = match service.check(Path::new(POLICY_FILE)) {
+        ProtectionDecision::Allowed(checked) => checked,
+        other => panic!("deberia ser elegible: {other:?}"),
+    };
+    match service.prepare_delete(&checked) {
+        Ok(target) => target,
+        Err(decision) => panic!("prepare_delete rechazo: {decision:?}"),
+    }
+}
+
+/// Papelera con backend contador y la politica dada; devuelve tambien el contador del backend.
+fn policy_trash(
+    policy: crate::domain::ports::fakes::FakeRecycleBinPolicy,
+) -> (
+    WindowsTrash,
+    Arc<AtomicUsize>,
+    Arc<crate::domain::ports::fakes::FakeRecycleBinPolicy>,
+) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let policy = Arc::new(policy);
+    let trash = WindowsTrash::with_backend_and_policy(
+        move |_path: &Path| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+        Arc::clone(&policy),
+    )
+    .unwrap();
+    (trash, calls, policy)
+}
+
+fn enabled(limit_mb: Option<u64>) -> crate::domain::ports::BinAvailability {
+    crate::domain::ports::BinAvailability::Enabled {
+        max_capacity_bytes: limit_mb.map(|mb| mb * POLICY_MB),
+    }
+}
+
+#[test]
+fn move_to_trash_should_never_call_the_backend_when_the_policy_says_disabled() {
+    use crate::domain::ports::fakes::FakeRecycleBinPolicy;
+    use crate::domain::ports::{BinAvailability, DisabledReason};
+    let (trash, calls, policy) = policy_trash(FakeRecycleBinPolicy::with(
+        BinAvailability::Disabled(DisabledReason::NukeOnDeleteVolume),
+    ));
+
+    assert_eq!(
+        trash.move_to_trash(&fake_target(10)),
+        Err(TrashError::BinUnavailable)
+    );
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(policy.queried(), vec![PathBuf::from(POLICY_FILE)]);
+}
+
+#[test]
+fn move_to_trash_should_never_call_the_backend_when_the_file_exceeds_the_capacity() {
+    use crate::domain::ports::fakes::FakeRecycleBinPolicy;
+    let (trash, calls, _policy) = policy_trash(FakeRecycleBinPolicy::with(enabled(Some(1))));
+
+    assert_eq!(
+        trash.move_to_trash(&fake_target(POLICY_MB + 1)),
+        Err(TrashError::TooLarge)
+    );
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn move_to_trash_should_never_call_the_backend_when_the_policy_cannot_be_read() {
+    use crate::domain::ports::PortError;
+    use crate::domain::ports::fakes::FakeRecycleBinPolicy;
+    let (trash, calls, _policy) = policy_trash(FakeRecycleBinPolicy::failing(PortError::Io(
+        "registry read failed".into(),
+    )));
+
+    assert_eq!(
+        trash.move_to_trash(&fake_target(10)),
+        Err(TrashError::BinUnavailable)
+    );
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn move_to_trash_should_call_the_backend_once_when_the_bin_is_enabled_and_the_file_fits() {
+    use crate::domain::ports::fakes::FakeRecycleBinPolicy;
+    for limit in [Some(1), None] {
+        let (trash, calls, _policy) = policy_trash(FakeRecycleBinPolicy::with(enabled(limit)));
+
+        assert_eq!(trash.move_to_trash(&fake_target(POLICY_MB)), Ok(()));
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "limite {limit:?}");
+    }
+}
+
+#[test]
+fn preflight_should_refuse_when_disabled_or_unreadable_and_accept_when_enabled_without_the_backend()
+{
+    use crate::domain::ports::fakes::FakeRecycleBinPolicy;
+    use crate::domain::ports::{BinAvailability, DisabledReason, PortError};
+    let sample = Path::new(POLICY_FILE);
+
+    let (disabled, calls, _p) = policy_trash(FakeRecycleBinPolicy::with(
+        BinAvailability::Disabled(DisabledReason::PolicyUser),
+    ));
+    assert_eq!(disabled.preflight(sample), Err(TrashError::BinUnavailable));
+    let (unknown, unknown_calls, _p) =
+        policy_trash(FakeRecycleBinPolicy::failing(PortError::Io("x".into())));
+    assert_eq!(unknown.preflight(sample), Err(TrashError::BinUnavailable));
+    let (ok, ok_calls, _p) = policy_trash(FakeRecycleBinPolicy::with(enabled(Some(1))));
+    assert_eq!(ok.preflight(sample), Ok(()));
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst)
+            + unknown_calls.load(Ordering::SeqCst)
+            + ok_calls.load(Ordering::SeqCst),
+        0
+    );
+}
+
 // ---------------------------------------------------------------- ayudas para los reales
 
 /// Contexto sin usuario con todas las anclas bajo una carpeta inexistente de la unidad del

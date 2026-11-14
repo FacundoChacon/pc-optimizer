@@ -1,5 +1,7 @@
 //! Puerto de la Papelera de reciclaje.
 
+use std::path::Path;
+
 use crate::domain::protection::service::DeleteTarget;
 
 /// Por que no se pudo mover un elemento a la Papelera.
@@ -35,5 +37,10 @@ pub enum TrashError {
 /// adaptador MUST NOT seguir el ultimo componente: si el objetivo resulta ser un enlace, se
 /// mueve el enlace y no su destino.
 pub trait Trash {
+    /// Comprobacion UNA vez por ejecucion, antes de mover el primer elemento (D-12 B): `Err` si
+    /// la Papelera del volumen de `sample` no esta disponible o su politica no pudo leerse. No
+    /// reemplaza el control por elemento que hace `move_to_trash`.
+    fn preflight(&self, sample: &Path) -> Result<(), TrashError>;
+
     fn move_to_trash(&self, target: &DeleteTarget) -> Result<(), TrashError>;
 }
