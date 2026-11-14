@@ -20,6 +20,11 @@
     "allow-cancel-cleanup",
     "allow-prepare-empty-recycle-bin",
     "allow-acknowledge-empty-recycle-bin",
-    "allow-empty-recycle-bin"
+    "allow-empty-recycle-bin",
+    "allow-start-duplicate-scan",
+    "allow-get-last-duplicate-scan",
+    "allow-list-duplicate-groups",
+    "allow-preview-duplicate-cleanup",
+    "allow-confirm-duplicate-cleanup"
   ]
 }

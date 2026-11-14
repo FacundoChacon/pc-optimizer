@@ -10,8 +10,11 @@
 //! - El borrado de las copias que el usuario decida solo ocurre por `cleanup::run_cleanup`
 //!   (Papelera, re-verificacion y log), con una verificacion adicional del contenido.
 
+pub mod decision;
+pub mod guard;
 pub mod hash;
 pub mod model;
+pub mod preview;
 pub mod roots;
 pub mod scanner;
 pub mod walk;

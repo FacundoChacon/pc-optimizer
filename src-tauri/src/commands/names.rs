@@ -20,4 +20,9 @@ pub const APP_COMMANDS: &[&str] = &[
     "prepare_empty_recycle_bin",
     "acknowledge_empty_recycle_bin",
     "empty_recycle_bin",
+    "start_duplicate_scan",
+    "get_last_duplicate_scan",
+    "list_duplicate_groups",
+    "preview_duplicate_cleanup",
+    "confirm_duplicate_cleanup",
 ];

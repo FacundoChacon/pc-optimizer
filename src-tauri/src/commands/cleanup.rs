@@ -18,7 +18,9 @@ use crate::adapters::clock::SystemClock;
 use crate::adapters::sqlite::StoreHandle;
 use crate::adapters::windows::trash::WindowsTrash;
 use crate::adapters::windows::{UserFolderSource, WindowsFileSystem, resolve_protection_context};
-use crate::domain::cleanup::execute::{CleanupObserver, run_cleanup};
+use crate::domain::cleanup::execute::{
+    CleanupObserver, NoGuard, PROGRESS_EVERY_ITEMS, run_cleanup,
+};
 use crate::domain::cleanup::lifecycle::{PreviewSlot, SlotError};
 use crate::domain::cleanup::model::{
     CleanupPreview, CleanupStatus, CleanupSummary, PreviewCategoryStatus, PreviewId,
@@ -26,6 +28,7 @@ use crate::domain::cleanup::model::{
 use crate::domain::cleanup::preview::{
     PreviewError, PreviewInput, build_preview, validate_categories,
 };
+use crate::domain::duplicates::preview::DuplicateCleanupPreview;
 use crate::domain::junk::category::JunkCategory;
 use crate::domain::model::ScanId;
 use crate::domain::ports::{Clock, FileSystem, Store, Trash, TrashError};
@@ -73,7 +76,7 @@ pub struct CleanupPreviewDto {
 }
 
 impl CleanupPreviewDto {
-    fn new(preview: &CleanupPreview, recycle_bin_available: bool) -> Self {
+    pub(super) fn new(preview: &CleanupPreview, recycle_bin_available: bool) -> Self {
         Self {
             preview_id: preview.id().0,
             scan_id: preview.scan_id().0,
@@ -230,13 +233,32 @@ pub struct CleanupPreviews(Arc<PreviewsInner>);
 
 impl CleanupPreviews {
     /// Identificador siguiente: contador monotono desde 1.
-    fn next_id(&self) -> PreviewId {
+    pub(super) fn next_id(&self) -> PreviewId {
         // Solo es un contador: no ordena otros accesos a memoria.
         PreviewId(self.0.next_id.fetch_add(1, Ordering::Relaxed) + 1)
     }
 
     fn store(&self, preview: CleanupPreview) {
         lock(&self.0.slot).store(preview);
+    }
+
+    /// Guarda un preview de duplicados (reemplaza al activo, de cualquier tipo).
+    pub(super) fn store_duplicates(&self, preview: DuplicateCleanupPreview) {
+        lock(&self.0.slot).store_duplicates(preview);
+    }
+
+    /// Consume el preview de duplicados `id`; uno de basura con ese id es `preview_not_found`.
+    pub(super) fn take_duplicates(
+        &self,
+        id: PreviewId,
+        now: crate::domain::model::EpochMillis,
+    ) -> Result<DuplicateCleanupPreview, AppError> {
+        lock(&self.0.slot)
+            .take_duplicates(id, now)
+            .map_err(|error| match error {
+                SlotError::PreviewNotFound => AppError::PreviewNotFound,
+                SlotError::PreviewExpired => AppError::PreviewExpired,
+            })
     }
 
     fn take(
@@ -344,7 +366,7 @@ where
     Ok(dto)
 }
 
-fn recycle_bin_available<T: Trash>(
+pub(super) fn recycle_bin_available<T: Trash>(
     preview: &CleanupPreview,
     make_trash: impl FnOnce() -> Result<T, TrashError>,
 ) -> bool {
@@ -436,6 +458,8 @@ where
             preview_id: id.0,
             emit,
         },
+        &mut NoGuard,
+        PROGRESS_EVERY_ITEMS,
     );
     Ok(CleanupSummaryDto::from(&summary))
 }

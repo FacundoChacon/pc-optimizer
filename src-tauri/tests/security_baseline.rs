@@ -547,7 +547,7 @@ fn real_capabilities_should_have_no_forbidden_permissions() {
 }
 
 #[test]
-fn the_three_empty_recycle_bin_commands_should_be_granted_without_any_core_permission() {
+fn the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_core_permission() {
     let capabilities = load_capabilities().unwrap();
     let permissions: Vec<String> = capabilities
         .iter()
@@ -563,6 +563,12 @@ fn the_three_empty_recycle_bin_commands_should_be_granted_without_any_core_permi
         "allow-prepare-empty-recycle-bin",
         "allow-acknowledge-empty-recycle-bin",
         "allow-empty-recycle-bin",
+        // C-11: exactamente cinco permisos propios nuevos para duplicados.
+        "allow-start-duplicate-scan",
+        "allow-get-last-duplicate-scan",
+        "allow-list-duplicate-groups",
+        "allow-preview-duplicate-cleanup",
+        "allow-confirm-duplicate-cleanup",
     ] {
         assert_eq!(
             permissions.iter().filter(|p| *p == expected).count(),
@@ -575,7 +581,7 @@ fn the_three_empty_recycle_bin_commands_should_be_granted_without_any_core_permi
             .iter()
             .filter(|p| p.starts_with("allow-"))
             .count(),
-        16
+        21
     );
     assert!(permissions.iter().all(|p| !p.starts_with("core:")));
 }

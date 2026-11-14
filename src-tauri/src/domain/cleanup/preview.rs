@@ -41,6 +41,26 @@ pub struct PreviewInput<'a> {
     pub id: PreviewId,
 }
 
+/// Arma un preview con las filas PROPIAS de una fuente distinta de la basura (copias duplicadas en
+/// C-11, el asistente en C-21): la fuente es responsable de haber validado las filas y de los
+/// totales de sus categorias. No toca el disco; `run_cleanup` aplica igualmente toda la
+/// re-verificacion a cada item.
+pub fn assemble_preview(
+    id: PreviewId,
+    scan_id: ScanId,
+    created_at: EpochMillis,
+    categories: Vec<PreviewCategory>,
+    items: Vec<CleanupItem>,
+) -> CleanupPreview {
+    CleanupPreview {
+        id,
+        scan_id,
+        created_at,
+        categories,
+        items,
+    }
+}
+
 /// `recycle_bin` (solo se mide) y `old_logs` (sin ubicaciones) no son limpiables (D-02).
 fn is_cleanable(category: JunkCategory) -> bool {
     !matches!(category, JunkCategory::RecycleBin | JunkCategory::OldLogs)
@@ -97,7 +117,7 @@ pub fn build_preview(input: PreviewInput<'_>) -> Result<CleanupPreview, PreviewE
     let mut items = Vec::new();
     for category in requested {
         let mut result = PreviewCategory {
-            category,
+            category: category.into(),
             status: PreviewCategoryStatus::Included,
             item_count: 0,
             size_bytes: 0,
@@ -127,7 +147,7 @@ pub fn build_preview(input: PreviewInput<'_>) -> Result<CleanupPreview, PreviewE
             result.size_bytes += finding.size_bytes;
             items.push(CleanupItem {
                 finding_id: stored.id,
-                category,
+                category: category.into(),
                 path: finding.path.clone(),
                 size_bytes: finding.size_bytes,
                 modified_at: finding.modified_at,

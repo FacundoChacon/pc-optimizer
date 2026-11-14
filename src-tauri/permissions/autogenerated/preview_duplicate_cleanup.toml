@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-duplicate-cleanup"
+description = "Enables the preview_duplicate_cleanup command without any pre-configured scope."
+commands.allow = ["preview_duplicate_cleanup"]
+
+[[permission]]
+identifier = "deny-preview-duplicate-cleanup"
+description = "Denies the preview_duplicate_cleanup command without any pre-configured scope."
+commands.deny = ["preview_duplicate_cleanup"]
