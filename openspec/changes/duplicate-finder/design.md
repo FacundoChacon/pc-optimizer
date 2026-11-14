@@ -458,4 +458,20 @@ Confirmadas contra el fuente de `windows-0.62.2` y `blake3-1.8.7` (`~/.cargo/reg
 - Los textos nuevos viven en `es.duplicates.*`, `es.errors.*` (4 kinds) y dos familias nuevas de `cleanupReasons` (`unreadable`, `kept_missing`); `uiLiterals.test.ts` verde.
 - Conteos al cerrar la Parte 4: Vitest 22 archivos, **445** tests (línea base 366); `npm run build` verde.
 
-_(Se completa durante el apply.)_
+### Conteos finales (tarea 10.1) frente a la línea base de 1.1
+
+| Suite | Línea base | Final |
+|---|---|---|
+| Vitest (`npm test`) | 19 archivos, 366 | 22 archivos, **445** |
+| `cargo test` lib | 736 passed + 17 ignored | **935 passed + 19 ignored** |
+| `tests/architecture` | 17 | **19** (+ `kept` solo en la resolución y su ayudante) |
+| `tests/manifest` | 5 | 5 |
+| `tests/no_network_crates` | 9 | 9 |
+| `tests/security_baseline` | 22 | 22 (permisos propios 16 → 21, 0 `core:*`) |
+
+`npm run build`, `cargo fmt --check`, `cargo clippy --all-targets --all-features --locked -- -D warnings` y `openspec validate duplicate-finder --strict`: verdes. `package-lock.json`, `src-tauri/Cargo.lock` y `tauri.conf.json` sin cambios (ninguna dependencia nueva). Los 2 `#[ignore]` nuevos: symlink de archivo y archivo solo en la nube (`PCOPT_CLOUD_FILE`).
+
+### Pendiente para el smoke (tareas 10.3 y 10.4)
+
+El smoke guiado con el dueño sigue `smoke-guide.md` (escrita, sin ejecutar nada). Tras el smoke: anotar sus resultados y tiempos (D-24) acá, cerrar `CHANGES.md` C-11 con estado y desvíos, y confirmar `openspec validate duplicate-finder --strict`.
+
