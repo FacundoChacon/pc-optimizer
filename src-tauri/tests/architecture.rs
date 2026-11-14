@@ -221,16 +221,29 @@ fn domain_layer_should_not_import_io_os_database_or_framework() {
 // ---------------------------------------------------------------------------------------------
 
 /// Llamadas de borrado que el codigo de produccion no puede contener: todo borrado pasa por
-/// `Trash::move_to_trash`. La unica excepcion declarada (vaciar la Papelera, RN-LIM-06) llegara
-/// con su propio change y su propia excepcion en este test.
-const FORBIDDEN_DELETION_TOKENS: [&str; 7] = [
+/// `Trash::move_to_trash`. La unica excepcion declarada (vaciar la Papelera, RN-LIM-06, C-10) esta
+/// en [`DECLARED_PERMANENT_EXCEPTIONS`].
+const FORBIDDEN_DELETION_TOKENS: [&str; 8] = [
     "remove_file",
     "remove_dir",
     "DeleteFileW",
     "SHEmptyRecycleBin",
+    "SHERB_",
     "SHFileOperation",
     "FOF_",
     "delete_all",
+];
+
+/// El archivo de la unica excepcion: el vaciado de la Papelera (C-10, RN-LIM-06).
+const EMPTY_ADAPTER: &str = "src/adapters/windows/recycle_bin_empty.rs";
+
+/// Excepciones declaradas al borrado permanente: `(token, archivo relativo al crate, maximo de
+/// ocurrencias en produccion)`. La llamada que vacia aparece exactamente una vez; las banderas
+/// `SHERB_*` son tres (sin confirmacion, sin progreso, sin sonido). Ampliar esta lista exige un
+/// change aprobado por el dueno.
+const DECLARED_PERMANENT_EXCEPTIONS: [(&str, &str, usize); 2] = [
+    ("SHEmptyRecycleBin", EMPTY_ADAPTER, 1),
+    ("SHERB_", EMPTY_ADAPTER, 3),
 ];
 
 /// Archivos que son solo de test aunque no esten bajo `#[cfg(test)]` en su propio contenido.
@@ -278,12 +291,54 @@ fn strip_cfg_test_items(code: &str) -> String {
 }
 
 /// Tokens de borrado prohibidos presentes en una fuente de produccion (comentarios y bloques
-/// `#[cfg(test)]` no cuentan).
-fn forbidden_deletion_calls(source: &str) -> Vec<&'static str> {
+/// `#[cfg(test)]` no cuentan). `rel_path` es la ruta del archivo relativa al crate (con `/`): una
+/// excepcion declarada se tolera solo en su archivo y hasta su maximo de ocurrencias.
+fn forbidden_deletion_calls(source: &str, rel_path: &str) -> Vec<&'static str> {
     let production = strip_cfg_test_items(&compact_code(source));
     FORBIDDEN_DELETION_TOKENS
         .into_iter()
-        .filter(|token| production.contains(token))
+        .filter(|token| {
+            let allowed = DECLARED_PERMANENT_EXCEPTIONS
+                .iter()
+                .find(|(t, file, _)| t == token && *file == rel_path)
+                .map_or(0, |(_, _, max)| *max);
+            production.matches(token).count() > allowed
+        })
+        .collect()
+}
+
+/// Identificadores del contrato de vaciado que solo puede usar el flujo de vaciado (D-12).
+const EMPTY_CONTRACT_IDENTIFIERS: [&str; 3] = [
+    "RecycleBinEmptier",
+    "WindowsRecycleBinEmptier",
+    "run_empty_recycle_bin",
+];
+
+/// Lista CERRADA de archivos (o carpetas, con `/` final) de produccion que pueden nombrar el
+/// contrato de vaciado. Un scheduler, las mejoras o la bandeja que lo usen rompen el test.
+const EMPTY_CONTRACT_ALLOWED: [&str; 7] = [
+    "src/domain/ports/recycle_bin_empty.rs",
+    "src/domain/ports/mod.rs",
+    "src/domain/recycle_bin/",
+    "src/adapters/windows/recycle_bin_empty.rs",
+    "src/adapters/windows/mod.rs",
+    "src/commands/recycle_bin.rs",
+    "src/lib.rs",
+];
+
+/// Identificadores del contrato de vaciado usados en una fuente de produccion fuera de la lista
+/// cerrada (comentarios y `#[cfg(test)]` no cuentan).
+fn empty_contract_uses(source: &str, rel_path: &str) -> Vec<&'static str> {
+    let allowed = EMPTY_CONTRACT_ALLOWED
+        .iter()
+        .any(|entry| rel_path == *entry || (entry.ends_with('/') && rel_path.starts_with(entry)));
+    if allowed {
+        return Vec::new();
+    }
+    let production = strip_cfg_test_items(&compact_code(source));
+    EMPTY_CONTRACT_IDENTIFIERS
+        .into_iter()
+        .filter(|identifier| contains_path(&production, identifier))
         .collect()
 }
 
@@ -304,7 +359,7 @@ mod deletion_scanner_tests {
         ];
         for source in cases {
             assert!(
-                !forbidden_deletion_calls(source).is_empty(),
+                !forbidden_deletion_calls(source, "src/other.rs").is_empty(),
                 "no detecto: {source}"
             );
         }
@@ -316,13 +371,106 @@ mod deletion_scanner_tests {
                    #[cfg(test)]\nmod tests { fn t() { std::fs::remove_file(p).unwrap(); } }\n\
                    #[cfg(test)]\n#[path = \"x_tests.rs\"]\nmod more;\n\
                    fn after() {}\n";
-        assert_eq!(forbidden_deletion_calls(src), Vec::<&str>::new());
+        assert_eq!(
+            forbidden_deletion_calls(src, "src/other.rs"),
+            Vec::<&str>::new()
+        );
     }
 
     #[test]
     fn forbidden_deletion_calls_should_still_scan_code_after_a_cfg_test_block() {
         let src = "#[cfg(test)]\nmod tests { fn t() {} }\nfn bad() { std::fs::remove_file(p); }\n";
-        assert_eq!(forbidden_deletion_calls(src), vec!["remove_file"]);
+        assert_eq!(
+            forbidden_deletion_calls(src, "src/other.rs"),
+            vec!["remove_file"]
+        );
+    }
+
+    const CALL: &str = "fn empty() { windows::Win32::UI::Shell::SHEmptyRecycleBinW(None, r, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND); }";
+
+    #[test]
+    fn forbidden_deletion_calls_should_tolerate_the_declared_exception_in_its_own_file() {
+        assert_eq!(
+            forbidden_deletion_calls(CALL, EMPTY_ADAPTER),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn forbidden_deletion_calls_should_detect_the_exception_in_any_other_file() {
+        for other in [
+            "src/commands/scan.rs",
+            "src/adapters/windows/trash.rs",
+            "src/domain/recycle_bin/execute.rs",
+        ] {
+            assert_eq!(
+                forbidden_deletion_calls(CALL, other),
+                vec!["SHEmptyRecycleBin", "SHERB_"],
+                "{other}"
+            );
+        }
+    }
+
+    #[test]
+    fn forbidden_deletion_calls_should_detect_a_second_call_in_the_declared_file() {
+        let twice = format!("{CALL}\n{CALL}");
+        assert_eq!(
+            forbidden_deletion_calls(&twice, EMPTY_ADAPTER),
+            vec!["SHEmptyRecycleBin", "SHERB_"]
+        );
+    }
+
+    #[test]
+    fn forbidden_deletion_calls_should_ignore_the_exception_in_comments_and_test_items() {
+        let src = "// SHEmptyRecycleBinW(None, r, SHERB_NOSOUND)\n\
+                   #[cfg(test)]\nmod tests { fn t() { SHEmptyRecycleBinW(None, r, SHERB_NOSOUND); } }\n";
+        assert_eq!(
+            forbidden_deletion_calls(src, "src/other.rs"),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn empty_contract_uses_should_tolerate_the_closed_list_and_detect_everything_else() {
+        let src = "fn f(e: &impl RecycleBinEmptier) { run_empty_recycle_bin(a); WindowsRecycleBinEmptier::new(); }";
+        for allowed in [
+            "src/commands/recycle_bin.rs",
+            "src/domain/recycle_bin/execute.rs",
+            "src/adapters/windows/recycle_bin_empty.rs",
+            "src/lib.rs",
+        ] {
+            assert_eq!(
+                empty_contract_uses(src, allowed),
+                Vec::<&str>::new(),
+                "{allowed}"
+            );
+        }
+        for other in [
+            "src/commands/scan.rs",
+            "src/scheduler.rs",
+            "src/commands/cleanup.rs",
+            "src/domain/improvements/apply.rs",
+        ] {
+            assert_eq!(
+                empty_contract_uses(src, other),
+                vec![
+                    "RecycleBinEmptier",
+                    "WindowsRecycleBinEmptier",
+                    "run_empty_recycle_bin"
+                ],
+                "{other}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_contract_uses_should_not_flag_lookalikes_comments_or_test_items() {
+        let src = "// RecycleBinEmptier\nfn f() { let my_run_empty_recycle_bin_x = 1; }\n\
+                   #[cfg(test)]\nmod tests { fn t() { run_empty_recycle_bin(a); } }\n";
+        assert_eq!(
+            empty_contract_uses(src, "src/commands/scan.rs"),
+            Vec::<&str>::new()
+        );
     }
 }
 
@@ -338,7 +486,7 @@ fn production_code_should_not_contain_permanent_deletion_calls() {
     let mut violations = Vec::new();
     for file in files.iter().filter(|f| !is_test_only_file(f)) {
         let source = std::fs::read_to_string(file).unwrap();
-        for token in forbidden_deletion_calls(&source) {
+        for token in forbidden_deletion_calls(&source, &relative_to_crate(file)) {
             violations.push(format!("{}: {token}", file.display()));
         }
     }
@@ -346,4 +494,38 @@ fn production_code_should_not_contain_permanent_deletion_calls() {
         violations.is_empty(),
         "borrado permanente en produccion: {violations:#?}"
     );
+}
+
+/// Ruta de `file` relativa al crate y con `/` (`src/adapters/...`).
+fn relative_to_crate(file: &Path) -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    file.strip_prefix(root)
+        .unwrap_or(file)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+#[test]
+fn permanent_empty_contract_should_only_be_used_by_the_empty_flow() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = rust_files_under(&src_dir).unwrap();
+    let mut violations = Vec::new();
+    for file in files.iter().filter(|f| !is_test_only_file(f)) {
+        let source = std::fs::read_to_string(file).unwrap();
+        for identifier in empty_contract_uses(&source, &relative_to_crate(file)) {
+            violations.push(format!("{}: {identifier}", file.display()));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "el contrato de vaciado solo lo usa el flujo de vaciado: {violations:#?}"
+    );
+}
+
+#[test]
+fn the_declared_exception_file_should_contain_exactly_the_single_call() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join(EMPTY_ADAPTER);
+    let source = std::fs::read_to_string(file).unwrap();
+    let production = strip_cfg_test_items(&compact_code(&source));
+    assert_eq!(production.matches("SHEmptyRecycleBin").count(), 1);
 }

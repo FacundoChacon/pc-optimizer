@@ -6,6 +6,7 @@ pub mod fs;
 pub mod known_folders;
 pub mod privileges;
 pub mod recycle_bin;
+pub mod recycle_bin_empty;
 pub mod recycle_bin_policy;
 pub mod trash;
 pub(crate) mod trash_error;
