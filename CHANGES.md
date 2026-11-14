@@ -267,7 +267,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/12_ui_modos_simple_avanzado.md` §Mapa de pantallas
 
 ### [C-08] `junk-detection`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (archivado 2026-11-13)
 - **Scope**:
   - Nota C-05: consumir `scope_access(ctx, UserScope::PerUser)` para bloquear categorías por-usuario en mismatch y `restrict_protection_context` al resolver el contexto de protección.
   - Migración 002 (`002_junk.sql`, aprobado 2026-11-13; C-07 pasa a 003): `junk_finding` (CHECK `category` en el enum whitelist, `protected_flag`, `skip_reason`, identidad de archivo) y `junk_category_result` (resumen por categoría).
