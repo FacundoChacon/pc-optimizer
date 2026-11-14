@@ -87,12 +87,12 @@ describe("CleanupScreen: Limpiar y el preview", () => {
     expect(screen.queryByRole("button", { name: es.cleanup.clean })).toBeNull();
   });
 
-  it("no ofrece ninguna accion que borre, elimine o vacie sin pasar por el preview", async () => {
+  it("no ofrece ninguna accion que borre o elimine; vaciar la Papelera es su propio flujo y no aparece dentro del preview", async () => {
     await openCleanup();
-    expect(screen.queryByRole("button", { name: /borrar|eliminar|vaciar/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /borrar|eliminar/i })).toBeNull();
     fireEvent.click(cleanButton());
-    await screen.findByRole("alertdialog", { name: es.cleanup.previewTitle });
-    expect(screen.queryByRole("button", { name: /borrar|eliminar|vaciar/i })).toBeNull();
+    const dialog = await screen.findByRole("alertdialog", { name: es.cleanup.previewTitle });
+    expect(within(dialog).queryByRole("button", { name: /borrar|eliminar|vaciar/i })).toBeNull();
   });
 
   it("con el escaneo ya limpiado muestra el aviso con la fecha, sin Limpiar, y Buscar basura primaria", async () => {

@@ -701,3 +701,133 @@ export async function confirmCleanup(
 export async function cancelCleanup(previewId: number): Promise<void> {
   await call<unknown>("cancel_cleanup", { previewId });
 }
+
+/** Espejo de `commands::recycle_bin::EmptyRequestDto` (Rust): paso 1, la Papelera medida. Sin rutas. */
+export interface EmptyRequest {
+  requestId: number;
+  itemCount: number;
+  sizeBytes: number;
+  createdAt: number;
+  expiresAt: number;
+}
+
+/** Espejo de `commands::recycle_bin::EmptyAckDto` (Rust): paso 2, con el token que autoriza el paso 3. */
+export interface EmptyAck {
+  requestId: number;
+  confirmToken: number;
+  itemCount: number;
+  sizeBytes: number;
+  expiresAt: number;
+}
+
+/** Como termino un vaciado (espejo de `EmptyStatus::as_str`), decidido por medicion posterior. */
+export type EmptyStatus = "emptied" | "partial" | "failed" | "unverified";
+
+/** Espejo de `commands::recycle_bin::EmptyResultDto` (Rust). `itemsAfter`/`bytesAfter` son `null` si no se pudo medir despues. */
+export interface EmptyResult {
+  status: EmptyStatus;
+  itemsBefore: number;
+  bytesBefore: number;
+  itemsAfter: number | null;
+  bytesAfter: number | null;
+  freedBytes: number;
+  /** Codigo estable (`partial`, `not_emptied`, `unverified`, `permission_denied`, ...); `null` con `emptied`. */
+  detail: string | null;
+  /** `false` si el vaciado ocurrio pero no se pudo guardar su registro. */
+  logged: boolean;
+  finishedAt: number;
+}
+
+function decodeEmptyRequest(raw: unknown, command: string): EmptyRequest {
+  if (isRecord(raw)) {
+    const { requestId, itemCount, sizeBytes, createdAt, expiresAt } = raw;
+    if (
+      isCount(requestId) &&
+      isCount(itemCount) &&
+      isCount(sizeBytes) &&
+      isCount(createdAt) &&
+      isCount(expiresAt)
+    ) {
+      return { requestId, itemCount, sizeBytes, createdAt, expiresAt };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeEmptyAck(raw: unknown, command: string): EmptyAck {
+  if (isRecord(raw)) {
+    const { requestId, confirmToken, itemCount, sizeBytes, expiresAt } = raw;
+    if (
+      isCount(requestId) &&
+      isCount(confirmToken) &&
+      isCount(itemCount) &&
+      isCount(sizeBytes) &&
+      isCount(expiresAt)
+    ) {
+      return { requestId, confirmToken, itemCount, sizeBytes, expiresAt };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeEmptyStatus(value: unknown): EmptyStatus | null {
+  return value === "emptied" || value === "partial" || value === "failed" || value === "unverified"
+    ? value
+    : null;
+}
+
+function decodeEmptyResult(raw: unknown, command: string): EmptyResult {
+  if (isRecord(raw)) {
+    const status = decodeEmptyStatus(raw["status"]);
+    const { itemsBefore, bytesBefore, itemsAfter, bytesAfter, freedBytes, detail, logged, finishedAt } = raw;
+    const afterKnown = isCount(itemsAfter) && isCount(bytesAfter);
+    const afterUnknown = itemsAfter === null && bytesAfter === null;
+    if (
+      status !== null &&
+      isCount(itemsBefore) &&
+      isCount(bytesBefore) &&
+      (afterKnown || afterUnknown) &&
+      isCount(freedBytes) &&
+      (detail === null || (typeof detail === "string" && DETAIL_CODE.test(detail))) &&
+      typeof logged === "boolean" &&
+      isCount(finishedAt)
+    ) {
+      return {
+        status,
+        itemsBefore,
+        bytesBefore,
+        itemsAfter: afterKnown ? itemsAfter : null,
+        bytesAfter: afterKnown ? bytesAfter : null,
+        freedBytes,
+        detail,
+        logged,
+        finishedAt,
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+/**
+ * Paso 1 del vaciado: mide la Papelera del disco del sistema y crea la solicitud. No vacia nada.
+ * No lleva argumentos: el volumen lo decide el backend.
+ */
+export async function prepareEmptyRecycleBin(): Promise<EmptyRequest> {
+  return decodeEmptyRequest(await call<unknown>("prepare_empty_recycle_bin"), "prepare_empty_recycle_bin");
+}
+
+/** Paso 2: primera confirmacion; el backend entrega el token del paso 3. */
+export async function acknowledgeEmptyRecycleBin(requestId: number): Promise<EmptyAck> {
+  return decodeEmptyAck(
+    await call<unknown>("acknowledge_empty_recycle_bin", { requestId }),
+    "acknowledge_empty_recycle_bin",
+  );
+}
+
+/** Paso 3: segunda confirmacion con el token. IRREVERSIBLE: elimina para siempre lo que haya en la Papelera. */
+export async function emptyRecycleBin(requestId: number, confirmToken: number): Promise<EmptyResult> {
+  return decodeEmptyResult(
+    await call<unknown>("empty_recycle_bin", { requestId, confirmToken }),
+    "empty_recycle_bin",
+  );
+}

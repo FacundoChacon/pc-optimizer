@@ -5,6 +5,9 @@ import type {
   CleanupEvent,
   CleanupPreview,
   CleanupSummary,
+  EmptyAck,
+  EmptyRequest,
+  EmptyResult,
   JunkCategory,
   JunkFinding,
   JunkScanSummary,
@@ -29,7 +32,10 @@ export type BackendCommand =
   | "list_junk_findings"
   | "preview_cleanup"
   | "confirm_cleanup"
-  | "cancel_cleanup";
+  | "cancel_cleanup"
+  | "prepare_empty_recycle_bin"
+  | "acknowledge_empty_recycle_bin"
+  | "empty_recycle_bin";
 
 export interface BackendCall {
   cmd: string;
@@ -57,6 +63,13 @@ export interface BackendState {
   cleanupEvents: CleanupEvent[];
   /** Lo que devuelve confirm_cleanup al terminar; marca el ultimo escaneo como limpiado. */
   cleanupResult: CleanupSummary | null;
+  /** La Papelera simulada: lo que mide `prepare` y lo que `empty` compara antes de vaciar. */
+  bin: { itemCount: number; sizeBytes: number };
+  /** Como termina `empty_recycle_bin` y en que queda la Papelera simulada. */
+  emptyOutcome: Pick<
+    EmptyResult,
+    "status" | "itemsAfter" | "bytesAfter" | "freedBytes" | "detail" | "logged"
+  >;
   /** Comandos que deben fallar con este error. */
   failures: Partial<Record<BackendCommand, AppError>>;
   /** Errores de una sola vez por comando: cada llamada consume el primero de la cola. */
@@ -102,6 +115,15 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     preview: preview(),
     cleanupEvents: [],
     cleanupResult: null,
+    bin: { itemCount: 12, sizeBytes: 340_000_000 },
+    emptyOutcome: {
+      status: "emptied",
+      itemsAfter: 0,
+      bytesAfter: 0,
+      freedBytes: 340_000_000,
+      detail: null,
+      logged: true,
+    },
     failures: {},
     failureQueue: {},
     gates: {},
@@ -113,6 +135,21 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
   let cleanupChannel: Channel<unknown> | null = null;
   let sentCleanupEvents = 0;
   let previewCounter = 0;
+  let emptyCounter = 0;
+  // Protocolo de 3 pasos del backend simulado: una solicitud vigente, con lo medido al prepararla.
+  let emptyRequest: {
+    id: number;
+    itemCount: number;
+    sizeBytes: number;
+    token: number | null;
+  } | null = null;
+
+  const blockedInMismatch = (): void => {
+    const privilege = state.privilege as { status?: unknown; reason?: unknown };
+    if (privilege.status === "mismatch") {
+      throw { kind: "recycle_bin_blocked", message: `blocked: ${String(privilege.reason)}` };
+    }
+  };
 
   const emit = (events: readonly ScanEvent[]): void => {
     if (scanChannel === null) return;
@@ -205,6 +242,61 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
       }
       case "cancel_cleanup":
         return null;
+      case "prepare_empty_recycle_bin": {
+        blockedInMismatch();
+        if (state.bin.itemCount === 0) throw { kind: "recycle_bin_already_empty", message: "empty" };
+        emptyCounter += 1;
+        emptyRequest = { id: emptyCounter, ...state.bin, token: null };
+        const created: EmptyRequest = {
+          requestId: emptyCounter,
+          itemCount: state.bin.itemCount,
+          sizeBytes: state.bin.sizeBytes,
+          createdAt: 1_800_000_000_000,
+          expiresAt: 1_800_000_120_000,
+        };
+        return created;
+      }
+      case "acknowledge_empty_recycle_bin": {
+        blockedInMismatch();
+        const { requestId } = args as { requestId: number };
+        if (emptyRequest === null || emptyRequest.id !== requestId || emptyRequest.token !== null) {
+          throw { kind: "empty_request_not_found", message: "not found" };
+        }
+        emptyRequest.token = 4_294_967_296 + emptyRequest.id;
+        const acknowledged: EmptyAck = {
+          requestId,
+          confirmToken: emptyRequest.token,
+          itemCount: emptyRequest.itemCount,
+          sizeBytes: emptyRequest.sizeBytes,
+          expiresAt: 1_800_000_120_000,
+        };
+        return acknowledged;
+      }
+      case "empty_recycle_bin": {
+        blockedInMismatch();
+        const { requestId, confirmToken } = args as { requestId: number; confirmToken: number };
+        const taken = emptyRequest;
+        emptyRequest = null;
+        if (taken === null || taken.id !== requestId) {
+          throw { kind: "empty_request_not_found", message: "not found" };
+        }
+        if (taken.token === null) throw { kind: "empty_not_acknowledged", message: "not acknowledged" };
+        if (taken.token !== confirmToken) throw { kind: "empty_request_not_found", message: "not found" };
+        if (taken.itemCount !== state.bin.itemCount || taken.sizeBytes !== state.bin.sizeBytes) {
+          throw { kind: "recycle_bin_changed", message: "changed" };
+        }
+        const outcome = state.emptyOutcome;
+        if (outcome.itemsAfter !== null && outcome.bytesAfter !== null) {
+          state.bin = { itemCount: outcome.itemsAfter, sizeBytes: outcome.bytesAfter };
+        }
+        const finished: EmptyResult = {
+          ...outcome,
+          itemsBefore: taken.itemCount,
+          bytesBefore: taken.sizeBytes,
+          finishedAt: 1_800_000_001_000,
+        };
+        return finished;
+      }
       default:
         throw { kind: "internal", message: `unknown command ${cmd}` };
     }

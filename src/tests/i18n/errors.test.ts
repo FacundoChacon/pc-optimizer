@@ -23,6 +23,14 @@ const KINDS = [
   "scan_already_cleaned",
   "cleanup_in_progress",
   "nothing_to_clean",
+  "empty_request_not_found",
+  "empty_request_expired",
+  "empty_not_acknowledged",
+  "recycle_bin_changed",
+  "recycle_bin_already_empty",
+  "recycle_bin_blocked",
+  "recycle_bin_unavailable",
+  "recycle_bin_empty_in_progress",
 ] as const;
 
 describe("errorMessage", () => {

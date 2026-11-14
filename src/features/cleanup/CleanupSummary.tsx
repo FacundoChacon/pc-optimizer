@@ -15,6 +15,10 @@ interface CleanupSummaryCardProps {
   focusRequested: boolean;
   onFocused: () => void;
   onScanAgain: () => void;
+  /** "Vaciar Papelera…" junto a la nota del espacio; `undefined` = no se ofrece. */
+  onEmptyBin?: (() => void) | undefined;
+  /** La Papelera es de otra cuenta (mismatch): se explica en vez de ofrecer vaciarla. */
+  binBlocked?: boolean;
 }
 
 const CELL = "border-b border-border-strong px-2 py-1 text-left";
@@ -27,6 +31,8 @@ export function CleanupSummaryCard({
   focusRequested,
   onFocused,
   onScanAgain,
+  onEmptyBin,
+  binBlocked = false,
 }: CleanupSummaryCardProps) {
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -65,6 +71,14 @@ export function CleanupSummaryCard({
         </p>
       )}
       {summary.movedCount > 0 && <p className="text-content-muted">{es.cleanup.summarySpaceNote}</p>}
+      {summary.movedCount > 0 && onEmptyBin !== undefined && (
+        <div>
+          <Button onClick={onEmptyBin}>{es.recycleBin.emptyAction}</Button>
+        </div>
+      )}
+      {summary.movedCount > 0 && binBlocked && (
+        <p className="text-content-muted">{es.recycleBin.blockedMismatch}</p>
+      )}
       {lines
         .filter(([value]) => value > 0)
         .map(([value, template]) => (

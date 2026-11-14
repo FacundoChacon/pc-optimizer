@@ -73,14 +73,15 @@ describe("CleanupScreen: estados y resultados", () => {
     expect(screen.getByText(es.cleanup.inUseNotice)).toBeInTheDocument();
   });
 
-  it("la unica accion que limpia es Limpiar (abre el preview); no hay borrar, eliminar ni vaciar", async () => {
+  it("la unica accion que limpia es Limpiar (abre el preview); vaciar la Papelera es otro flujo (C-10)", async () => {
     const backend = await openCleanup({ lastScan: RESULT });
     await screen.findByRole("region", { name: names.temp_user });
     const risky = screen.getAllByRole("button").filter((button) =>
       /limpiar|borrar|eliminar|vaciar|mover/i.test(button.textContent ?? ""),
     );
-    expect(risky.map((button) => button.textContent)).toEqual([es.cleanup.clean]);
+    expect(risky.map((button) => button.textContent)).toEqual([es.cleanup.clean, es.recycleBin.emptyAction]);
     expect(backend.count("confirm_cleanup")).toBe(0);
+    expect(backend.count("empty_recycle_bin")).toBe(0);
   });
 
   it("blocked por otra cuenta: texto del catalogo, insignia de advertencia y sin tamano", async () => {
