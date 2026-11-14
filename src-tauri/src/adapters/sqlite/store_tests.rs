@@ -103,6 +103,28 @@ fn sqlite_store_should_satisfy_contract_junk_findings_follow_scan_retention() {
     with_temp_stores(|make| contract::contract_junk_findings_follow_scan_retention(make));
 }
 
+// --- C-11: duplicados ---
+#[test]
+fn sqlite_store_should_satisfy_the_duplicates_contract() {
+    use crate::domain::ports::duplicates_store_contract as dup;
+    with_temp_stores(|make| {
+        dup::contract_round_trip(make);
+        dup::contract_failed_save_is_atomic(make);
+        dup::contract_invalid_results_are_rejected(make);
+        dup::contract_complete_requires_a_running_duplicates_scan(make);
+        dup::contract_second_scan_purges_previous_groups_keeping_the_scan(make);
+        dup::contract_junk_findings_are_untouched_by_a_duplicates_scan(make);
+        dup::contract_last_done_ignores_unfinished_and_other_kinds(make);
+        dup::contract_groups_order_by_reclaimable_bytes_then_id(make);
+        dup::contract_filters_and_pagination(make);
+        dup::contract_get_groups_only_returns_those_of_the_scan(make);
+        dup::contract_resolve_marks_only_the_kept_copies(make);
+        dup::contract_resolve_rejects_invalid_resolutions_without_changes(make);
+        dup::contract_resolve_twice_fails_keeping_the_first_resolution(make);
+        dup::contract_groups_follow_scan_retention(make);
+    });
+}
+
 // --- C-09: candidatos de limpieza y fecha de limpieza ---
 #[test]
 fn sqlite_store_should_satisfy_contract_cleanup_candidates() {
@@ -124,7 +146,7 @@ fn sqlite_store_should_satisfy_contract_scan_cleaned_at() {
 }
 
 #[test]
-fn recycle_bin_emptied_rows_should_stay_append_only_on_schema_version_2() {
+fn recycle_bin_emptied_rows_should_stay_append_only_on_the_current_schema() {
     use crate::domain::model::{CleanupOutcome, NewCleanupLogEntry};
 
     let dir = TempDir::new().unwrap();
@@ -145,7 +167,7 @@ fn recycle_bin_emptied_rows_should_stay_append_only_on_schema_version_2() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2, "C-10 no agrega migraciones");
+    assert_eq!(version, 3, "la 003 es de C-11; C-10 no agrega migraciones");
     assert!(
         conn.execute(
             "UPDATE cleanup_log SET outcome = 'error' WHERE category = 'recycle_bin'",
@@ -160,7 +182,7 @@ fn recycle_bin_emptied_rows_should_stay_append_only_on_schema_version_2() {
 }
 
 #[test]
-fn cleanup_queries_should_keep_schema_version_2_and_the_log_append_only() {
+fn cleanup_queries_should_keep_the_current_schema_and_the_log_append_only() {
     use crate::domain::junk::category::JunkCategory;
     use crate::domain::ports::JunkFindingStore;
 
@@ -187,7 +209,7 @@ fn cleanup_queries_should_keep_schema_version_2_and_the_log_append_only() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2, "C-09 no agrega migraciones");
+    assert_eq!(version, 3, "la 003 es de C-11; C-09 no agrega migraciones");
     assert!(
         conn.execute("UPDATE cleanup_log SET size_bytes = 0", [])
             .is_err()
@@ -214,7 +236,7 @@ fn sqlite_store_should_persist_changes_across_reopen_without_reseeding() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 }
 
 #[test]

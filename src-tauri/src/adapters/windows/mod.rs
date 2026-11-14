@@ -2,6 +2,7 @@
 //!
 //! Unico lugar de C-03 con `unsafe`; cada bloque es minimo y lleva su `// SAFETY:`.
 
+pub mod content;
 pub mod fs;
 pub mod known_folders;
 pub mod privileges;
@@ -11,6 +12,7 @@ pub mod recycle_bin_policy;
 pub mod trash;
 pub(crate) mod trash_error;
 
+pub use content::WindowsContentReader;
 pub use fs::WindowsFileSystem;
 pub use known_folders::{UserFolderSource, resolve_protection_context};
 pub use privileges::SystemSessionIdentity;

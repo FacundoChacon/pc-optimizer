@@ -294,7 +294,75 @@ pub struct DuplicateScanSummary {
     pub open_group_count: u64,
 }
 
+/// Resolucion de un grupo tras ejecutar su limpieza (D-17): las copias que el usuario conservo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupResolution {
+    pub group_id: i64,
+    pub kept_file_ids: Vec<i64>,
+}
+
+fn is_lower_hex_64(raw: &str) -> bool {
+    raw.len() == 64
+        && raw
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 impl DuplicateScanResults {
+    /// Invariantes que toda implementacion de `DuplicateStore` exige antes de guardar: grupos de 2
+    /// o mas copias con identidades y rutas distintas, hash de 64 hex minuscula, tamano > 0, un
+    /// grupo por (tamano, hash) y contadores que caben en un entero con signo de 64 bits.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let c = &self.counters;
+        let counters = [
+            c.files_seen,
+            c.below_min_size,
+            c.protected_count,
+            c.cloud_count,
+            c.hard_linked_count,
+            c.changed_count,
+            c.unreadable_count,
+            c.inaccessible_dirs,
+            c.excluded_dirs,
+            c.hashed_bytes,
+        ];
+        if counters.iter().any(|value| i64::try_from(*value).is_err()) {
+            return Err("counter exceeds i64::MAX");
+        }
+        let mut roots = std::collections::BTreeSet::new();
+        for root in &self.roots {
+            if !roots.insert(root.folder) || i64::try_from(root.files_seen).is_err() {
+                return Err("invalid root result");
+            }
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        for group in &self.groups {
+            if group.size_bytes == 0
+                || i64::try_from(group.size_bytes).is_err()
+                || !is_lower_hex_64(&group.blake3)
+            {
+                return Err("invalid group");
+            }
+            if group.files.len() < 2 {
+                return Err("group with fewer than 2 copies");
+            }
+            if !keys.insert((group.size_bytes, group.blake3.as_str())) {
+                return Err("duplicate group");
+            }
+            let mut identities = std::collections::BTreeSet::new();
+            let mut paths = std::collections::BTreeSet::new();
+            for file in &group.files {
+                if file.path.is_empty() || !paths.insert(file.path.as_str()) {
+                    return Err("invalid copy path");
+                }
+                if !identities.insert((file.identity.volume_serial, file.identity.file_id)) {
+                    return Err("two copies share an identity");
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Cantidad de copias (todas las de todos los grupos).
     pub fn duplicate_file_count(&self) -> u64 {
         self.groups.iter().map(|g| g.files.len() as u64).sum()

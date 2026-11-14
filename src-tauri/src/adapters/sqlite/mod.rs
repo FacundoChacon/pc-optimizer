@@ -1,6 +1,7 @@
 //! Adaptador SQLite de la persistencia.
 
 pub mod connection;
+mod duplicates;
 pub mod errors;
 mod junk;
 pub mod migrations;
@@ -39,6 +40,10 @@ const SQL_SCAN_COLUMNS: &str =
 const SQL_DROP_ORPHAN_FINDINGS: &str =
     "DELETE FROM junk_finding WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
 const SQL_DROP_ORPHAN_RESULTS: &str = "DELETE FROM junk_category_result WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_DUPLICATE_GROUPS: &str =
+    "DELETE FROM duplicate_group WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_DUPLICATE_ROOTS: &str = "DELETE FROM duplicate_scan_root WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_DUPLICATE_RESULTS: &str = "DELETE FROM duplicate_scan_result WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
 const SQL_CLOSE_ORPHANS: &str = "UPDATE scan SET status = 'error', finished_at = max(started_at, CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE status = 'running'";
 const SQL_INSERT_LOG: &str = "INSERT INTO cleanup_log(ts, category, path, size_bytes, outcome, scan_id, error_detail) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
@@ -83,6 +88,9 @@ fn close_orphan_scans(conn: &mut Connection) -> Result<(), StoreError> {
     for sql in [
         SQL_DROP_ORPHAN_FINDINGS,
         SQL_DROP_ORPHAN_RESULTS,
+        SQL_DROP_ORPHAN_DUPLICATE_GROUPS,
+        SQL_DROP_ORPHAN_DUPLICATE_ROOTS,
+        SQL_DROP_ORPHAN_DUPLICATE_RESULTS,
         SQL_CLOSE_ORPHANS,
     ] {
         tx.execute(sql, []).map_err(map_sqlite_error)?;
@@ -278,6 +286,8 @@ impl CleanupLogStore for SqliteStore {
     }
 }
 
+#[cfg(test)]
+mod duplicates_schema_tests;
 #[cfg(test)]
 mod schema_tests;
 #[cfg(test)]

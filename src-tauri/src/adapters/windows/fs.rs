@@ -41,12 +41,12 @@ const CLOUD_ATTRIBUTES: u32 = FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0
     | FILE_ATTRIBUTE_OFFLINE.0;
 /// Diferencia entre la epoca de FILETIME (1601) y la Unix (1970), en milisegundos.
 const FILETIME_UNIX_DELTA_MS: i64 = 11_644_473_600_000;
-const SHARE_ALL: u32 = FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0;
+pub(super) const SHARE_ALL: u32 = FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0;
 /// Reintentos de `GetFinalPathNameByHandleW` si la ruta crece entre llamadas.
 const FINAL_PATH_ATTEMPTS: usize = 4;
 
 /// Traduce un error de E/S de Win32 al error del puerto (D-10). El detalle lleva ruta y codigo.
-fn map_io_error(path: &Path, error: &io::Error) -> PortError {
+pub(super) fn map_io_error(path: &Path, error: &io::Error) -> PortError {
     let detail = match error.raw_os_error() {
         Some(code) => format!("{} (os error {code})", path.display()),
         None => format!("{} ({error})", path.display()),
@@ -104,7 +104,7 @@ fn drive_path(final_path: &Path) -> Result<PathBuf, PortError> {
 }
 
 /// Las rutas deben ser absolutas con unidad: una relativa dependeria del directorio actual.
-fn require_absolute(path: &Path) -> Result<(), PortError> {
+pub(super) fn require_absolute(path: &Path) -> Result<(), PortError> {
     if path.is_absolute() {
         Ok(())
     } else {
@@ -180,6 +180,30 @@ fn reparse_tag(path: &Path) -> Option<u32> {
     Some(info.ReparseTag)
 }
 
+/// Metadatos de una entrada ya ABIERTA (tipo, tamano, ultima escritura, nube, identidad y
+/// hard links), por handle. Los comparten `WindowsFileSystem` y `WindowsContentReader`.
+pub(super) fn handle_meta(file: &File) -> io::Result<FileMeta> {
+    let tag: FILE_ATTRIBUTE_TAG_INFO = query_info(file, FileAttributeTagInfo)?;
+    let basic: FILE_BASIC_INFO = query_info(file, FileBasicInfo)?;
+    let standard: FILE_STANDARD_INFO = query_info(file, FileStandardInfo)?;
+    // Sin identidad (volumen que no la informa) el dominio decide: protege.
+    let identity = query_info::<FILE_ID_INFO>(file, FileIdInfo)
+        .ok()
+        .map(|info| FileIdentity {
+            volume_serial: info.VolumeSerialNumber,
+            file_id: u128::from_le_bytes(info.FileId.Identifier),
+        });
+    let (kind, cloud_placeholder) = classify(tag.FileAttributes, Some(tag.ReparseTag));
+    Ok(FileMeta {
+        kind,
+        size_bytes: u64::try_from(standard.EndOfFile).unwrap_or(0),
+        modified: filetime_to_millis(basic.LastWriteTime),
+        cloud_placeholder,
+        identity,
+        hard_links: Some(standard.NumberOfLinks),
+    })
+}
+
 impl FileSystem for WindowsFileSystem {
     fn canonicalize(&self, path: &Path) -> Result<PathBuf, PortError> {
         require_absolute(path)?;
@@ -193,25 +217,7 @@ impl FileSystem for WindowsFileSystem {
         require_absolute(path)?;
         let io = |e: io::Error| map_io_error(path, &e);
         let file = open_entry(path, FILE_READ_ATTRIBUTES.0, SHARE_ALL).map_err(io)?;
-        let tag: FILE_ATTRIBUTE_TAG_INFO = query_info(&file, FileAttributeTagInfo).map_err(io)?;
-        let basic: FILE_BASIC_INFO = query_info(&file, FileBasicInfo).map_err(io)?;
-        let standard: FILE_STANDARD_INFO = query_info(&file, FileStandardInfo).map_err(io)?;
-        // Sin identidad (volumen que no la informa) el dominio decide: protege.
-        let identity = query_info::<FILE_ID_INFO>(&file, FileIdInfo)
-            .ok()
-            .map(|info| FileIdentity {
-                volume_serial: info.VolumeSerialNumber,
-                file_id: u128::from_le_bytes(info.FileId.Identifier),
-            });
-        let (kind, cloud_placeholder) = classify(tag.FileAttributes, Some(tag.ReparseTag));
-        Ok(FileMeta {
-            kind,
-            size_bytes: u64::try_from(standard.EndOfFile).unwrap_or(0),
-            modified: filetime_to_millis(basic.LastWriteTime),
-            cloud_placeholder,
-            identity,
-            hard_links: Some(standard.NumberOfLinks),
-        })
+        handle_meta(&file).map_err(io)
     }
 
     fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>, PortError> {

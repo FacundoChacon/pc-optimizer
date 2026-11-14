@@ -4,6 +4,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::domain::duplicates::model::{
+    DuplicateGroupPage, DuplicateScanResults, DuplicateScanSummary, GroupResolution, MinSize,
+    RootResult, ScanCounters, StoredDuplicateFile, StoredDuplicateGroup,
+};
 use crate::domain::junk::category::JunkCategory;
 use crate::domain::junk::model::{
     CategoryResult, CategoryStatus, JunkFinding, JunkFindingPage, JunkScanResults, JunkScanSummary,
@@ -15,12 +19,13 @@ use crate::domain::model::{
 };
 use crate::domain::ports::recycle_bin_empty::EmptyError;
 use crate::domain::ports::{
-    AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity,
-    FileMeta, FileSystem, JunkFindingStore, PortError, RecycleBinEmptier, RecycleBinInfo,
-    RecycleBinPolicy, RecycleBinUsage, ScanStore, SensorSample, Sensors, SessionIdentity,
-    SettingsStore, StoreError, Trash, TrashError,
+    AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, DuplicateStore, EntryKind,
+    FileIdentity, FileMeta, FileSystem, JunkFindingStore, PortError, RecycleBinEmptier,
+    RecycleBinInfo, RecycleBinPolicy, RecycleBinUsage, ScanStore, SensorSample, Sensors,
+    SessionIdentity, SettingsStore, StoreError, Trash, TrashError,
 };
 use crate::domain::privileges::UserSid;
+use crate::domain::protection::context::ContentFolder;
 use crate::domain::protection::service::DeleteTarget;
 use crate::domain::recycle_bin::root::VolumeRoot;
 
@@ -739,6 +744,21 @@ struct StoreInner {
     junk_findings: Vec<(i64, ScanId, JunkFinding)>,
     junk_results: Vec<(ScanId, CategoryResult)>,
     next_finding_id: i64,
+    /// `(escaneo, resultado)` de duplicados.
+    duplicate_results: Vec<(ScanId, MinSize, Vec<RootResult>, ScanCounters)>,
+    duplicate_groups: Vec<MemGroup>,
+    next_group_id: i64,
+    next_dup_file_id: i64,
+}
+
+/// Grupo de duplicados guardado en memoria.
+struct MemGroup {
+    id: i64,
+    scan: ScanId,
+    size_bytes: u64,
+    blake3: String,
+    resolved_at: Option<EpochMillis>,
+    files: Vec<StoredDuplicateFile>,
 }
 
 /// Persistencia en memoria con el mismo comportamiento observable que SQLite.
@@ -762,6 +782,8 @@ impl InMemoryStore {
                 next_scan_id: 1,
                 next_log_id: 1,
                 next_finding_id: 1,
+                next_group_id: 1,
+                next_dup_file_id: 1,
                 ..StoreInner::default()
             }),
         }
@@ -819,6 +841,12 @@ impl ScanStore for InMemoryStore {
         inner
             .junk_results
             .retain(|(scan, _)| !pruned.contains(scan));
+        inner
+            .duplicate_results
+            .retain(|(scan, ..)| !pruned.contains(scan));
+        inner
+            .duplicate_groups
+            .retain(|group| !pruned.contains(&group.scan));
         Ok(id)
     }
 
@@ -1061,6 +1089,219 @@ impl JunkFindingStore for InMemoryStore {
             )
         });
         Ok(mine)
+    }
+}
+
+impl DuplicateStore for InMemoryStore {
+    fn complete_duplicate_scan(
+        &self,
+        scan_id: ScanId,
+        results: &DuplicateScanResults,
+        finished_at: EpochMillis,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.lock()?;
+        let scan = inner
+            .scans
+            .iter()
+            .find(|s| s.id == scan_id)
+            .ok_or_else(|| StoreError::NotFound(format!("scan {}", scan_id.0)))?;
+        if scan.kind != ScanKind::Duplicates || scan.status != ScanStatus::Running {
+            return Err(StoreError::InvalidState(format!(
+                "scan {} is not a running duplicates scan",
+                scan_id.0
+            )));
+        }
+        // Se valida TODO antes de tocar el estado: el guardado es atomico.
+        results
+            .validate()
+            .map_err(|reason| StoreError::Constraint(reason.to_string()))?;
+        let others: Vec<ScanId> = inner
+            .scans
+            .iter()
+            .filter(|s| s.kind == ScanKind::Duplicates && s.id != scan_id)
+            .map(|s| s.id)
+            .collect();
+        inner.duplicate_groups.retain(|g| !others.contains(&g.scan));
+        for group in &results.groups {
+            let id = inner.next_group_id;
+            inner.next_group_id += 1;
+            let mut files = Vec::with_capacity(group.files.len());
+            for file in &group.files {
+                let file_id = inner.next_dup_file_id;
+                inner.next_dup_file_id += 1;
+                files.push(StoredDuplicateFile {
+                    id: file_id,
+                    file: file.clone(),
+                    kept: false,
+                });
+            }
+            inner.duplicate_groups.push(MemGroup {
+                id,
+                scan: scan_id,
+                size_bytes: group.size_bytes,
+                blake3: group.blake3.clone(),
+                resolved_at: None,
+                files,
+            });
+        }
+        inner.duplicate_results.push((
+            scan_id,
+            results.min_size,
+            results.roots.clone(),
+            results.counters,
+        ));
+        if let Some(scan) = inner.scans.iter_mut().find(|s| s.id == scan_id) {
+            scan.status = ScanStatus::Done;
+            scan.finished_at = Some(finished_at);
+        }
+        Ok(())
+    }
+
+    fn last_done_duplicate_scan(&self) -> Result<Option<DuplicateScanSummary>, StoreError> {
+        let inner = self.lock()?;
+        let latest = inner
+            .scans
+            .iter()
+            .filter(|s| s.kind == ScanKind::Duplicates && s.status == ScanStatus::Done)
+            .max_by_key(|s| (s.started_at, s.id));
+        Ok(latest.and_then(|scan| {
+            let (_, min_size, roots, counters) = inner
+                .duplicate_results
+                .iter()
+                .find(|(id, ..)| *id == scan.id)?;
+            let groups: Vec<&MemGroup> = inner
+                .duplicate_groups
+                .iter()
+                .filter(|g| g.scan == scan.id)
+                .collect();
+            let open = groups.iter().filter(|g| g.resolved_at.is_none());
+            let mut roots = roots.clone();
+            roots.sort_by_key(|root| root.folder);
+            Some(DuplicateScanSummary {
+                scan: scan.clone(),
+                min_size: *min_size,
+                roots,
+                counters: *counters,
+                group_count: groups.len() as u64,
+                duplicate_file_count: groups.iter().map(|g| g.files.len() as u64).sum(),
+                reclaimable_bytes: open
+                    .clone()
+                    .map(|g| g.size_bytes * (g.files.len() as u64 - 1))
+                    .sum(),
+                open_group_count: open.count() as u64,
+            })
+        }))
+    }
+
+    fn list_duplicate_groups(
+        &self,
+        scan_id: ScanId,
+        offset: u64,
+        limit: u32,
+        root: Option<ContentFolder>,
+        min_size: Option<u64>,
+    ) -> Result<DuplicateGroupPage, StoreError> {
+        let inner = self.lock()?;
+        let mut mine: Vec<&MemGroup> = inner
+            .duplicate_groups
+            .iter()
+            .filter(|g| g.scan == scan_id)
+            .filter(|g| root.is_none_or(|r| g.files.iter().any(|f| f.file.root == r)))
+            .filter(|g| min_size.is_none_or(|min| g.size_bytes >= min))
+            .collect();
+        mine.sort_by_key(|g| {
+            (
+                std::cmp::Reverse(g.size_bytes * (g.files.len() as u64 - 1)),
+                g.id,
+            )
+        });
+        let total = mine.len() as u64;
+        let groups = mine
+            .into_iter()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .map(to_stored_group)
+            .collect();
+        Ok(DuplicateGroupPage { total, groups })
+    }
+
+    fn get_duplicate_groups(
+        &self,
+        scan_id: ScanId,
+        group_ids: &[i64],
+    ) -> Result<Vec<StoredDuplicateGroup>, StoreError> {
+        let inner = self.lock()?;
+        let mut found: Vec<&MemGroup> = inner
+            .duplicate_groups
+            .iter()
+            .filter(|g| g.scan == scan_id && group_ids.contains(&g.id))
+            .collect();
+        found.sort_by_key(|g| g.id);
+        Ok(found.into_iter().map(to_stored_group).collect())
+    }
+
+    fn resolve_duplicate_groups(
+        &self,
+        scan_id: ScanId,
+        resolutions: &[GroupResolution],
+        now: EpochMillis,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.lock()?;
+        // Se valida todo sobre una copia de trabajo y recien despues se aplica: todo o nada.
+        let mut staged: Vec<(i64, Vec<i64>)> = Vec::new();
+        for resolution in resolutions {
+            let group = inner
+                .duplicate_groups
+                .iter()
+                .find(|g| g.id == resolution.group_id)
+                .ok_or_else(|| StoreError::NotFound(format!("group {}", resolution.group_id)))?;
+            if group.scan != scan_id {
+                return Err(StoreError::NotFound(format!(
+                    "group {} of scan {}",
+                    resolution.group_id, scan_id.0
+                )));
+            }
+            if group.resolved_at.is_some() || staged.iter().any(|(id, _)| *id == group.id) {
+                return Err(StoreError::InvalidState(format!(
+                    "group {} is already resolved",
+                    resolution.group_id
+                )));
+            }
+            if resolution.kept_file_ids.is_empty()
+                || resolution
+                    .kept_file_ids
+                    .iter()
+                    .any(|id| !group.files.iter().any(|f| f.id == *id))
+            {
+                return Err(StoreError::Constraint(format!(
+                    "invalid kept copies for group {}",
+                    resolution.group_id
+                )));
+            }
+            if now.0 <= 0 {
+                return Err(StoreError::Constraint("invalid resolution date".into()));
+            }
+            staged.push((group.id, resolution.kept_file_ids.clone()));
+        }
+        for (group_id, kept) in staged {
+            if let Some(group) = inner.duplicate_groups.iter_mut().find(|g| g.id == group_id) {
+                group.resolved_at = Some(now);
+                for file in &mut group.files {
+                    file.kept = kept.contains(&file.id);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn to_stored_group(group: &MemGroup) -> StoredDuplicateGroup {
+    StoredDuplicateGroup {
+        id: group.id,
+        size_bytes: group.size_bytes,
+        blake3: group.blake3.clone(),
+        resolved_at: group.resolved_at,
+        files: group.files.clone(),
     }
 }
 
@@ -1834,6 +2075,25 @@ mod tests {
     #[test]
     fn in_memory_store_should_satisfy_contract_junk_complete_requires_a_running_junk_scan() {
         contract::contract_junk_complete_requires_a_running_junk_scan(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_the_duplicates_contract() {
+        use crate::domain::ports::duplicates_store_contract as dup;
+        dup::contract_round_trip(InMemoryStore::new);
+        dup::contract_failed_save_is_atomic(InMemoryStore::new);
+        dup::contract_invalid_results_are_rejected(InMemoryStore::new);
+        dup::contract_complete_requires_a_running_duplicates_scan(InMemoryStore::new);
+        dup::contract_second_scan_purges_previous_groups_keeping_the_scan(InMemoryStore::new);
+        dup::contract_junk_findings_are_untouched_by_a_duplicates_scan(InMemoryStore::new);
+        dup::contract_last_done_ignores_unfinished_and_other_kinds(InMemoryStore::new);
+        dup::contract_groups_order_by_reclaimable_bytes_then_id(InMemoryStore::new);
+        dup::contract_filters_and_pagination(InMemoryStore::new);
+        dup::contract_get_groups_only_returns_those_of_the_scan(InMemoryStore::new);
+        dup::contract_resolve_marks_only_the_kept_copies(InMemoryStore::new);
+        dup::contract_resolve_rejects_invalid_resolutions_without_changes(InMemoryStore::new);
+        dup::contract_resolve_twice_fails_keeping_the_first_resolution(InMemoryStore::new);
+        dup::contract_groups_follow_scan_retention(InMemoryStore::new);
     }
 
     #[test]

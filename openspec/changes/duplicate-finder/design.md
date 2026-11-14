@@ -426,4 +426,14 @@ Confirmadas contra el fuente de `windows-0.62.2` y `blake3-1.8.7` (`~/.cargo/reg
 - `RootReason::Inaccessible` (`inaccessible`) se agrega a los motivos de raíz de D-01 para un `metadata` que falla por permiso u otro error de E/S distinto de "no existe" (la tabla de D-01 no lo nombraba).
 - `FakeContentReader` vive en `ports/fakes_content.rs` (el doble comparte el `FakeFileSystem` y lee los metadatos con `peek`, sin registrar llamadas) y la batería de contrato en `ports/content_contract.rs`.
 
+### Part 2 (grupos 5 y 6): desvíos y notas
+
+- `DuplicateStore` suma `get_duplicate_groups(scan, ids)` (grupos de un escaneo con sus copias) además de las cuatro operaciones del spec: `build_duplicate_preview` necesita cargar los grupos de las decisiones sin paginar. Los ids ajenos o de otro escaneo no aparecen.
+- `DuplicateScanSummary.reclaimable_bytes` cuenta solo los grupos sin resolver (lo que aún se puede recuperar); `group_count` y `duplicate_file_count` cuentan todos. `open_group_count` = grupos sin resolver.
+- `DuplicateScanResults::validate` concentra las invariantes (grupo >= 2 copias, identidades y rutas distintas, hash de 64 hex minúscula, tamaño > 0, un grupo por (tamaño, hash), contadores que caben en `i64`); el doble en memoria y SQLite lo llaman antes de tocar el estado y el esquema las repite con `CHECK`/`UNIQUE`.
+- Test de arquitectura `kept_should_only_be_assigned_by_the_group_resolution`: cuenta las asignaciones `kept = ...` de la fuente de producción (comentarios y `#[cfg(test)]` fuera) y exige 0 fuera de `adapters/sqlite/duplicates.rs` y exactamente 1 dentro. Sus casos de ayuda cubren SQL, comparación `==`, comentario y bloque de test.
+- Migración 003: los tests existentes que afirmaban `user_version = 2` o la lista de tablas pasaron a 3 (mecánico). Los escaneos `running` al abrir ahora también borran el resultado, los estados de carpeta y los grupos de duplicados.
+- `WindowsContentReader` no agrega `unsafe`: abre con `OpenOptions` (`FILE_READ_DATA | FILE_READ_ATTRIBUTES`, `FILE_SHARE_*`, `OPEN_REPARSE_POINT | OPEN_NO_RECALL | SEQUENTIAL_SCAN`, más `BACKUP_SEMANTICS` para poder abrir una junction como enlace), lee con `FileExt::seek_read` y comparte con `WindowsFileSystem` la lectura de metadatos por handle (`fs::handle_meta`, extraída sin cambiar su comportamiento). Conteo de `unsafe {` antes/después: `fs.rs` 2/2, `content.rs` 0/0.
+- Los tests `#[ignore]` nuevos: `open_should_open_a_file_symlink_as_the_link_itself` (privilegio de symlinks) y `open_should_not_hydrate_a_cloud_only_file` (archivo solo en la nube indicado por `PCOPT_CLOUD_FILE`; no corre en la suite).
+
 _(Se completa durante el apply.)_

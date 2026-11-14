@@ -17,6 +17,8 @@ pub mod trash;
 #[cfg(test)]
 pub(crate) mod content_contract;
 #[cfg(test)]
+pub(crate) mod duplicates_store_contract;
+#[cfg(test)]
 pub(crate) mod fakes;
 #[cfg(test)]
 pub(crate) mod fakes_content;
@@ -37,5 +39,7 @@ pub use recycle_bin_policy::{
 };
 pub use sensors::{SensorSample, Sensors};
 pub use session::SessionIdentity;
-pub use store::{CleanupLogStore, JunkFindingStore, ScanStore, SettingsStore, Store, StoreError};
+pub use store::{
+    CleanupLogStore, DuplicateStore, JunkFindingStore, ScanStore, SettingsStore, Store, StoreError,
+};
 pub use trash::{Trash, TrashError};
