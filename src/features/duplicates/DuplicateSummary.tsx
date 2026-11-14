@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from "react";
 import type { DuplicateCleanupSummary } from "../../lib/ipc";
 import { es } from "../../shared/i18n/es";
-import { format, formatBytes } from "../../shared/i18n/format";
+import { formatBytes, formatPlural } from "../../shared/i18n/format";
 import { Button } from "../../shared/ui/Button";
 import { cleanupReasonText } from "../cleanup/cleanupText";
 
@@ -44,21 +44,17 @@ export function DuplicateSummaryCard({
       </h2>
       {summary.abortReason !== null && <p role="alert">{es.duplicates.summaryAborted[summary.abortReason]}</p>}
       {summary.status === "cancelled" && (
-        <p>{format(es.duplicates.summaryCancelled, { count: String(summary.notProcessed) })}</p>
+        <p>{formatPlural(es.duplicates.summaryCancelled, summary.notProcessed)}</p>
       )}
       {(summary.movedCount > 0 || summary.status === "completed") && (
         <p className="text-xl font-semibold">
-          {format(es.duplicates.summaryMoved, {
-            count: String(summary.movedCount),
-            size: formatBytes(summary.movedBytes),
-          })}
+          {formatPlural(es.duplicates.summaryMoved, summary.movedCount, { size: formatBytes(summary.movedBytes) })}
         </p>
       )}
       {summary.movedCount > 0 && <p className="text-content-muted">{es.duplicates.summarySpaceNote}</p>}
       {summary.reasons.map((reason) => (
         <p key={`${reason.outcome}/${reason.detail}`}>
-          {format(es.duplicates.summarySkipped, {
-            count: String(reason.count),
+          {formatPlural(es.duplicates.summarySkipped, reason.count, {
             reason: cleanupReasonText(reason.outcome, reason.detail).toLowerCase(),
           })}
         </p>

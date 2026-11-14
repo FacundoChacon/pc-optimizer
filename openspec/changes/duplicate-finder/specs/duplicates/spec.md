@@ -157,7 +157,7 @@ El escaneo de duplicados y la ejecución de su borrado SHALL compartir el lugar 
 - **THEN** la petición falla con `recycle_bin_empty_in_progress` y no se crea ningún escaneo
 
 ### Requirement: Resultado y grupos consultables
-El sistema SHALL ofrecer el resumen del último escaneo de duplicados terminado (fechas, tamaño mínimo, estado por carpeta, contadores de omitidos por motivo, cantidad de grupos, copias y bytes recuperables) y sus grupos paginados, ordenados por bytes recuperables descendentes y luego por identificador, filtrables por carpeta y por tamaño mínimo. Cada copia MUST informar su identificador, carpeta de contenido, ruta, ruta relativa a la carpeta, tamaño y última escritura.
+El sistema SHALL ofrecer el resumen del último escaneo de duplicados terminado (fechas, tamaño mínimo, estado por carpeta, contadores de omitidos por motivo, cantidad de grupos, copias y bytes recuperables) y sus grupos paginados, ordenados por bytes recuperables descendentes y luego por identificador, filtrables por carpeta y por tamaño mínimo. Cada copia MUST informar su identificador, carpeta de contenido, ruta, ruta relativa a la carpeta, tamaño y última escritura. Las copias de cada grupo MUST salir ordenadas por ruta completa sin distinguir mayúsculas de minúsculas y, a igual ruta, por identificador, sea cual sea el orden en que las encontró el escaneo.
 
 #### Scenario: Sin escaneos
 - **WHEN** nunca se terminó un escaneo de duplicados
@@ -166,6 +166,10 @@ El sistema SHALL ofrecer el resumen del último escaneo de duplicados terminado 
 #### Scenario: Filtro por carpeta
 - **WHEN** se piden los grupos filtrando por `pictures`
 - **THEN** solo se devuelven los grupos con al menos una copia en Imágenes, con el total filtrado
+
+#### Scenario: Copias ordenadas por ruta
+- **WHEN** un grupo se guardó con las copias `Descargas\b\B2`, `Descargas\b\B3` y `Descargas\B1`
+- **THEN** se devuelven como `Descargas\B1`, `Descargas\b\B2`, `Descargas\b\B3`, y `x.bin` queda antes que `X.bin` por identificador
 
 ### Requirement: Ninguna copia preseleccionada
 Ningún grupo SHALL presentarse con una copia elegida para conservar ni para eliminar, en ningún modo; el sistema MUST NOT marcar ninguna copia como conservada sin una decisión explícita del usuario confirmada (RN-DUP-03), y la marca de conservada solo se escribe al resolver un grupo confirmado.
@@ -281,6 +285,14 @@ La pantalla Duplicados SHALL ofrecer una acción primaria por estado: "Buscar du
 - **WHEN** hay grupos pero ninguno tiene una copia elegida
 - **THEN** la acción de revisar está deshabilitada con su motivo visible
 
+#### Scenario: Después de mover copias
+- **WHEN** se terminó de mover copias y quedan grupos abiertos del mismo escaneo
+- **THEN** la acción de revisar sigue deshabilitada y su motivo visible dice que para mover más copias hay que buscar de nuevo
+
+#### Scenario: Cantidades en singular
+- **WHEN** el resumen, la revisión o el resultado cuentan exactamente una copia, un archivo, un grupo o una carpeta
+- **THEN** el texto usa el singular ("Se movió 1 copia", "1 archivo protegido: no se toca") y nunca "1 copias"
+
 ### Requirement: Elección guiada sin recomendación
 La ayuda del modo simple SHALL limitarse a datos neutrales de cada copia (carpeta, ruta relativa, fecha) y a un texto que explique que las demás copias van a la Papelera y pueden recuperarse; MUST NOT destacar ninguna copia como recomendada ni ofrecer elegir en lote.
 
@@ -298,6 +310,10 @@ En modo avanzado la pantalla SHALL permitir elegir las carpetas y el tamaño mí
 #### Scenario: Hash visible
 - **WHEN** el modo es avanzado y se muestra un grupo
 - **THEN** se ve su hash blake3 y la ruta completa de cada copia
+
+#### Scenario: Opciones iniciales desde la última búsqueda
+- **WHEN** se abre la app en modo avanzado y el último escaneo terminado revisó solo Descargas con tamaño mínimo de 10 MB
+- **THEN** las carpetas y el tamaño mínimo propuestos para "Buscar de nuevo" son Descargas y 10 MB; sin escaneo previo (o sin carpetas elegidas en él) son las seis carpetas y 1 MB, y en modo simple se sigue buscando en las seis con 1 MB
 
 ### Requirement: Revisión, progreso y resumen accesibles
 "Revisar y mover a la Papelera" SHALL abrir un diálogo modal con grupos, copias y tamaño total, la aclaración de que todo va a la Papelera y de que se conserva la copia elegida en cada grupo, foco inicial en "Cancelar" y un único botón para confirmar; cerrarlo MUST NOT ejecutar nada. El progreso y el resumen se anuncian por una región viva y el foco pasa al título del resumen.

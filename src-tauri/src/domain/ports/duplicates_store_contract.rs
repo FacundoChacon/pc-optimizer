@@ -735,3 +735,74 @@ pub(crate) fn contract_groups_follow_scan_retention<S: Store>(make: impl Fn() ->
     );
     assert_eq!(store.last_done_duplicate_scan().unwrap(), None);
 }
+
+/// Las copias de un grupo salen ordenadas por ruta completa sin distinguir mayusculas y, a igual
+/// ruta, por id; no importa en que orden las entrego el escaneo.
+pub(crate) fn contract_copies_sort_by_path_ignoring_case_then_id<S: Store>(make: impl Fn() -> S) {
+    fn copy(path: &str, n: u128) -> DuplicateFile {
+        file(ContentFolder::Downloads, path, n)
+    }
+    fn paths_of<S: Store>(store: &S, scan: ScanId, group_id: i64) -> Vec<String> {
+        store.get_duplicate_groups(scan, &[group_id]).unwrap()[0]
+            .files
+            .iter()
+            .map(|f| f.file.path.clone())
+            .collect()
+    }
+    let store = make();
+    let scan = dup_scan(&store, 1_000);
+    // Orden de recorrido del caso real: la subcarpeta antes que el archivo suelto.
+    let mut walk_order = group(4 * MIB, 1, "unused", 0, 100);
+    walk_order.files = vec![
+        copy(r"C:\Users\ana\Downloads\b\B2", 1),
+        copy(r"C:\Users\ana\Downloads\b\B3", 2),
+        copy(r"C:\Users\ana\Downloads\B1", 3),
+    ];
+    // Mayusculas y minusculas mezcladas; "x.bin" y "X.bin" empatan y desempata el id.
+    let mut mixed = group(5 * MIB, 2, "unused", 0, 200);
+    mixed.files = vec![
+        copy(r"C:\Users\ana\Downloads\zeta.bin", 4),
+        copy(r"C:\Users\ana\Downloads\x.bin", 5),
+        copy(r"C:\Users\ana\Downloads\Alfa.bin", 6),
+        copy(r"C:\Users\ana\Downloads\X.bin", 7),
+    ];
+    save(&store, scan, vec![walk_order, mixed]);
+    let page = store
+        .list_duplicate_groups(scan, 0, 10, None, None)
+        .unwrap();
+    let by_hash = |tag: u8| {
+        page.groups
+            .iter()
+            .find(|g| g.blake3 == hash(tag))
+            .unwrap()
+            .id
+    };
+    assert_eq!(
+        paths_of(&store, scan, by_hash(1)),
+        [
+            r"C:\Users\ana\Downloads\B1",
+            r"C:\Users\ana\Downloads\b\B2",
+            r"C:\Users\ana\Downloads\b\B3",
+        ]
+    );
+    assert_eq!(
+        paths_of(&store, scan, by_hash(2)),
+        [
+            r"C:\Users\ana\Downloads\Alfa.bin",
+            r"C:\Users\ana\Downloads\x.bin",
+            r"C:\Users\ana\Downloads\X.bin",
+            r"C:\Users\ana\Downloads\zeta.bin",
+        ]
+    );
+    // El listado de la pantalla ve el mismo orden que la consulta puntual.
+    let listed: Vec<String> = page
+        .groups
+        .iter()
+        .find(|g| g.id == by_hash(1))
+        .unwrap()
+        .files
+        .iter()
+        .map(|f| f.file.path.clone())
+        .collect();
+    assert_eq!(listed, paths_of(&store, scan, by_hash(1)));
+}

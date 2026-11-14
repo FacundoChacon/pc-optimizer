@@ -7,13 +7,14 @@ import {
   type DuplicateScanEvent,
   type DuplicateScanSummary,
   getLastDuplicateScan,
+  MIN_SIZE_OPTIONS,
   ROOT_KEYS,
   type RootKey,
   startDuplicateScan,
   toAppError,
 } from "../../lib/ipc";
 import { es } from "../../shared/i18n/es";
-import { format } from "../../shared/i18n/format";
+import { formatPlural } from "../../shared/i18n/format";
 
 /** Avance visible del escaneo, por etapa. */
 export interface DuplicateScanProgress {
@@ -42,6 +43,22 @@ export interface DuplicateScanApi {
   refresh: () => Promise<void>;
 }
 
+/**
+ * Opciones con las que se hizo la ultima busqueda: las carpetas que no fueron `not_selected` y su
+ * tamano minimo (si es uno de la lista cerrada). Sin carpetas elegidas no hay nada que reflejar.
+ */
+export function optionsFromLastScan(
+  summary: DuplicateScanSummary | null,
+): { roots: readonly RootKey[]; minSizeBytes: number } | null {
+  if (summary === null) return null;
+  const roots = ROOT_KEYS.filter((key) =>
+    summary.roots.some((result) => result.root === key && result.status !== "not_selected"),
+  );
+  if (roots.length === 0) return null;
+  const minSizeBytes = MIN_SIZE_OPTIONS.find((bytes) => bytes === summary.minSizeBytes) ?? DEFAULT_MIN_SIZE;
+  return { roots, minSizeBytes };
+}
+
 const STARTING: DuplicateScanProgress = { scanId: null, stage: "starting", filesSeen: 0, done: 0, total: 0 };
 
 /**
@@ -61,6 +78,7 @@ export function useDuplicateScanState(advanced: boolean): DuplicateScanApi {
   const scanId = useRef<number | null>(null);
   const cancelRequested = useRef(false);
   const running = useRef(false);
+  const optionsTouched = useRef(false);
 
   useEffect(() => {
     active.current = true;
@@ -68,6 +86,12 @@ export function useDuplicateScanState(advanced: boolean): DuplicateScanApi {
       .then((summary) => {
         if (!active.current) return;
         setLast((current) => current ?? summary);
+        // "Buscar de nuevo" repite la ultima busqueda; solo sin busqueda previa rigen los valores por defecto.
+        const previous = optionsFromLastScan(summary);
+        if (previous !== null && !optionsTouched.current) {
+          setRoots(previous.roots);
+          setMinSizeBytes(previous.minSizeBytes);
+        }
         setLoaded(true);
       })
       .catch((failure: unknown) => {
@@ -123,7 +147,7 @@ export function useDuplicateScanState(advanced: boolean): DuplicateScanApi {
       .then((summary) => {
         if (summary.status === "done") {
           if (active.current) setLast(summary);
-          announce(format(es.duplicates.announceDone, { count: String(summary.groupCount) }));
+          announce(formatPlural(es.duplicates.announceDone, summary.groupCount));
         } else {
           if (active.current) setNotice(es.duplicates.cancelledNotice);
           announce(es.duplicates.announceCancelled);
@@ -144,6 +168,7 @@ export function useDuplicateScanState(advanced: boolean): DuplicateScanApi {
   }, [requestCancel]);
 
   const toggleRoot = useCallback((root: RootKey) => {
+    optionsTouched.current = true;
     setRoots((current) => {
       if (!current.includes(root)) return ROOT_KEYS.filter((key) => key === root || current.includes(key));
       // Al menos una carpeta tiene que quedar elegida.
@@ -160,6 +185,11 @@ export function useDuplicateScanState(advanced: boolean): DuplicateScanApi {
     }
   }, []);
 
+  const setMinSize = useCallback((bytes: number) => {
+    optionsTouched.current = true;
+    setMinSizeBytes(bytes);
+  }, []);
+
   return {
     loaded,
     last,
@@ -171,7 +201,7 @@ export function useDuplicateScanState(advanced: boolean): DuplicateScanApi {
     start,
     cancel,
     toggleRoot,
-    setMinSize: setMinSizeBytes,
+    setMinSize,
     refresh,
   };
 }

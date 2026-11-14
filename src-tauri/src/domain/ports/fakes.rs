@@ -1296,12 +1296,15 @@ impl DuplicateStore for InMemoryStore {
 }
 
 fn to_stored_group(group: &MemGroup) -> StoredDuplicateGroup {
+    // Igual que el store real: ruta completa sin distinguir mayusculas y, a igual ruta, por id.
+    let mut files = group.files.clone();
+    files.sort_by_key(|f| (f.file.path.to_ascii_lowercase(), f.id));
     StoredDuplicateGroup {
         id: group.id,
         size_bytes: group.size_bytes,
         blake3: group.blake3.clone(),
         resolved_at: group.resolved_at,
-        files: group.files.clone(),
+        files,
     }
 }
 
@@ -2094,6 +2097,7 @@ mod tests {
         dup::contract_resolve_rejects_invalid_resolutions_without_changes(InMemoryStore::new);
         dup::contract_resolve_twice_fails_keeping_the_first_resolution(InMemoryStore::new);
         dup::contract_groups_follow_scan_retention(InMemoryStore::new);
+        dup::contract_copies_sort_by_path_ignoring_case_then_id(InMemoryStore::new);
     }
 
     #[test]

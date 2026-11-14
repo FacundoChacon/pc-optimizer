@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import { es } from "../../shared/i18n/es";
-import { format, formatBytes } from "../../shared/i18n/format";
+import { format, formatBytes, formatPlural } from "../../shared/i18n/format";
 import { Button } from "../../shared/ui/Button";
 import type { MoveProgressState } from "./useDuplicateCleanup";
 import type { DuplicateScanProgress } from "./useDuplicateScan";
@@ -12,7 +12,7 @@ function stageText(progress: DuplicateScanProgress): string {
     case "starting":
       return es.duplicates.progressStarting;
     case "walking":
-      return format(es.duplicates.progressWalking, { count: String(progress.filesSeen) });
+      return formatPlural(es.duplicates.progressWalking, progress.filesSeen);
     case "partial":
       return format(es.duplicates.progressPartial, {
         done: String(progress.done),

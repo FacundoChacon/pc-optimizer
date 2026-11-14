@@ -201,7 +201,7 @@ fn load_groups(
         .map(|n| format!("?{n}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let sql = format!("{SQL_FILES_PREFIX}{placeholders}) ORDER BY id");
+    let sql = format!("{SQL_FILES_PREFIX}{placeholders}) ORDER BY path COLLATE NOCASE, id");
     let mut stmt = conn.prepare(&sql).map_err(map_sqlite_error)?;
     let rows = stmt
         .query_map(

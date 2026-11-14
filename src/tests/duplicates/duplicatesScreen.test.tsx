@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../app/App";
 import type { CleanupEvent, DuplicateScanEvent } from "../../lib/ipc";
 import { es } from "../../shared/i18n/es";
-import { format, formatBytes, formatDateTime } from "../../shared/i18n/format";
+import { format, formatBytes, formatDateTime, formatPlural } from "../../shared/i18n/format";
 import {
   duplicatePreview,
   duplicateSummary,
@@ -130,7 +130,7 @@ describe("Duplicados: escaneo", () => {
       { type: "walking", filesSeen: 256 },
     ];
     await act(async () => backend.emitDuplicates(events));
-    expect(within(panel).getByText(format(t.progressWalking, { count: "256" }))).toBeInTheDocument();
+    expect(within(panel).getByText(formatPlural(t.progressWalking, 256))).toBeInTheDocument();
     await act(async () => backend.emitDuplicates([{ type: "partial", done: 64, total: 130 }]));
     expect(within(panel).getByText(format(t.progressPartial, { done: "64", total: "130" }))).toBeInTheDocument();
     await act(async () => backend.emitDuplicates([{ type: "full", doneBytes: 1_048_576, totalBytes: 4_194_304 }]));
@@ -227,9 +227,9 @@ describe("Duplicados: escaneo", () => {
         roots: roots({ videos: { status: "unavailable", reason: "unsupported_volume" } }),
       }),
     });
-    expect(screen.getByText(format(t.skippedCloud, { count: "3" }))).toBeInTheDocument();
-    expect(screen.getByText(format(t.skippedProtected, { count: "2" }))).toBeInTheDocument();
-    expect(screen.getByText(format(t.skippedLinks, { count: "1" }))).toBeInTheDocument();
+    expect(screen.getByText(formatPlural(t.skippedCloud, 3))).toBeInTheDocument();
+    expect(screen.getByText(formatPlural(t.skippedProtected, 2))).toBeInTheDocument();
+    expect(screen.getByText(formatPlural(t.skippedLinks, 1))).toBeInTheDocument();
     expect(
       screen.getByText(format(t.unavailableFolder, { folder: "Videos", reason: t.rootReasons.unsupported_volume })),
     ).toBeInTheDocument();
@@ -414,7 +414,7 @@ describe("Duplicados: revision, ejecucion y resumen", () => {
     expect(JSON.stringify(call?.args)).not.toMatch(/\\\\|C:/);
     expect(within(dialog).getByRole("button", { name: t.cancel })).toHaveFocus();
     expect(
-      within(dialog).getByText(format(t.reviewTotal, { count: "3", groups: "2", size: "24 MB" })),
+      within(dialog).getByText(formatPlural(t.reviewTotal, 3, { groups: formatPlural(t.groupsCount, 2), size: "24 MB" })),
     ).toBeInTheDocument();
     expect(within(dialog).getByText(t.reviewKeepNote)).toBeInTheDocument();
     expect(within(dialog).getAllByRole("button")).toHaveLength(2);
@@ -441,7 +441,7 @@ describe("Duplicados: revision, ejecucion y resumen", () => {
     const backend = await openWithGroups({ dupPreview: duplicatePreview({ recentCount: 2, recentBytes: 8 * 1024 * 1024 }) });
     const dialog = await openReview(backend);
     expect(
-      within(dialog).getByText(format(t.reviewRecentNote, { count: "2", size: "8 MB" })),
+      within(dialog).getByText(formatPlural(t.reviewRecentNote, 2, { size: "8 MB" })),
     ).toBeInTheDocument();
   });
 
@@ -479,7 +479,7 @@ describe("Duplicados: revision, ejecucion y resumen", () => {
     const heading = await screen.findByRole("heading", { name: t.summaryTitle });
     await waitFor(() => expect(heading).toHaveFocus());
     expect(
-      screen.getByText(format(t.summaryMoved, { count: "3", size: "24 MB" })),
+      screen.getByText(formatPlural(t.summaryMoved, 3, { size: "24 MB" })),
     ).toBeInTheDocument();
     expect(screen.getByText(t.summarySpaceNote)).toBeInTheDocument();
     // Los grupos quedan resueltos, plegados, y no se vuelve a pedir otro escaneo.
@@ -503,7 +503,7 @@ describe("Duplicados: revision, ejecucion y resumen", () => {
     await screen.findByRole("heading", { name: t.summaryTitle });
     expect(
       screen.getByText(
-        format(t.summarySkipped, { count: "1", reason: es.cleanup.cleanupReasons.changed.toLowerCase() }),
+        formatPlural(t.summarySkipped, 1, { reason: es.cleanup.cleanupReasons.changed.toLowerCase() }),
       ),
     ).toBeInTheDocument();
     expect(screen.getByText(t.summaryRetry)).toBeInTheDocument();
@@ -543,7 +543,7 @@ describe("Duplicados: revision, ejecucion y resumen", () => {
     });
     const second = await openReview(cancelled);
     fireEvent.click(within(second).getByRole("button", { name: format(t.confirmMove, { count: "3" }) }));
-    expect(await screen.findByText(format(t.summaryCancelled, { count: "2" }))).toBeInTheDocument();
+    expect(await screen.findByText(formatPlural(t.summaryCancelled, 2))).toBeInTheDocument();
   });
 
   it("Cancelar durante la ejecucion pide cancelar la limpieza por su id", async () => {
@@ -592,5 +592,175 @@ describe("Duplicados: revision, ejecucion y resumen", () => {
     const backend = await openWithGroups();
     await openReview(backend);
     expect(screen.queryByRole("button", { name: /borrar|eliminar|vaciar/i })).toBeNull();
+  });
+});
+
+describe("Duplicados: singular y plural (hallazgo 4)", () => {
+  it("el resumen dice 'copia' y 'se movio' en singular y los descartes en singular", async () => {
+    const result = duplicateSummary({
+      movedCount: 1,
+      movedBytes: 2 * 1024 * 1024,
+      skippedLocked: 1,
+      reasons: [{ outcome: "skipped_locked", detail: "content_changed", count: 1 }],
+    });
+    await openWithGroups({ dupCleanupResult: result });
+    fireEvent.click(within(photo()).getAllByRole("radio")[0] as HTMLElement);
+    fireEvent.click(within(video()).getAllByRole("radio")[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: /Revisar y mover/ }));
+    const confirmButton = await screen.findByRole("button", { name: /Mover \d+ copias a la Papelera/ });
+    await waitFor(() => expect(confirmButton).toBeEnabled());
+    fireEvent.click(confirmButton);
+    await screen.findByRole("heading", { name: t.summaryTitle });
+    expect(screen.getByText("Se movió 1 copia (2 MB) a la Papelera.")).toBeInTheDocument();
+    expect(screen.getByText(/^1 copia no se movió: /)).toBeInTheDocument();
+    expect(screen.queryByText(/1 copias/)).toBeNull();
+  });
+
+  it("los omitidos del escaneo usan singular con uno y plural con varios", async () => {
+    await openWithGroups({
+      dupLast: scanSummary({ cloudCount: 1, protectedCount: 1, hardLinkedCount: 2, inaccessibleDirs: 1, unreadableCount: 1 }),
+    });
+    expect(screen.getByText("1 archivo en la nube: no se leyó.")).toBeInTheDocument();
+    expect(screen.getByText("1 archivo protegido: no se toca.")).toBeInTheDocument();
+    expect(screen.getByText("2 archivos con varios nombres: se omitieron.")).toBeInTheDocument();
+    expect(screen.getByText("1 carpeta sin acceso.")).toBeInTheDocument();
+    expect(screen.getByText("1 archivo no se pudo leer: se omitió.")).toBeInTheDocument();
+  });
+
+  it("el dialogo de revision y la nota de recientes concuerdan en singular", async () => {
+    await openWithGroups({
+      dupPreview: duplicatePreview({
+        totalItems: 1,
+        totalBytes: 4 * 1024 * 1024,
+        groupCount: 1,
+        recentCount: 1,
+        recentBytes: 2 * 1024 * 1024,
+      }),
+    });
+    fireEvent.click(within(photo()).getAllByRole("radio")[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: /Revisar y mover/ }));
+    const dialog = await screen.findByRole("alertdialog", { name: t.reviewTitle });
+    expect(await within(dialog).findByText(/1 copia de 1 grupo \(4 MB\)/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/\(1 copia, 2 MB\)/)).toBeInTheDocument();
+  });
+});
+
+describe("Duplicados: Revisar deshabilitado tras limpiar (hallazgo 2)", () => {
+  it("despues de mover, el boton explica que hay que buscar de nuevo y esta referenciado", async () => {
+    // Solo se decide el primer grupo: el segundo sigue abierto y el boton sigue a la vista.
+    const backend = await openWithGroups({
+      dupCleanupResult: duplicateSummary({ movedCount: 1, totalItems: 1, processed: 1, resolvedGroupIds: [1] }),
+      dupPreview: duplicatePreview({ totalItems: 1, groupCount: 1 }),
+    });
+    fireEvent.click(within(photo()).getAllByRole("radio")[0] as HTMLElement);
+    fireEvent.click(reviewButton(1));
+    await screen.findByRole("alertdialog", { name: t.reviewTitle });
+    fireEvent.click(await screen.findByRole("button", { name: t.confirmMoveOne }));
+    await screen.findByRole("heading", { name: t.summaryTitle });
+    expect(callsOf(backend, "confirm_duplicate_cleanup")).toHaveLength(1);
+    const review = screen.getByRole("button", { name: /Revisar y mover/ });
+    expect(review).toBeDisabled();
+    const reasonId = review.getAttribute("aria-describedby");
+    expect(reasonId).not.toBeNull();
+    expect(document.getElementById(reasonId ?? "")).toHaveTextContent(t.reviewDisabledAfterCleanup);
+  });
+
+  it("sin elegir nada el motivo sigue siendo elegir una copia", async () => {
+    await openWithGroups();
+    const review = screen.getByRole("button", { name: t.reviewNone });
+    expect(review).toBeDisabled();
+    const reasonId = review.getAttribute("aria-describedby");
+    expect(document.getElementById(reasonId ?? "")).toHaveTextContent(t.reviewDisabledReason);
+  });
+});
+
+describe("Duplicados: opciones del escaneo desde el ultimo escaneo (hallazgo 3)", () => {
+  const checked = (folders: HTMLElement) =>
+    within(folders)
+      .getAllByRole("checkbox")
+      .filter((box) => (box as HTMLInputElement).checked);
+
+  it("al abrir la app en avanzado marca las carpetas y el tamano del ultimo escaneo y los envia", async () => {
+    const backend = await openDuplicates({
+      settings: advancedSettings,
+      dupLast: scanSummary({
+        minSizeBytes: 10_485_760,
+        roots: roots({
+          desktop: { status: "not_selected" },
+          documents: { status: "not_selected" },
+          music: { status: "not_selected" },
+          pictures: { status: "not_selected" },
+          videos: { status: "not_selected" },
+        }),
+      }),
+      dupScanResult: scanSummary(),
+    });
+    const folders = screen.getByRole("group", { name: t.advanced.foldersLegend });
+    await waitFor(() => expect(within(folders).getByRole("checkbox", { name: "Escritorio" })).not.toBeChecked());
+    expect(within(folders).getByRole("checkbox", { name: "Descargas" })).toBeChecked();
+    expect(checked(folders)).toHaveLength(1);
+    expect(screen.getByRole("combobox", { name: t.advanced.minSizeLabel })).toHaveValue("10485760");
+    fireEvent.click(scanButton());
+    await waitFor(() => expect(callsOf(backend, "start_duplicate_scan")).toHaveLength(1));
+    expect(callsOf(backend, "start_duplicate_scan")[0]?.args).toEqual({
+      roots: ["downloads"],
+      minSizeBytes: 10_485_760,
+      onProgress: expect.anything(),
+    });
+  });
+
+  it("una carpeta revisada, anidada o no disponible cuenta como elegida; solo 'no elegida' queda sin marcar", async () => {
+    await openDuplicates({
+      settings: advancedSettings,
+      dupLast: scanSummary({
+        roots: roots({
+          desktop: { status: "not_selected" },
+          documents: { status: "nested" },
+          music: { status: "unavailable", reason: "not_found" },
+        }),
+      }),
+    });
+    const folders = screen.getByRole("group", { name: t.advanced.foldersLegend });
+    await waitFor(() => expect(within(folders).getByRole("checkbox", { name: "Escritorio" })).not.toBeChecked());
+    for (const name of ["Documentos", "Descargas", "Música", "Imágenes", "Videos"]) {
+      expect(within(folders).getByRole("checkbox", { name })).toBeChecked();
+    }
+  });
+
+  it("sin escaneo previo conserva las seis carpetas y 1 MB", async () => {
+    await openDuplicates({ settings: advancedSettings });
+    const folders = screen.getByRole("group", { name: t.advanced.foldersLegend });
+    expect(checked(folders)).toHaveLength(6);
+    expect(screen.getByRole("combobox", { name: t.advanced.minSizeLabel })).toHaveValue("1048576");
+  });
+
+  it("un ultimo escaneo sin ninguna carpeta elegida cae en los valores por defecto", async () => {
+    await openDuplicates({
+      settings: advancedSettings,
+      dupLast: scanSummary({
+        roots: roots({
+          desktop: { status: "not_selected" },
+          documents: { status: "not_selected" },
+          downloads: { status: "not_selected" },
+          music: { status: "not_selected" },
+          pictures: { status: "not_selected" },
+          videos: { status: "not_selected" },
+        }),
+      }),
+    });
+    await screen.findByText(format(t.lastScan, { date: formatDateTime(1_800_000_005_000) }));
+    const folders = screen.getByRole("group", { name: t.advanced.foldersLegend });
+    expect(checked(folders)).toHaveLength(6);
+  });
+
+  it("en simple sigue buscando con los valores de D-01 aunque el ultimo escaneo fuera parcial", async () => {
+    const backend = await openDuplicates({
+      dupLast: scanSummary({ roots: roots({ desktop: { status: "not_selected" } }), minSizeBytes: 10_485_760 }),
+      dupScanResult: scanSummary(),
+    });
+    await screen.findByText(format(t.lastScan, { date: formatDateTime(1_800_000_005_000) }));
+    fireEvent.click(scanButton());
+    await waitFor(() => expect(callsOf(backend, "start_duplicate_scan")).toHaveLength(1));
+    expect(callsOf(backend, "start_duplicate_scan")[0]?.args).toEqual({ onProgress: expect.anything() });
   });
 });

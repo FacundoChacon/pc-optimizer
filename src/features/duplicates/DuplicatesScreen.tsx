@@ -3,7 +3,7 @@ import { usePrivilege } from "../../app/providers/PrivilegeProvider";
 import { useSettings } from "../../app/providers/SettingsProvider";
 import { errorMessage } from "../../shared/i18n/errors";
 import { es } from "../../shared/i18n/es";
-import { format, formatBytes, formatDateTime } from "../../shared/i18n/format";
+import { format, formatBytes, formatDateTime, formatPlural, type PluralForms } from "../../shared/i18n/format";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { ResultFilters, ScanDetails, ScanOptions } from "./AdvancedPanels";
@@ -100,9 +100,9 @@ export function DuplicatesScreen() {
           )}
         </div>
       )}
-      {reviewVisible && !canReview && cleanup.summary === null && (
+      {reviewVisible && !canReview && (
         <p id={reasonId} className="text-content-muted">
-          {es.duplicates.reviewDisabledReason}
+          {cleanup.summary === null ? es.duplicates.reviewDisabledReason : es.duplicates.reviewDisabledAfterCleanup}
         </p>
       )}
       {scan.error !== null && (
@@ -193,7 +193,7 @@ export function DuplicatesScreen() {
 
 /** Lo que no se miro, en lenguaje llano: en la nube, protegido, enlaces, cambiados y carpetas no disponibles. */
 function SkippedLines({ summary }: { summary: NonNullable<ReturnType<typeof useDuplicates>["scan"]["last"]> }) {
-  const lines: Array<[number, string]> = [
+  const lines: Array<[number, PluralForms]> = [
     [summary.cloudCount, es.duplicates.skippedCloud],
     [summary.protectedCount, es.duplicates.skippedProtected],
     [summary.hardLinkedCount, es.duplicates.skippedLinks],
@@ -206,9 +206,9 @@ function SkippedLines({ summary }: { summary: NonNullable<ReturnType<typeof useD
     <>
       {lines
         .filter(([count]) => count > 0)
-        .map(([count, template]) => (
-          <p key={template} className="text-content-muted">
-            {format(template, { count: String(count) })}
+        .map(([count, forms]) => (
+          <p key={forms.one} className="text-content-muted">
+            {formatPlural(forms, count)}
           </p>
         ))}
       {unavailable.map((root) => (

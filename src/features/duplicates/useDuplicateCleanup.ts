@@ -14,7 +14,7 @@ import {
   toAppError,
 } from "../../lib/ipc";
 import { es } from "../../shared/i18n/es";
-import { format } from "../../shared/i18n/format";
+import { formatPlural } from "../../shared/i18n/format";
 import { copiesToMove, isDecided } from "./duplicatesText";
 
 /** Avance visible de la ejecucion. */
@@ -176,7 +176,7 @@ export function useDuplicateCleanupState(
       .then((result) => {
         runningId.current = null;
         inFlight.current = false;
-        announce(format(es.duplicates.announceMovingDone, { count: String(result.movedCount) }));
+        announce(formatPlural(es.duplicates.announceMovingDone, result.movedCount));
         if (active.current) {
           setSummary(result);
           setFocusSummary(true);

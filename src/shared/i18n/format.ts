@@ -5,6 +5,21 @@ export function format(template: string, params: Readonly<Record<string, string>
   );
 }
 
+/** Una frase en singular y en plural; `{count}` lleva el numero. */
+export interface PluralForms {
+  one: string;
+  other: string;
+}
+
+/** Elige la forma segun `count` (singular solo con exactamente 1) y completa `{count}` y el resto. */
+export function formatPlural(
+  forms: PluralForms,
+  count: number,
+  params: Readonly<Record<string, string>> = {},
+): string {
+  return format(count === 1 ? forms.one : forms.other, { ...params, count: String(count) });
+}
+
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
 const SIZE_NUMBER = new Intl.NumberFormat("es", { maximumFractionDigits: 1, useGrouping: false });

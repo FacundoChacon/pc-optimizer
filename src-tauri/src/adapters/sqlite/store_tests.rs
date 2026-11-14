@@ -122,6 +122,7 @@ fn sqlite_store_should_satisfy_the_duplicates_contract() {
         dup::contract_resolve_rejects_invalid_resolutions_without_changes(make);
         dup::contract_resolve_twice_fails_keeping_the_first_resolution(make);
         dup::contract_groups_follow_scan_retention(make);
+        dup::contract_copies_sort_by_path_ignoring_case_then_id(make);
     });
 }
 

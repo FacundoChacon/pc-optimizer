@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from "react";
 import type { DuplicateCleanupPreview } from "../../lib/ipc";
 import { es } from "../../shared/i18n/es";
-import { format, formatBytes } from "../../shared/i18n/format";
+import { format, formatBytes, formatPlural } from "../../shared/i18n/format";
 import { Button } from "../../shared/ui/Button";
 import { StatusBadge } from "../../shared/ui/StatusBadge";
 
@@ -79,9 +79,8 @@ export function ReviewDialog({ open, preview, loading, busy, notice, onConfirm, 
       <div className="mt-4">
         <p className="text-content-muted">{es.duplicates.reviewTotalLabel}</p>
         <p className="text-2xl font-semibold">
-          {format(es.duplicates.reviewTotal, {
-            count: String(count),
-            groups: String(preview?.groupCount ?? 0),
+          {formatPlural(es.duplicates.reviewTotal, count, {
+            groups: formatPlural(es.duplicates.groupsCount, preview?.groupCount ?? 0),
             size: formatBytes(preview?.totalBytes ?? 0),
           })}
         </p>
@@ -89,8 +88,7 @@ export function ReviewDialog({ open, preview, loading, busy, notice, onConfirm, 
       <p className="mt-2 text-content-muted">{es.duplicates.reviewKeepNote}</p>
       {preview !== null && preview.recentCount > 0 && (
         <p className="mt-1 text-content-muted">
-          {format(es.duplicates.reviewRecentNote, {
-            count: String(preview.recentCount),
+          {formatPlural(es.duplicates.reviewRecentNote, preview.recentCount, {
             size: formatBytes(preview.recentBytes),
           })}
         </p>
