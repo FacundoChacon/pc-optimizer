@@ -267,3 +267,19 @@ Fuente: `windows-0.62.2` en `~/.cargo/registry` (la skill `winmd-api-search` ind
 - Frontend (9.x): la maquina de estados (`useEmptyRecycleBin`) usa una referencia sincrona de la fase y un contador de secuencia: un doble clic en "Continuar" reconoce una sola vez y una respuesta tardia de un paso cancelado se ignora. Los textos de `recycle_bin_changed`, `empty_request_expired` y `recycle_bin_already_empty` viven en `es.errors.*` (no se duplican en `es.recycleBin.*`). "Continuar" es secundaria (la unica primaria de la pantalla sigue siendo Limpiar / Buscar basura; el foco inicial esta en Cancelar); el paso 2 usa el boton `danger` con casilla. `ipc.test.ts` y `mockBackendEmpty.test.ts` cubren decodificadores y el backend simulado de 3 pasos. Se actualizaron dos tests de C-09 que afirmaban que no habia ninguna accion "vaciar" en la pantalla: ahora afirman que la unica es "Vaciar Papelera…" (su propio flujo) y que no aparece dentro del preview.
 - Revision UX (9.6, ux-ui-revisor, solo lectura sobre el codigo; no hay URL que recorrer): sin hallazgos de severidad Alta. Descartados por ser de gusto o ya cubiertos: "Continuar" sin estilo primario (decision de diseno: una sola primaria por pantalla y foco en la accion segura), region `aria-live` durante la medicion (ya se anuncia tambien por el `Announcer`), contraste (cubierto por `contrast.test.ts`, sin colores nuevos). Verificado: foco inicial en Cancelar en ambos pasos, retorno del foco a "Vaciar Papelera…", casilla sin marcar al abrir y `aria-describedby` con el motivo del boton deshabilitado, foco al titulo del resultado.
 
+### 10.1 Conteos finales (terminal NO elevada) frente a la linea base
+
+| Comando | Linea base (1.1) | Final |
+|---|---|---|
+| `npx vitest run` | 317 passed (16 archivos) | **366 passed** (19 archivos) |
+| `cargo test --locked` lib | 667 passed, 16 ignored | **736 passed, 17 ignored** (+1 ignorado: el test real del vaciado, no ejecutado) |
+| `architecture` / `manifest` / `no_network_crates` / `security_baseline` | 9 / 5 / 9 / 21 | **17** / 5 / 9 / **22** |
+| `cargo fmt --check`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, `npm run build` | verdes | verdes |
+| `openspec validate recycle-bin-empty --strict` | - | valido |
+
+`package-lock.json`, `src-tauri/Cargo.lock`, `tauri.conf.json` y `src-tauri/src/adapters/sqlite/migrations` sin cambios.
+
+### 10.2 Smoke guiado: pendiente
+
+Las instrucciones paso a paso estan en `openspec/changes/recycle-bin-empty/smoke-guide.md` (aviso de 10 s antes de cada lanzamiento de UI o UAC, sin capturas, compuerta escrita `mi Papelera de C: puede vaciarse`). NO se ejecuto: lo corren el agente principal y el dueño. Resultados por anotar aqui.
+
