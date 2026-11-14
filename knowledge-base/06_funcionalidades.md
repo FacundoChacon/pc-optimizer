@@ -99,11 +99,13 @@ Organizadas por épica y luego por historia (US-NNN). Cada historia lleva **hito
 **Reglas relacionadas**: RN-LIM-01, RN-LIM-03, RN-LIM-04, RN-LIM-05, RN-LIM-07
 
 ### US-010 — Vaciar Papelera
-**Hito**: v0.1 (**Suposición**; sujeto a pregunta abierta) · **Gobernanza**: HIGH
+**Hito**: v0.1 · **Gobernanza**: HIGH
 **Como** usuario **quiero** vaciar la Papelera con doble confirmación **para** recuperar el espacio realmente.
 
-- [ ] Doble confirmación propia.
-- [ ] Registro en el log.
+- [ ] Doble confirmación propia: dos diálogos distintos; el segundo exige marcar una casilla "Entiendo que no se puede deshacer" (C-10).
+- [ ] Cantidad y tamaño medidos visibles en ambos pasos; si la Papelera cambia entre pasos, no se vacía y se vuelve a revisar.
+- [ ] Bloqueada en `mismatch` (over-the-shoulder), con aviso.
+- [ ] Registro en el log (`recycle_bin_emptied`, o `error` si falló; `partial`/`unverified` en el detalle).
 
 **Reglas relacionadas**: RN-LIM-06
 

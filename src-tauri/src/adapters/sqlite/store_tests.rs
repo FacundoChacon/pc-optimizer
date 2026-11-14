@@ -119,7 +119,44 @@ fn sqlite_store_should_satisfy_contract_scan_cleaned_at() {
     with_temp_stores(|make| {
         contract::contract_scan_cleaned_at_is_the_latest_log_entry_since_the_scan_ended(make);
         contract::contract_scan_cleaned_at_ignores_other_scans_and_older_entries(make);
+        contract::contract_empty_bin_entry_does_not_mark_the_scan_as_cleaned(make);
     });
+}
+
+#[test]
+fn recycle_bin_emptied_rows_should_stay_append_only_on_schema_version_2() {
+    use crate::domain::model::{CleanupOutcome, NewCleanupLogEntry};
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("data.db");
+    let store = SqliteStore::open(&path).unwrap();
+    store
+        .append_cleanup_log(&[NewCleanupLogEntry {
+            ts: EpochMillis(1_500),
+            category: "recycle_bin".into(),
+            path: "C:\\".into(),
+            size_bytes: 1,
+            outcome: CleanupOutcome::RecycleBinEmptied,
+            scan_id: None,
+            error_detail: None,
+        }])
+        .unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 2, "C-10 no agrega migraciones");
+    assert!(
+        conn.execute(
+            "UPDATE cleanup_log SET outcome = 'error' WHERE category = 'recycle_bin'",
+            []
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute("DELETE FROM cleanup_log WHERE category = 'recycle_bin'", [])
+            .is_err()
+    );
 }
 
 #[test]
