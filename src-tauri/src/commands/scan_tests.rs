@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use super::*;
+use crate::domain::cleanup::model::PreviewId;
 use crate::domain::junk::model::JunkFinding;
 use crate::domain::model::EpochMillis;
 use crate::domain::ports::fakes::{FakeFileSystem, FakeRecycleBin, FixedClock, InMemoryStore};
@@ -40,7 +41,7 @@ struct Env {
     fs: FakeFileSystem,
     bin: FakeRecycleBin,
     clock: FixedClock,
-    active: ActiveScan,
+    active: ActiveJob,
 }
 
 impl Env {
@@ -50,7 +51,7 @@ impl Env {
             fs: fs_with_files(),
             bin: FakeRecycleBin::with_usage(12, 340_000_000),
             clock: FixedClock(NOW),
-            active: ActiveScan::default(),
+            active: ActiveJob::default(),
         }
     }
 
@@ -59,7 +60,7 @@ impl Env {
         privileges: &PrivilegeContext,
         raw: RawProtectionContext,
     ) -> (Result<JunkScanSummaryDto, AppError>, Vec<ScanEventDto>) {
-        let guard = self.active.begin().unwrap();
+        let guard = self.active.begin_scan().unwrap();
         self.run_with_guard(privileges, raw, &guard)
     }
 
@@ -67,7 +68,7 @@ impl Env {
         &self,
         privileges: &PrivilegeContext,
         raw: RawProtectionContext,
-        guard: &ScanGuard,
+        guard: &JobGuard,
     ) -> (Result<JunkScanSummaryDto, AppError>, Vec<ScanEventDto>) {
         let ports = ScanPorts {
             store: &self.store,
@@ -202,54 +203,142 @@ fn summary_and_events_json_should_not_leak_paths_or_identities() {
     }
 }
 
-// ---- 7.3 estado ActiveScan ----
+// ---- 7.3 estado ActiveJob ----
 
 #[test]
-fn active_scan_should_reject_a_second_scan_and_release_the_slot_on_drop() {
-    let active = ActiveScan::default();
-    let first = active.begin().unwrap();
-    assert!(matches!(active.begin(), Err(AppError::ScanInProgress)));
+fn active_job_should_reject_a_second_scan_and_release_the_slot_on_drop() {
+    let active = ActiveJob::default();
+    let first = active.begin_scan().unwrap();
+    assert!(matches!(active.begin_scan(), Err(AppError::ScanInProgress)));
     drop(first);
-    let again = active.begin();
+    let again = active.begin_scan();
     assert!(again.is_ok(), "el lugar debe liberarse al soltar el guard");
 }
 
 #[test]
-fn active_scan_should_release_the_slot_when_the_task_fails() {
-    let active = ActiveScan::default();
+fn active_job_should_release_the_slot_when_the_task_fails() {
+    let active = ActiveJob::default();
     let outcome: Result<(), AppError> = (|| {
-        let _guard = active.begin()?;
+        let _guard = active.begin_scan()?;
         Err(AppError::Internal("falla de la tarea".to_owned()))
     })();
     assert!(outcome.is_err());
-    assert!(active.begin().is_ok());
+    assert!(active.begin_scan().is_ok());
 }
 
 #[test]
-fn active_scan_cancel_should_raise_the_flag_only_for_the_active_id() {
-    let active = ActiveScan::default();
+fn active_job_scan_cancel_should_raise_the_flag_only_for_the_active_id() {
+    let active = ActiveJob::default();
     assert!(matches!(
-        active.cancel(ScanId(1)),
+        active.cancel_scan(ScanId(1)),
         Err(AppError::ScanNotFound(_))
     ));
-    let guard = active.begin().unwrap();
+    let guard = active.begin_scan().unwrap();
     assert!(
-        matches!(active.cancel(ScanId(1)), Err(AppError::ScanNotFound(_))),
+        matches!(
+            active.cancel_scan(ScanId(1)),
+            Err(AppError::ScanNotFound(_))
+        ),
         "aun sin id asociado nada coincide"
     );
     guard.bind(ScanId(7));
     assert!(matches!(
-        active.cancel(ScanId(8)),
+        active.cancel_scan(ScanId(8)),
         Err(AppError::ScanNotFound(_))
     ));
     assert!(!guard.cancel_flag().load(Ordering::Relaxed));
-    active.cancel(ScanId(7)).unwrap();
+    active.cancel_scan(ScanId(7)).unwrap();
     assert!(guard.cancel_flag().load(Ordering::Relaxed));
     drop(guard);
     assert!(matches!(
-        active.cancel(ScanId(7)),
+        active.cancel_scan(ScanId(7)),
         Err(AppError::ScanNotFound(_))
     ));
+}
+
+#[test]
+fn active_job_should_make_scans_and_cleanups_mutually_exclusive() {
+    let active = ActiveJob::default();
+    let scan = active.begin_scan().unwrap();
+    assert!(matches!(
+        active.begin_cleanup(PreviewId(1)),
+        Err(AppError::ScanInProgress)
+    ));
+    drop(scan);
+
+    let cleanup = active.begin_cleanup(PreviewId(1)).unwrap();
+    assert!(matches!(
+        active.begin_scan(),
+        Err(AppError::CleanupInProgress)
+    ));
+    assert!(matches!(
+        active.begin_cleanup(PreviewId(2)),
+        Err(AppError::CleanupInProgress)
+    ));
+    drop(cleanup);
+    assert!(active.begin_scan().is_ok());
+}
+
+#[test]
+fn active_job_cancel_should_only_act_on_its_own_kind() {
+    let active = ActiveJob::default();
+    let scan = active.begin_scan().unwrap();
+    scan.bind(ScanId(7));
+    assert!(matches!(
+        active.cancel_cleanup(PreviewId(7)),
+        Err(AppError::PreviewNotFound)
+    ));
+    assert!(!scan.cancel_flag().load(Ordering::Relaxed));
+    drop(scan);
+
+    let cleanup = active.begin_cleanup(PreviewId(7)).unwrap();
+    assert!(matches!(
+        active.cancel_scan(ScanId(7)),
+        Err(AppError::ScanNotFound(_))
+    ));
+    assert!(matches!(
+        active.cancel_cleanup(PreviewId(8)),
+        Err(AppError::PreviewNotFound)
+    ));
+    assert!(!cleanup.cancel_flag().load(Ordering::Relaxed));
+    active.cancel_cleanup(PreviewId(7)).unwrap();
+    assert!(cleanup.cancel_flag().load(Ordering::Relaxed));
+    drop(cleanup);
+    assert!(matches!(
+        active.cancel_cleanup(PreviewId(7)),
+        Err(AppError::PreviewNotFound)
+    ));
+}
+
+#[test]
+fn active_job_should_release_the_slot_when_a_cleanup_task_fails() {
+    let active = ActiveJob::default();
+    let outcome: Result<(), AppError> = (|| {
+        let _guard = active.begin_cleanup(PreviewId(3))?;
+        Err(AppError::Internal("falla de la limpieza".to_owned()))
+    })();
+    assert!(outcome.is_err());
+    assert!(active.begin_cleanup(PreviewId(4)).is_ok());
+}
+
+#[test]
+fn active_job_should_let_a_preview_check_for_a_running_job_without_taking_the_slot() {
+    let active = ActiveJob::default();
+    assert!(active.ensure_idle().is_ok());
+    let scan = active.begin_scan().unwrap();
+    assert!(matches!(
+        active.ensure_idle(),
+        Err(AppError::ScanInProgress)
+    ));
+    drop(scan);
+    let cleanup = active.begin_cleanup(PreviewId(1)).unwrap();
+    assert!(matches!(
+        active.ensure_idle(),
+        Err(AppError::CleanupInProgress)
+    ));
+    drop(cleanup);
+    assert!(active.ensure_idle().is_ok());
+    assert!(active.begin_scan().is_ok(), "ensure_idle no toma el lugar");
 }
 
 // ---- 7.4 flujo del escaneo (con dobles) ----
@@ -292,7 +381,7 @@ fn run_junk_scan_should_leave_a_cancelled_scan_without_findings_and_keep_the_pre
     let env = Env::new();
     let first = env.run(&matched(), raw_c_ana()).0.unwrap();
 
-    let guard = env.active.begin().unwrap();
+    let guard = env.active.begin_scan().unwrap();
     guard.cancel_flag().store(true, Ordering::Relaxed);
     let (second, events) = env.run_with_guard(&matched(), raw_c_ana(), &guard);
     let second = second.unwrap();
@@ -367,11 +456,14 @@ fn run_junk_scan_should_mark_the_scan_as_error_when_the_recycle_bin_query_fails_
 #[test]
 fn run_junk_scan_should_release_the_slot_only_when_the_guard_drops() {
     let env = Env::new();
-    let guard = env.active.begin().unwrap();
+    let guard = env.active.begin_scan().unwrap();
     let _ = env.run_with_guard(&matched(), raw_c_ana(), &guard);
-    assert!(matches!(env.active.begin(), Err(AppError::ScanInProgress)));
+    assert!(matches!(
+        env.active.begin_scan(),
+        Err(AppError::ScanInProgress)
+    ));
     drop(guard);
-    assert!(env.active.begin().is_ok());
+    assert!(env.active.begin_scan().is_ok());
 }
 
 // ---- list_junk_findings / get_last_junk_scan ----

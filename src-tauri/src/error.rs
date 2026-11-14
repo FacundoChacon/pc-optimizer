@@ -48,6 +48,24 @@ pub enum AppError {
     /// Argumento fuera de rango o desconocido.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    /// El preview pedido no existe, ya se uso, fue reemplazado o no esta en ejecucion.
+    #[error("cleanup preview not found")]
+    PreviewNotFound,
+    /// El preview supero su tiempo de vida (10 minutos).
+    #[error("cleanup preview expired")]
+    PreviewExpired,
+    /// Desde el preview termino otro escaneo de basura o su escaneo fue limpiado.
+    #[error("cleanup preview is stale")]
+    PreviewStale,
+    /// El escaneo ya tiene una limpieza registrada: hay que volver a escanear.
+    #[error("the scan was already cleaned")]
+    ScanAlreadyCleaned,
+    /// Ya hay una limpieza en curso.
+    #[error("a cleanup is already in progress")]
+    CleanupInProgress,
+    /// El preview no tiene ningun item para mover.
+    #[error("there is nothing to clean")]
+    NothingToClean,
 }
 
 impl From<SettingsServiceError> for AppError {
@@ -107,6 +125,12 @@ impl AppError {
             Self::ScanNotFound(_) => "scan_not_found",
             Self::ScanKindUnsupported(_) => "scan_kind_unsupported",
             Self::InvalidArgument(_) => "invalid_argument",
+            Self::PreviewNotFound => "preview_not_found",
+            Self::PreviewExpired => "preview_expired",
+            Self::PreviewStale => "preview_stale",
+            Self::ScanAlreadyCleaned => "scan_already_cleaned",
+            Self::CleanupInProgress => "cleanup_in_progress",
+            Self::NothingToClean => "nothing_to_clean",
         }
     }
 }
@@ -237,6 +261,50 @@ mod tests {
                 "{upper}"
             );
         }
+    }
+
+    #[test]
+    fn cleanup_errors_should_serialize_with_stable_kinds_and_a_plain_message() {
+        let cases = [
+            (AppError::PreviewNotFound, "preview_not_found"),
+            (AppError::PreviewExpired, "preview_expired"),
+            (AppError::PreviewStale, "preview_stale"),
+            (AppError::ScanAlreadyCleaned, "scan_already_cleaned"),
+            (AppError::CleanupInProgress, "cleanup_in_progress"),
+            (AppError::NothingToClean, "nothing_to_clean"),
+        ];
+        for (error, kind) in cases {
+            let value = serde_json::to_value(&error).unwrap();
+            assert_eq!(value["kind"], kind);
+            let message = value["message"].as_str().unwrap();
+            assert!(!message.is_empty(), "{kind}");
+            assert!(!message.contains(char::from(0x5c)), "{kind}: {message}");
+        }
+    }
+
+    #[test]
+    fn cleanup_errors_should_have_distinct_kinds_from_the_scan_errors() {
+        let kinds: Vec<String> = [
+            AppError::ScanInProgress,
+            AppError::PreviewNotFound,
+            AppError::PreviewExpired,
+            AppError::PreviewStale,
+            AppError::ScanAlreadyCleaned,
+            AppError::CleanupInProgress,
+            AppError::NothingToClean,
+        ]
+        .iter()
+        .map(|e| {
+            serde_json::to_value(e).unwrap()["kind"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+        let mut unique = kinds.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), kinds.len());
     }
 
     #[test]
