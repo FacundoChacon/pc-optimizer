@@ -287,7 +287,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/07_flujos_principales.md` §Flujo 2
 
 ### [C-09] `cleanup-preview-and-trash`
-- **Estado**: `[~]` en curso (decisiones del dueño aprobadas 2026-11-14; rama `feat/cleanup-preview-and-trash`)
+- **Estado**: `[x]` completado (archivado 2026-11-14)
 - **Scope**:
   - Nota C-05: reevaluar `scope_access` y `restrict_protection_context` al confirmar la limpieza, no solo al previsualizar.
   - `domain/cleanup.rs`: `preview_cleanup` (ítems, cantidad, tamaño total, `preview_id`) y `confirm_cleanup(preview_id)`; el frontend solo envía IDs de hallazgos.
