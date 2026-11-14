@@ -145,7 +145,7 @@ Si el tamaño o la fecha de última escritura leídos del archivo abierto durant
 - **THEN** el ítem queda `skipped_locked` con detalle `recently_modified`
 
 ### Requirement: Solo a la Papelera, nunca borrado permanente
-Todo ítem que se limpie SHALL moverse a la Papelera; el sistema MUST NOT borrarlo de forma permanente por ningún camino, tampoco si la Papelera no está disponible o el ítem no entra en ella, y MUST NOT vaciar la Papelera en este flujo.
+Todo ítem que se limpie SHALL moverse a la Papelera; el sistema MUST NOT borrarlo de forma permanente por ningún camino, tampoco si la Papelera no está disponible o el ítem no entra en ella, y MUST NOT vaciar la Papelera en este flujo (vaciarla es la única excepción permanente declarada y vive en su propio flujo de doble confirmación).
 
 #### Scenario: Ítem movido
 - **WHEN** un ítem pasa todas las verificaciones y la Papelera lo acepta
@@ -177,7 +177,7 @@ Todo ítem que se limpie SHALL moverse a la Papelera; el sistema MUST NOT borrar
 
 #### Scenario: Ninguna ruta de código borra de forma permanente
 - **WHEN** se revisa el código de producción
-- **THEN** no contiene llamadas de borrado permanente de archivos ni de vaciado de la Papelera
+- **THEN** no contiene llamadas de borrado permanente de archivos, y la única llamada de vaciado de la Papelera es la del adaptador del vaciado con doble confirmación (capacidad `recycle-bin-empty`), en un solo archivo y fuera de este flujo
 
 ### Requirement: Archivos en uso omitidos sin forzar
 Un ítem que otro proceso tiene abierto de forma que impide moverlo SHALL omitirse como `skipped_locked` (detalle `in_use` o `unresolvable_in_use`); el sistema MUST NOT reintentar, cerrar procesos ni programar el borrado para el reinicio.
@@ -231,7 +231,7 @@ Durante la ejecución, el sistema SHALL informar inicio con el total y progreso 
 - **THEN** la interfaz recibe un aviso de inicio con total 100, avisos de progreso y el resumen final
 
 ### Requirement: Escaneo y limpieza mutuamente excluyentes
-Como máximo SHALL correr un escaneo o una limpieza a la vez: iniciar un escaneo durante una limpieza MUST fallar con `cleanup_in_progress`; pedir un preview o confirmar durante un escaneo MUST fallar con `scan_in_progress`; una segunda confirmación durante una limpieza MUST fallar con `cleanup_in_progress`.
+Como máximo SHALL correr un escaneo, una limpieza o un vaciado de la Papelera a la vez: iniciar un escaneo durante una limpieza MUST fallar con `cleanup_in_progress`; pedir un preview o confirmar durante un escaneo MUST fallar con `scan_in_progress`; una segunda confirmación durante una limpieza MUST fallar con `cleanup_in_progress`; pedir un preview o confirmar durante un vaciado MUST fallar con `recycle_bin_empty_in_progress`.
 
 #### Scenario: Escaneo durante la limpieza
 - **WHEN** se pide un escaneo mientras una limpieza está en curso
@@ -240,6 +240,10 @@ Como máximo SHALL correr un escaneo o una limpieza a la vez: iniciar un escaneo
 #### Scenario: Preview durante un escaneo
 - **WHEN** se pide un preview mientras un escaneo está en curso
 - **THEN** la petición falla con `scan_in_progress`
+
+#### Scenario: Limpieza durante el vaciado
+- **WHEN** se pide un preview o se confirma una limpieza mientras la Papelera se está vaciando
+- **THEN** la petición falla con `recycle_bin_empty_in_progress` y no se mueve nada
 
 ### Requirement: Comandos IPC de limpieza
 El backend SHALL exponer pedir un preview (escaneo y categorías), confirmarlo (identificador del preview, con progreso por el canal de la invocación) y cancelar la ejecución en curso. Las respuestas MUST NOT incluir rutas, SIDs ni nombres de cuenta, y la interfaz MUST NOT enviar rutas.

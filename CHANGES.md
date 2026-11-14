@@ -310,7 +310,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/09_decisiones_y_supuestos.md` §DD-05
 
 ### [C-10] `recycle-bin-empty`
-- **Estado**: `[x]` completado (smoke guiado con el dueño 2026-11-14; rama `feat/recycle-bin-empty`)
+- **Estado**: `[x]` completado (archivado 2026-11-14)
 - **Scope**:
   - Comando `empty_recycle_bin`: única acción permanente declarada (PA-02); nunca automática, nunca invocable por scheduler ni por mejoras.
   - Doble confirmación propia en UI (dos pasos distintos, con tamaño a liberar); bloqueada en mismatch (la Papelera es por-usuario).
