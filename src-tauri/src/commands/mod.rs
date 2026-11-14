@@ -4,6 +4,7 @@ pub mod app_info;
 pub mod cleanup;
 pub mod names;
 pub mod privileges;
+pub mod recycle_bin;
 pub mod scan;
 pub mod settings;
 pub mod store;

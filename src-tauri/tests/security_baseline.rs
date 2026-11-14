@@ -547,6 +547,40 @@ fn real_capabilities_should_have_no_forbidden_permissions() {
 }
 
 #[test]
+fn the_three_empty_recycle_bin_commands_should_be_granted_without_any_core_permission() {
+    let capabilities = load_capabilities().unwrap();
+    let permissions: Vec<String> = capabilities
+        .iter()
+        .flat_map(|capability| {
+            capability["permissions"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter_map(|permission| permission.as_str().map(str::to_owned))
+        .collect();
+    for expected in [
+        "allow-prepare-empty-recycle-bin",
+        "allow-acknowledge-empty-recycle-bin",
+        "allow-empty-recycle-bin",
+    ] {
+        assert_eq!(
+            permissions.iter().filter(|p| *p == expected).count(),
+            1,
+            "{expected}"
+        );
+    }
+    assert_eq!(
+        permissions
+            .iter()
+            .filter(|p| p.starts_with("allow-"))
+            .count(),
+        16
+    );
+    assert!(permissions.iter().all(|p| !p.starts_with("core:")));
+}
+
+#[test]
 fn real_capabilities_should_grant_exactly_the_app_commands() {
     let capabilities = load_capabilities().unwrap();
     let mismatches = permission_set_mismatches(

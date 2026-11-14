@@ -199,6 +199,8 @@ enum JobKind {
     Scan(Option<ScanId>),
     /// Limpieza del preview indicado.
     Cleanup(PreviewId),
+    /// Vaciado de la Papelera (C-10): no cancelable.
+    EmptyRecycleBin,
 }
 
 #[derive(Debug)]
@@ -207,7 +209,8 @@ struct ActiveEntry {
     cancel: Arc<AtomicBool>,
 }
 
-/// Trabajo en curso: como maximo un escaneo O una limpieza a la vez (C-09 D-19).
+/// Trabajo en curso: como maximo un escaneo, una limpieza O un vaciado de la Papelera a la vez
+/// (C-09 D-19, C-10 D-06).
 #[derive(Debug, Clone, Default)]
 pub struct ActiveJob(Arc<Mutex<Option<ActiveEntry>>>);
 
@@ -217,6 +220,7 @@ impl ActiveJob {
         match entry.kind {
             JobKind::Scan(_) => AppError::ScanInProgress,
             JobKind::Cleanup(_) => AppError::CleanupInProgress,
+            JobKind::EmptyRecycleBin => AppError::RecycleBinEmptyInProgress,
         }
     }
 
@@ -246,6 +250,13 @@ impl ActiveJob {
     /// y `cleanup_in_progress` con otra limpieza.
     pub fn begin_cleanup(&self, id: PreviewId) -> Result<JobGuard, AppError> {
         self.begin(JobKind::Cleanup(id))
+    }
+
+    /// Toma el lugar del vaciado de la Papelera (C-10, D-06); falla `scan_in_progress`,
+    /// `cleanup_in_progress` o `recycle_bin_empty_in_progress` segun quien lo ocupe. Vaciar
+    /// mientras la limpieza mueve archivos los destruiria sin preview.
+    pub fn begin_empty(&self) -> Result<JobGuard, AppError> {
+        self.begin(JobKind::EmptyRecycleBin)
     }
 
     /// Consulta sin tomar el lugar (el preview es instantaneo): falla igual que `begin_*`.
