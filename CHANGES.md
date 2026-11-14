@@ -310,13 +310,16 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/09_decisiones_y_supuestos.md` §DD-05
 
 ### [C-10] `recycle-bin-empty`
-- **Estado**: `[~]` en curso (decisiones del dueño aprobadas 2026-11-14; rama `feat/recycle-bin-empty`)
+- **Estado**: `[x]` completado (smoke guiado con el dueño 2026-11-14; rama `feat/recycle-bin-empty`)
 - **Scope**:
   - Comando `empty_recycle_bin`: única acción permanente declarada (PA-02); nunca automática, nunca invocable por scheduler ni por mejoras.
   - Doble confirmación propia en UI (dos pasos distintos, con tamaño a liberar); bloqueada en mismatch (la Papelera es por-usuario).
   - Registro en `cleanup_log` con outcome `recycle_bin_emptied`. US-010.
   - Nota C-08: la Papelera se mide y se vacía solo en el volumen del sistema (misma raíz que consulta `RecycleBinInfo`).
   - Tests: no ejecuta sin ambas confirmaciones, no corre en mismatch, log escrito, ninguna otra ruta del código usa borrado permanente.
+  - Decisiones aprobadas (2026-11-14): vaciado con `SHEmptyRecycleBinW` (`SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND`) como única excepción declarada al borrado permanente, confinada a `adapters/windows/recycle_bin_empty.rs` (el test de arquitectura limita las ocurrencias); sin migración (el esquema sigue en la versión 2); entrada de `cleanup_log` con `recycle_bin_emptied` y `scan_id` NULL, que no marca el escaneo como limpiado.
+  - Smoke guiado (2026-11-14): vaciado real `emptied` sin ventanas del shell, y variante elevada (release, `match`) que vacía la misma Papelera del usuario; la exclusividad y el over-the-shoulder quedan cubiertos por tests (en el smoke se omitieron por decisión del dueño); ver `design.md` §10.2 del change archivado.
+  - Nota para C-13: el vaciado queda fuera de cualquier flujo automático (solo UI con doble confirmación); la lista cerrada de D-12 NO se amplía en C-16/C-18 (mejoras), C-22 (bandeja) ni C-23 (escaneos programados).
 - **Dependencias**: `C-09`
 - **Governance**: ALTO (HIGH)
 - **Leer antes**:
