@@ -73,13 +73,14 @@ describe("CleanupScreen: estados y resultados", () => {
     expect(screen.getByText(es.cleanup.inUseNotice)).toBeInTheDocument();
   });
 
-  it("no ofrece ninguna accion de limpiar, borrar ni vaciar", async () => {
-    await openCleanup({ lastScan: RESULT });
+  it("la unica accion que limpia es Limpiar (abre el preview); no hay borrar, eliminar ni vaciar", async () => {
+    const backend = await openCleanup({ lastScan: RESULT });
     await screen.findByRole("region", { name: names.temp_user });
-    expect(screen.queryByRole("button", { name: /limpiar|borrar|eliminar|vaciar/i })).toBeNull();
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(
-      expect.not.arrayContaining([expect.stringMatching(/limpiar|borrar|eliminar|vaciar/i)]),
+    const risky = screen.getAllByRole("button").filter((button) =>
+      /limpiar|borrar|eliminar|vaciar|mover/i.test(button.textContent ?? ""),
     );
+    expect(risky.map((button) => button.textContent)).toEqual([es.cleanup.clean]);
+    expect(backend.count("confirm_cleanup")).toBe(0);
   });
 
   it("blocked por otra cuenta: texto del catalogo, insignia de advertencia y sin tamano", async () => {

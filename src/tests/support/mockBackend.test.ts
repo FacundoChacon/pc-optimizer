@@ -1,13 +1,18 @@
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  type CleanupEvent,
+  cancelCleanup,
   cancelScan,
+  confirmCleanup,
   getLastJunkScan,
   type JunkFinding,
   listJunkFindings,
+  previewCleanup,
   type ScanEvent,
   startJunkScan,
 } from "../../lib/ipc";
+import { cleanupSummary, preview } from "./cleanupFixtures";
 import { summary } from "./junkFixtures";
 import { installBackend } from "./mockBackend";
 
@@ -83,5 +88,71 @@ describe("mockBackend: escaneo de basura", () => {
   it("failures hace fallar el comando con el error tipado", async () => {
     installBackend({ failures: { start_scan: { kind: "scan_in_progress", message: "x" } } });
     await expect(startJunkScan(() => undefined)).rejects.toMatchObject({ kind: "scan_in_progress" });
+  });
+});
+
+describe("mockBackend: limpieza", () => {
+  it("preview_cleanup devuelve el preview configurado, filtrado por categorias y con un id nuevo por llamada", async () => {
+    const backend = installBackend();
+    const first = await previewCleanup(1, ["temp_user", "temp_windows"]);
+    const second = await previewCleanup(1, ["temp_windows"]);
+    expect(second.previewId).toBe(first.previewId + 1);
+    expect(first.categories.map((c) => c.category)).toEqual(["temp_user", "temp_windows"]);
+    expect(second.categories.map((c) => c.category)).toEqual(["temp_windows"]);
+    expect([second.totalItems, second.totalBytes]).toEqual([2, 2048]);
+    expect(backend.count("preview_cleanup")).toBe(2);
+  });
+
+  it("preview_cleanup usa el preview configurado en el estado", async () => {
+    installBackend({ preview: preview({ recycleBinAvailable: false }) });
+    expect((await previewCleanup(1, ["temp_user"])).recycleBinAvailable).toBe(false);
+  });
+
+  it("confirm_cleanup envia los eventos programados, devuelve el resumen y marca el escaneo como limpiado", async () => {
+    const result = cleanupSummary({ finishedAt: 1_800_000_050_000 });
+    const backend = installBackend({
+      lastScan: summary(),
+      cleanupResult: result,
+      cleanupEvents: [
+        { type: "started", previewId: 1, total: 12 },
+        { type: "progress", processed: 12, total: 12, movedCount: 10, movedBytes: 1 },
+      ],
+    });
+    const events: CleanupEvent[] = [];
+    await expect(confirmCleanup(1, (event) => events.push(event))).resolves.toEqual(result);
+    expect(events.map((event) => event.type)).toEqual(["started", "progress"]);
+    expect((await getLastJunkScan())?.cleanedAt).toBe(1_800_000_050_000);
+    expect(backend.count("confirm_cleanup")).toBe(1);
+  });
+
+  it("emitCleanup entrega eventos posteriores mientras confirm_cleanup espera su gate", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const backend = installBackend({
+      cleanupResult: cleanupSummary(),
+      cleanupEvents: [{ type: "started", previewId: 1, total: 12 }],
+      gates: { confirm_cleanup: gate },
+    });
+    const events: CleanupEvent[] = [];
+    const running = confirmCleanup(1, (event) => events.push(event));
+    await Promise.resolve();
+    backend.emitCleanup([{ type: "progress", processed: 5, total: 12, movedCount: 5, movedBytes: 9 }]);
+    expect(events.map((event) => event.type)).toEqual(["started", "progress"]);
+    release();
+    await running;
+  });
+
+  it("cancel_cleanup responde y se registra; failures y failureQueue hacen fallar con el error tipado", async () => {
+    const backend = installBackend({
+      failures: { cancel_cleanup: { kind: "preview_not_found", message: "x" } },
+      failureQueue: { confirm_cleanup: [{ kind: "preview_expired", message: "y" }] },
+      cleanupResult: cleanupSummary(),
+    });
+    await expect(cancelCleanup(1)).rejects.toMatchObject({ kind: "preview_not_found" });
+    await expect(confirmCleanup(1, () => undefined)).rejects.toMatchObject({ kind: "preview_expired" });
+    await expect(confirmCleanup(1, () => undefined)).resolves.toMatchObject({ status: "completed" });
+    expect(backend.count("cancel_cleanup")).toBe(1);
   });
 });

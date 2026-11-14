@@ -223,6 +223,8 @@ export interface JunkScanSummary {
   finishedAt: number | null;
   totalItems: number;
   totalBytes: number;
+  /** Fecha de la ultima limpieza que registro items sobre este escaneo; `null` si nunca se limpio. */
+  cleanedAt: number | null;
   categories: CategorySummary[];
 }
 
@@ -303,7 +305,7 @@ function hasExpectedCategories(status: "done" | "cancelled", categories: Categor
 
 function decodeJunkScanSummary(raw: unknown, command: string): JunkScanSummary {
   if (isRecord(raw) && Array.isArray(raw["categories"])) {
-    const { scanId, status, startedAt, finishedAt, totalItems, totalBytes } = raw;
+    const { scanId, status, startedAt, finishedAt, totalItems, totalBytes, cleanedAt } = raw;
     const decoded = raw["categories"].map(decodeCategory);
     const categories = decoded.filter((category): category is CategorySummary => category !== null);
     if (
@@ -313,10 +315,11 @@ function decodeJunkScanSummary(raw: unknown, command: string): JunkScanSummary {
       (finishedAt === null || isCount(finishedAt)) &&
       isCount(totalItems) &&
       isCount(totalBytes) &&
+      (cleanedAt === null || isCount(cleanedAt)) &&
       categories.length === decoded.length &&
       hasExpectedCategories(status, categories)
     ) {
-      return { scanId, status, startedAt, finishedAt, totalItems, totalBytes, categories };
+      return { scanId, status, startedAt, finishedAt, totalItems, totalBytes, cleanedAt, categories };
     }
   }
   throw invalidResponse(command);
@@ -400,4 +403,301 @@ export async function listJunkFindings(
     await call<unknown>("list_junk_findings", { scanId, category, offset, limit }),
     "list_junk_findings",
   );
+}
+
+/** Estado de una categoria en el preview (espejo de `PreviewCategoryDto.status`). */
+export type PreviewCategoryStatus = "included" | "blocked";
+
+/** Espejo de `commands::cleanup::PreviewCategoryDto` (Rust). `blockReason` solo con `blocked`. */
+export interface PreviewCategory {
+  category: JunkCategory;
+  status: PreviewCategoryStatus;
+  blockReason?: PrivilegeMismatchReason;
+  itemCount: number;
+  sizeBytes: number;
+  /** Excluidos por haberse escrito hace menos de 24 h: se informan, no se mueven. */
+  recentCount: number;
+  recentBytes: number;
+}
+
+/** Espejo de `commands::cleanup::CleanupPreviewDto` (Rust): sin rutas. */
+export interface CleanupPreview {
+  previewId: number;
+  scanId: number;
+  createdAt: number;
+  expiresAt: number;
+  totalItems: number;
+  totalBytes: number;
+  /** `false` si la Papelera esta deshabilitada o su politica no se pudo leer. */
+  recycleBinAvailable: boolean;
+  categories: PreviewCategory[];
+}
+
+/** Como termino una limpieza (espejo de `CleanupSummaryDto.status`). */
+export type CleanupStatus = "completed" | "cancelled" | "aborted";
+
+/** Por que se aborto una limpieza (espejo de `AbortReason::as_str`). */
+export type CleanupAbortReason = "log_unavailable" | "recycle_bin_unavailable" | "trash_unavailable";
+
+/** Resultado de un item que NO se movio (los movidos no figuran en `reasons`). */
+export type CleanupReasonOutcome = "skipped_locked" | "skipped_protected" | "skipped_cloud" | "error";
+
+/** Espejo de `commands::cleanup::ReasonDto`: cantidad por resultado y codigo de detalle. */
+export interface CleanupReason {
+  outcome: CleanupReasonOutcome;
+  detail: string;
+  count: number;
+}
+
+/** Espejo de `commands::cleanup::CategorySummaryDto`. */
+export interface CleanupCategorySummary {
+  category: JunkCategory;
+  movedCount: number;
+  movedBytes: number;
+  skippedCount: number;
+  errorCount: number;
+}
+
+/** Espejo de `commands::cleanup::CleanupSummaryDto` (Rust): sin rutas. `abortReason` solo con `aborted`. */
+export interface CleanupSummary {
+  previewId: number;
+  scanId: number;
+  status: CleanupStatus;
+  abortReason: CleanupAbortReason | null;
+  startedAt: number;
+  finishedAt: number;
+  totalItems: number;
+  processed: number;
+  notProcessed: number;
+  movedCount: number;
+  movedBytes: number;
+  skippedLocked: number;
+  skippedProtected: number;
+  skippedCloud: number;
+  errors: number;
+  reasons: CleanupReason[];
+  categories: CleanupCategorySummary[];
+}
+
+/** Espejo de `commands::cleanup::CleanupEventDto` (Rust). */
+export type CleanupEvent =
+  | { type: "started"; previewId: number; total: number }
+  | { type: "progress"; processed: number; total: number; movedCount: number; movedBytes: number };
+
+function decodePreviewCategory(raw: unknown): PreviewCategory | null {
+  if (!isRecord(raw)) return null;
+  const { category, status, itemCount, sizeBytes, recentCount, recentBytes } = raw;
+  if (
+    !isJunkCategory(category) ||
+    !isCount(itemCount) ||
+    !isCount(sizeBytes) ||
+    !isCount(recentCount) ||
+    !isCount(recentBytes)
+  ) {
+    return null;
+  }
+  const base = { category, itemCount, sizeBytes, recentCount, recentBytes };
+  const blockReason = raw["blockReason"];
+  if (status === "included") {
+    return blockReason === undefined ? { ...base, status } : null;
+  }
+  if (status === "blocked") {
+    return isMismatchReason(blockReason) ? { ...base, status, blockReason } : null;
+  }
+  return null;
+}
+
+function decodeCleanupPreview(raw: unknown, command: string): CleanupPreview {
+  if (isRecord(raw) && Array.isArray(raw["categories"])) {
+    const { previewId, scanId, createdAt, expiresAt, totalItems, totalBytes, recycleBinAvailable } = raw;
+    const decoded = raw["categories"].map(decodePreviewCategory);
+    const categories = decoded.filter((category): category is PreviewCategory => category !== null);
+    if (
+      isCount(previewId) &&
+      isCount(scanId) &&
+      isCount(createdAt) &&
+      isCount(expiresAt) &&
+      isCount(totalItems) &&
+      isCount(totalBytes) &&
+      typeof recycleBinAvailable === "boolean" &&
+      categories.length === decoded.length
+    ) {
+      return {
+        previewId,
+        scanId,
+        createdAt,
+        expiresAt,
+        totalItems,
+        totalBytes,
+        recycleBinAvailable,
+        categories,
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+const REASON_OUTCOMES: readonly CleanupReasonOutcome[] = [
+  "skipped_locked",
+  "skipped_protected",
+  "skipped_cloud",
+  "error",
+];
+
+const ABORT_REASONS: readonly CleanupAbortReason[] = [
+  "log_unavailable",
+  "recycle_bin_unavailable",
+  "trash_unavailable",
+];
+
+/** Codigo de detalle estable del backend: ASCII `snake_case` (puede llevar un HRESULT en hexadecimal). */
+const DETAIL_CODE = /^[a-z0-9_]+$/;
+
+function decodeReason(raw: unknown): CleanupReason | null {
+  if (!isRecord(raw)) return null;
+  const { outcome, detail, count } = raw;
+  const known = REASON_OUTCOMES.find((candidate) => candidate === outcome);
+  if (known !== undefined && typeof detail === "string" && DETAIL_CODE.test(detail) && isCount(count)) {
+    return { outcome: known, detail, count };
+  }
+  return null;
+}
+
+function decodeCleanupCategory(raw: unknown): CleanupCategorySummary | null {
+  if (!isRecord(raw)) return null;
+  const { category, movedCount, movedBytes, skippedCount, errorCount } = raw;
+  if (
+    isJunkCategory(category) &&
+    isCount(movedCount) &&
+    isCount(movedBytes) &&
+    isCount(skippedCount) &&
+    isCount(errorCount)
+  ) {
+    return { category, movedCount, movedBytes, skippedCount, errorCount };
+  }
+  return null;
+}
+
+/** `aborted` exige un motivo; cualquier otro estado exige `null`. */
+function decodeAbort(status: unknown, abortReason: unknown): CleanupAbortReason | null | undefined {
+  if (status === "aborted") return ABORT_REASONS.find((reason) => reason === abortReason);
+  return abortReason === null ? null : undefined;
+}
+
+function decodeCleanupSummary(raw: unknown, command: string): CleanupSummary {
+  if (isRecord(raw) && Array.isArray(raw["reasons"]) && Array.isArray(raw["categories"])) {
+    const {
+      previewId,
+      scanId,
+      status,
+      startedAt,
+      finishedAt,
+      totalItems,
+      processed,
+      notProcessed,
+      movedCount,
+      movedBytes,
+      skippedLocked,
+      skippedProtected,
+      skippedCloud,
+      errors,
+    } = raw;
+    const abortReason = decodeAbort(status, raw["abortReason"]);
+    const decodedReasons = raw["reasons"].map(decodeReason);
+    const reasons = decodedReasons.filter((reason): reason is CleanupReason => reason !== null);
+    const decodedCategories = raw["categories"].map(decodeCleanupCategory);
+    const categories = decodedCategories.filter(
+      (category): category is CleanupCategorySummary => category !== null,
+    );
+    if (
+      isCount(previewId) &&
+      isCount(scanId) &&
+      (status === "completed" || status === "cancelled" || status === "aborted") &&
+      abortReason !== undefined &&
+      isCount(startedAt) &&
+      isCount(finishedAt) &&
+      isCount(totalItems) &&
+      isCount(processed) &&
+      isCount(notProcessed) &&
+      isCount(movedCount) &&
+      isCount(movedBytes) &&
+      isCount(skippedLocked) &&
+      isCount(skippedProtected) &&
+      isCount(skippedCloud) &&
+      isCount(errors) &&
+      reasons.length === decodedReasons.length &&
+      categories.length === decodedCategories.length
+    ) {
+      return {
+        previewId,
+        scanId,
+        status,
+        abortReason,
+        startedAt,
+        finishedAt,
+        totalItems,
+        processed,
+        notProcessed,
+        movedCount,
+        movedBytes,
+        skippedLocked,
+        skippedProtected,
+        skippedCloud,
+        errors,
+        reasons,
+        categories,
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeCleanupEvent(raw: unknown): CleanupEvent | null {
+  if (!isRecord(raw)) return null;
+  switch (raw["type"]) {
+    case "started": {
+      const { previewId, total } = raw;
+      return isCount(previewId) && isCount(total) ? { type: "started", previewId, total } : null;
+    }
+    case "progress": {
+      const { processed, total, movedCount, movedBytes } = raw;
+      return isCount(processed) && isCount(total) && isCount(movedCount) && isCount(movedBytes)
+        ? { type: "progress", processed, total, movedCount, movedBytes }
+        : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Pide el preview de limpieza de las `categories` del escaneo `scanId`. Solo viajan el
+ * identificador y los nombres de categoria: nunca rutas.
+ */
+export async function previewCleanup(scanId: number, categories: readonly JunkCategory[]): Promise<CleanupPreview> {
+  return decodeCleanupPreview(
+    await call<unknown>("preview_cleanup", { scanId, categories }),
+    "preview_cleanup",
+  );
+}
+
+/**
+ * Confirma el preview `previewId`. El progreso llega por el canal de la invocacion (los eventos
+ * invalidos se ignoran) y la promesa se resuelve con el resumen (`completed`, `cancelled` o `aborted`).
+ */
+export async function confirmCleanup(
+  previewId: number,
+  onEvent: (event: CleanupEvent) => void,
+): Promise<CleanupSummary> {
+  const channel = new Channel<unknown>((raw) => {
+    const event = decodeCleanupEvent(raw);
+    if (event !== null) onEvent(event);
+  });
+  const raw = await call<unknown>("confirm_cleanup", { previewId, onProgress: channel });
+  return decodeCleanupSummary(raw, "confirm_cleanup");
+}
+
+/** Pide cancelar la limpieza en curso del preview `previewId` (`preview_not_found` si no corre). */
+export async function cancelCleanup(previewId: number): Promise<void> {
+  await call<unknown>("cancel_cleanup", { previewId });
 }

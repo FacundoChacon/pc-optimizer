@@ -30,6 +30,8 @@ export interface JunkScanApi {
   notice: string | null;
   start: () => void;
   cancel: () => void;
+  /** Vuelve a leer el ultimo escaneo guardado (por ejemplo, tras una limpieza que lo marco como limpiado). */
+  refresh: () => Promise<void>;
 }
 
 const STARTING: ScanProgressState = { category: null, filesSeen: 0, scanId: null };
@@ -131,5 +133,14 @@ export function useJunkScanState(): JunkScanApi {
     if (scanId.current !== null) requestCancel(scanId.current);
   }, [requestCancel]);
 
-  return { loaded, last, progress, error, notice, start, cancel };
+  const refresh = useCallback(async () => {
+    try {
+      const summary = await getLastJunkScan();
+      if (active.current) setLast(summary);
+    } catch (failure: unknown) {
+      if (active.current) setError(toAppError(failure));
+    }
+  }, []);
+
+  return { loaded, last, progress, error, notice, start, cancel, refresh };
 }

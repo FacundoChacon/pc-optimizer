@@ -17,6 +17,12 @@ const KINDS = [
   "scan_not_found",
   "scan_kind_unsupported",
   "invalid_argument",
+  "preview_not_found",
+  "preview_expired",
+  "preview_stale",
+  "scan_already_cleaned",
+  "cleanup_in_progress",
+  "nothing_to_clean",
 ] as const;
 
 describe("errorMessage", () => {

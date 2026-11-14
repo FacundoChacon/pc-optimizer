@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CleanupProvider } from "../../features/cleanup/CleanupProvider";
 import { JunkScanProvider } from "../../features/cleanup/JunkScanProvider";
 import { Announcer } from "./Announcer";
 import { AppInfoProvider } from "./AppInfoProvider";
@@ -21,7 +22,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
           <SettingsProvider>
             <StoreStatusWithSettings>
               <JunkScanProvider>
-                <NavigationProvider>{children}</NavigationProvider>
+                <CleanupProvider>
+                  <NavigationProvider>{children}</NavigationProvider>
+                </CleanupProvider>
               </JunkScanProvider>
             </StoreStatusWithSettings>
           </SettingsProvider>
