@@ -13,6 +13,10 @@ const KINDS = [
   "store_not_recoverable",
   "setting_invalid",
   "setting_read_only",
+  "scan_in_progress",
+  "scan_not_found",
+  "scan_kind_unsupported",
+  "invalid_argument",
 ] as const;
 
 describe("errorMessage", () => {

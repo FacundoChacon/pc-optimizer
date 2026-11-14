@@ -1,7 +1,8 @@
-export type IconName = "home" | "settings" | "check" | "warning" | "error" | "info";
+export type IconName = "home" | "cleanup" | "settings" | "check" | "warning" | "error" | "info";
 
 const PATHS: Record<IconName, string> = {
   home: "M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10",
+  cleanup: "M4 7h16M10 7V4h4v3M6 7l1 13h10l1-13M10 11v6M14 11v6",
   settings: "M4 6h16M4 12h16M4 18h16M9 4v4M15 10v4M8 16v4",
   check: "M5 13l4 4L19 7",
   warning: "M12 3L2 21h20L12 3zM12 10v5M12 18v.5",

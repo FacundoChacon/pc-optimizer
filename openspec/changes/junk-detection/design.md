@@ -363,3 +363,37 @@ _(Completar durante el apply: firmas Win32 confirmadas, línea base de tests, co
 - **Respuesta de un escaneo cancelado**: `status: "cancelled"`, `categories: []`, totales 0 y `finishedAt` (no hay resumen persistido de un escaneo cancelado). El frontend debe aceptar `categories` vacias solo con `cancelled`.
 - **Orden de comprobaciones de `start_scan`**: primero `kind` (`scan_kind_unsupported`), luego el lugar del escaneo (`scan_in_progress`), luego la base.
 - **TDD de 7.x**: el codigo de `commands/scan.rs` se escribio antes que sus tests (desvio del ciclo estricto; los 20 tests de `commands::scan` + los de IPC en `lib.rs` se escribieron a continuacion y cubren cada escenario de las tareas). Se anota para transparencia.
+
+#### Frontend (grupo 8)
+
+- `src/lib/ipc.ts`: `startJunkScan` (Channel + `start_scan {kind:"junk", onProgress}`), `cancelScan`, `getLastJunkScan`, `listJunkFindings`; decodificadores estrictos (`invalid_response`); un resumen `done` exige las 11 categorias sin repetir y `blockReason` en `partial`/`blocked`; `cancelled` exige `categories: []`; los eventos invalidos se ignoran.
+- `mockBackend.ts` simula los 4 comandos (`scanEvents`, `scanResult`, `findings`, `emit()` para progreso posterior, `failures`/`gates`).
+- `formatBytes`/`formatDateTime` agregados a `shared/i18n/format.ts` (base 1024, `1,5 KB`); catalogo `es.cleanup`, `es.nav.cleanup` y los 4 errores nuevos; `categoryText.ts` agrupa los 36 codigos de omision en familias con texto generico de respaldo.
+- La guardia de literales rechazo `": "` y plantillas en JSX: los textos con numero son plantillas del catalogo (`itemsLine`, `recycleBinItems`, `reasonCode`, `metaSeparator`).
+- El estado del escaneo vive en `JunkScanProvider` (dentro de `AppProviders`) y no en la pantalla; ver hallazgo 1 del 8.5.
+
+#### 8.5 Revision UX/accesibilidad (`ux-ui-revisor`)
+
+Revision de solo lectura sobre el codigo y los tests (no se abrio la app; el tema es unico oscuro, contraste ya cubierto por `contrast.test.ts` sobre los tokens). 5 hallazgos:
+
+| # | Hallazgo | Severidad | Estado |
+|---|----------|-----------|--------|
+| 1 | El estado del escaneo vivia en la pantalla: al ir a Inicio y volver durante un escaneo, el progreso desaparecia, "Buscar basura" quedaba habilitado y pulsarlo daba `scan_in_progress`. | Alta | Corregido: `JunkScanProvider` + test "sigue visible al ir a otra pantalla y volver". |
+| 2 | Al terminar, el boton "Cancelar" (con foco) desaparecia y el foco caia al `body` (WCAG 2.4.3). | Alta | Corregido: el foco pasa a "Buscar basura" + test. |
+| 3 | Un escaneo cancelado solo se anunciaba por la region `aria-live`; quien ve la pantalla no recibia confirmacion visible. | Media | Corregido: aviso visible bajo el boton (se limpia al iniciar otro) + test. |
+| 4 | El boton "Ver rutas" tiene `aria-expanded` pero no `aria-controls` con la lista. | Baja | No corregido (no bloqueante; la lista aparece justo debajo del boton). |
+| 5 | Un error al leer el ultimo escaneo al arrancar (`store_*`) solo se ve al abrir Limpieza. | Baja | No corregido (el aviso global de base ya cubre el caso). |
+
+Conforme: una sola accion primaria, estados con icono + texto (`StatusBadge`), nunca "0 B" para `old_logs`, modo simple sin rutas ni jerga tecnica, anillo de foco compartido, animaciones solo `motion-safe`.
+
+#### Conteos finales (9.1, terminal NO elevada)
+
+| Suite | Linea base (1.1) | Tras lote 1 | Final |
+|-------|------------------|-------------|-------|
+| Vitest | 150 (10 archivos) | 150 | 227 (13 archivos) |
+| `cargo test` lib | 389 (+7 ignored) | 493 (+7) | 525 (+8 ignored) |
+| `architecture` / `manifest` / `no_network_crates` / `security_baseline` | 5 / 5 / 9 / 21 | igual | 5 / 5 / 9 / 21 |
+
+`npm run build`, `cargo fmt --check`, `cargo clippy --all-targets --all-features --locked -- -D warnings` y `openspec validate junk-detection --strict` en verde; `package-lock.json` y `src-tauri/Cargo.lock` sin cambios; la capability solo suma `allow-start-scan`, `allow-cancel-scan`, `allow-get-last-junk-scan`, `allow-list-junk-findings` (sin `core:*`).
+
+Nota: las skills `vitest` y `frontend-dev` no se cargaron con la herramienta Skill; se aplicaron sus reglas compactas del registro.
