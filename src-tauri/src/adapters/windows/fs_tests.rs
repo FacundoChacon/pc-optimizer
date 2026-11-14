@@ -655,3 +655,56 @@ mod junk_walk {
         assert!(visitor.candidates.is_empty());
     }
 }
+
+// --- C-09 2.2: tamano y fecha por handle de un archivo abierto para escritura (D-27) ---
+
+#[test]
+fn metadata_should_report_size_and_date_of_a_file_still_open_for_writing() {
+    use std::io::Write;
+
+    let (_dir, root) = temp_root();
+    let path = root.join("busy.cache");
+    fs::write(&path, b"old").unwrap();
+    let before = WindowsFileSystem.metadata(&path).unwrap();
+    let mut open = OpenOptions::new().write(true).open(&path).unwrap();
+    // Sin cerrar el handle: NTFS puede dejar vieja la entrada de directorio.
+    open.write_all(&vec![7u8; 5000]).unwrap();
+    open.flush().unwrap();
+
+    let by_handle = WindowsFileSystem.metadata(&path).unwrap();
+    assert_eq!(by_handle.size_bytes, 5000, "tamano vigente por handle");
+    assert!(
+        by_handle.modified >= before.modified,
+        "la fecha por handle nunca retrocede: {:?} vs {:?}",
+        by_handle.modified,
+        before.modified
+    );
+    let listed = WindowsFileSystem
+        .read_dir(&root)
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.path.file_name() == path.file_name())
+        .unwrap();
+    // El listado puede (o no) ir atrasado segun el momento; la lectura por handle es la
+    // autoritativa. Si ya coinciden en esta maquina solo se afirma lo del handle (arriba).
+    assert!(listed.meta.size_bytes <= by_handle.size_bytes);
+    drop(open);
+    assert_eq!(WindowsFileSystem.metadata(&path).unwrap().size_bytes, 5000);
+}
+
+#[test]
+fn metadata_should_report_the_current_size_of_a_second_open_writer_after_each_write() {
+    use std::io::Write;
+
+    let (_dir, root) = temp_root();
+    let path = root.join("grow.cache");
+    fs::write(&path, b"").unwrap();
+    let mut open = OpenOptions::new().append(true).open(&path).unwrap();
+    for (chunk, expected) in [(10usize, 10u64), (20, 30)] {
+        open.write_all(&vec![1u8; chunk]).unwrap();
+        assert_eq!(
+            WindowsFileSystem.metadata(&path).unwrap().size_bytes,
+            expected
+        );
+    }
+}

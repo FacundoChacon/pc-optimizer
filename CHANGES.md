@@ -287,7 +287,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/07_flujos_principales.md` §Flujo 2
 
 ### [C-09] `cleanup-preview-and-trash`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[~]` en curso (decisiones del dueño aprobadas 2026-11-14; rama `feat/cleanup-preview-and-trash`)
 - **Scope**:
   - Nota C-05: reevaluar `scope_access` y `restrict_protection_context` al confirmar la limpieza, no solo al previsualizar.
   - `domain/cleanup.rs`: `preview_cleanup` (ítems, cantidad, tamaño total, `preview_id`) y `confirm_cleanup(preview_id)`; el frontend solo envía IDs de hallazgos.
@@ -296,6 +296,11 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - Escritura en `cleanup_log` por ítem; resumen (liberado, omitidos); respeta bloqueo por-usuario en mismatch.
   - UI: preview con confirmación explícita; cerrar el preview no ejecuta nada. US-009.
   - Tests: fakes de FS/Trash, todos los outcomes, TOCTOU, log append-only, mismatch.
+  - Decisiones aprobadas (2026-11-14): sin migración (003 sigue siendo de C-07); selección por categoría; guarda de 24 h en todas las categorías (al previsualizar y al confirmar por handle); mover a la Papelera no libera espacio, el resumen dice "movido a la Papelera".
+  - D-24: el historial navegable de `cleanup_log` (`get_cleanup_log` / "log" en Limpieza avanzada) queda FUERA de C-09; pendiente para C-12 o un change propio.
+  - D-25: las carpetas vacías no se borran (los hallazgos son archivos); pendiente si el dueño lo pide.
+  - Nota para C-10: la Papelera de las limpiezas hechas en over-the-shoulder es la del token elevado (la Papelera es por-usuario); `empty_recycle_bin` debe seguir bloqueado en mismatch.
+  - Nota para C-11 / C-21: construir el preview con filas propias (`CleanupItem`: ruta real, categoría, tamaño, fecha e identidad persistidos) y reutilizar `run_cleanup` (re-verificación, Papelera y log); no reimplementar la ejecución.
 - **Dependencias**: `C-08`
 - **Governance**: ALTO (HIGH)
 - **Leer antes**:

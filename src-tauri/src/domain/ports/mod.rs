@@ -25,4 +25,4 @@ pub use recycle_bin::{RecycleBinInfo, RecycleBinUsage};
 pub use sensors::{SensorSample, Sensors};
 pub use session::SessionIdentity;
 pub use store::{CleanupLogStore, JunkFindingStore, ScanStore, SettingsStore, Store, StoreError};
-pub use trash::Trash;
+pub use trash::{Trash, TrashError};

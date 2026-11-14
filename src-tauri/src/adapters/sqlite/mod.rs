@@ -42,6 +42,7 @@ const SQL_DROP_ORPHAN_RESULTS: &str = "DELETE FROM junk_category_result WHERE sc
 const SQL_CLOSE_ORPHANS: &str = "UPDATE scan SET status = 'error', finished_at = max(started_at, CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE status = 'running'";
 const SQL_INSERT_LOG: &str = "INSERT INTO cleanup_log(ts, category, path, size_bytes, outcome, scan_id, error_detail) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+const SQL_SCAN_CLEANED_AT: &str = "SELECT max(ts) FROM cleanup_log WHERE scan_id = ?1 AND ts >= ?2";
 const SQL_RECENT_LOG: &str = "SELECT id, ts, category, path, size_bytes, outcome, scan_id, error_detail \
      FROM cleanup_log ORDER BY ts DESC, id DESC LIMIT ?1";
 
@@ -259,6 +260,21 @@ impl CleanupLogStore for SqliteStore {
             })
             .map_err(map_sqlite_error)?;
         rows.map(|row| row.map_err(map_sqlite_error)?).collect()
+    }
+
+    fn scan_cleaned_at(
+        &self,
+        scan_id: ScanId,
+        since: EpochMillis,
+    ) -> Result<Option<EpochMillis>, StoreError> {
+        let conn = self.conn()?;
+        // `max()` sin filas da una fila con NULL: `Option` cubre el caso "sin limpiezas".
+        let latest: Option<i64> = conn
+            .query_row(SQL_SCAN_CLEANED_AT, params![scan_id.0, since.0], |row| {
+                row.get(0)
+            })
+            .map_err(map_sqlite_error)?;
+        Ok(latest.map(EpochMillis))
     }
 }
 

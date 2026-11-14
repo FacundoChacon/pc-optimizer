@@ -71,6 +71,12 @@ escaneo → clasificación whitelist → is_protected → preview (n, bytes)
    → confirmación explícita → re-verificación → Papelera → cleanup_log
 ```
 
+Detalle de la re-verificación al confirmar (C-09), por ítem y en este orden:
+
+- **Re-verificación por handle**: se vuelve a evaluar el alcance por-usuario con el contexto de privilegios de ese momento, se fijan los ancestros y se repite la resolución completa sobre la ruta real persistida (`prepare_delete`), comparando identidad (volumen + id de archivo) y tipo; el tamaño y la fecha de última escritura se leen del archivo ABIERTO (no del listado de la carpeta, que NTFS actualiza tarde en archivos abiertos para escritura). Si tamaño o fecha difieren de lo persistido → `skipped_locked` / `changed_since_scan`.
+- **Guarda de 24 h**: ningún archivo con última escritura en las últimas 24 horas (o sin fecha) se mueve, en todas las categorías; se evalúa al previsualizar con la fecha persistida y al confirmar con la fecha del handle.
+- **Aborto por Papelera no disponible**: si la Papelera del volumen no está disponible (deshabilitada, inexistente) o su mecanismo no puede usarse, la ejecución se aborta en el primer caso (el ítem queda como `error`) y no se intenta ningún otro; nunca se borra de forma permanente. Un fallo por ítem (en uso, demasiado grande, acceso denegado) no detiene el resto.
+
 ## Casos borde a cubrir con tests
 
 - Rutas con `..`, mayúsculas/minúsculas mezcladas, `\\?\`, nombres cortos 8.3.
@@ -88,4 +94,24 @@ escaneo → clasificación whitelist → is_protected → preview (n, bytes)
 
 ## Registro (auditoría)
 
-`cleanup_log` es append-only: `ts`, `category`, `path`, `size_bytes`, `outcome`, `scan_id`. Visible en la UI (modo avanzado: rutas completas) y en reportes (rutas ofuscadas por defecto).
+`cleanup_log` es append-only: `ts`, `category`, `path`, `size_bytes`, `outcome`, `scan_id`, `error_detail`. Visible en la UI (modo avanzado: rutas completas) y en reportes (rutas ofuscadas por defecto).
+
+`error_detail` es un **código estable** (ASCII `snake_case`, sin rutas ni texto localizado) para todo outcome distinto de `moved_to_trash`. Tabla de C-09 (design D-06; sin outcomes nuevos):
+
+| Situación | outcome | `error_detail` |
+|---|---|---|
+| Barrera por-usuario con sesión de otro usuario / sin determinar | `skipped_protected` | `blocked_different_user` / `blocked_undetermined` |
+| Re-verificación de protección rechazada | `skipped_protected` | código de `ProtectedReason` (`identity_changed`, `reparse_point`, `multiple_hard_links`, `other_user_profile`, `unresolvable_not_found`, ...) |
+| El archivo está abierto por otro proceso al verificar | `skipped_locked` | `unresolvable_in_use` |
+| Pasó a ser placeholder de nube | `skipped_cloud` | `skipped_cloud` |
+| Tamaño o fecha distintos de los del escaneo | `skipped_locked` | `changed_since_scan` |
+| Escrito hace menos de 24 h o sin fecha | `skipped_locked` | `recently_modified` |
+| Papelera: en uso | `skipped_locked` | `in_use` |
+| Papelera: no disponible en el volumen (aborta) | `error` | `recycle_bin_unavailable` |
+| Papelera: ítem demasiado grande | `error` | `recycle_bin_too_small` |
+| Papelera: ruta demasiado larga | `error` | `path_too_long` |
+| Papelera: acceso denegado / requiere elevación | `error` | `permission_denied` |
+| Papelera: el ítem desapareció | `error` | `not_found` |
+| Papelera respondió éxito pero el archivo sigue | `error` | `not_moved` |
+| Mecanismo de Papelera inutilizable (aborta) | `error` | `trash_unavailable` |
+| Otro fallo | `error` | `io` o `io_0x<HRESULT>` |

@@ -39,6 +39,12 @@ const SQL_LIST_FINDINGS: &str = "SELECT id, path, size_bytes, modified_at, skip_
      volume_serial, file_id FROM junk_finding WHERE scan_id = ?1 AND category = ?2 \
      ORDER BY size_bytes DESC, id ASC LIMIT ?3 OFFSET ?4";
 
+/// Elegibles de un escaneo; la lista `IN` se completa con un marcador por categoria (nunca con
+/// texto concatenado).
+const SQL_CANDIDATES_PREFIX: &str = "SELECT id, category, path, size_bytes, modified_at, \
+     volume_serial, file_id FROM junk_finding WHERE scan_id = ?1 AND protected_flag = 0 \
+     AND category IN (";
+
 fn to_i64(value: u64, what: &str) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| StoreError::Constraint(format!("{what} exceeds i64::MAX")))
 }
@@ -226,4 +232,65 @@ impl JunkFindingStore for SqliteStore {
             .collect::<Result<Vec<StoredFinding>, _>>()?;
         Ok(JunkFindingPage { total, items })
     }
+
+    fn cleanup_candidates(
+        &self,
+        scan_id: ScanId,
+        categories: &[JunkCategory],
+    ) -> Result<Vec<StoredFinding>, StoreError> {
+        if categories.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = (2..categories.len() + 2)
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("{SQL_CANDIDATES_PREFIX}{placeholders})");
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&sql).map_err(map_sqlite_error)?;
+        let args = std::iter::once(rusqlite::types::Value::Integer(scan_id.0)).chain(
+            categories
+                .iter()
+                .map(|category| rusqlite::types::Value::Text(category.as_str().to_string())),
+        );
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(args), |row| {
+                let category: String = row.get(1)?;
+                Ok(finding_from_parts_with_category(&category, row))
+            })
+            .map_err(map_sqlite_error)?;
+        let mut found = Vec::new();
+        for row in rows {
+            found.push(row.map_err(map_sqlite_error)??);
+        }
+        found.sort_by_key(|stored| {
+            (
+                JunkCategory::ALL
+                    .iter()
+                    .position(|known| *known == stored.finding.category),
+                std::cmp::Reverse(stored.finding.size_bytes),
+                stored.id,
+            )
+        });
+        Ok(found)
+    }
+}
+
+/// Fila de `SQL_CANDIDATES_PREFIX` -> hallazgo; una categoria desconocida es `Corrupt`.
+fn finding_from_parts_with_category(
+    category: &str,
+    row: &rusqlite::Row<'_>,
+) -> Result<StoredFinding, StoreError> {
+    let category = JunkCategory::parse(category)
+        .ok_or_else(|| StoreError::Corrupt(format!("unknown junk category '{category}'")))?;
+    finding_from_parts(RawFindingRow {
+        id: row.get(0).map_err(map_sqlite_error)?,
+        category,
+        path: row.get(2).map_err(map_sqlite_error)?,
+        size_bytes: row.get(3).map_err(map_sqlite_error)?,
+        modified_at: row.get(4).map_err(map_sqlite_error)?,
+        skip_reason: None,
+        volume_serial: row.get(5).map_err(map_sqlite_error)?,
+        file_id: row.get(6).map_err(map_sqlite_error)?,
+    })
 }

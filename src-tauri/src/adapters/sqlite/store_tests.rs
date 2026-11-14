@@ -103,6 +103,61 @@ fn sqlite_store_should_satisfy_contract_junk_findings_follow_scan_retention() {
     with_temp_stores(|make| contract::contract_junk_findings_follow_scan_retention(make));
 }
 
+// --- C-09: candidatos de limpieza y fecha de limpieza ---
+#[test]
+fn sqlite_store_should_satisfy_contract_cleanup_candidates() {
+    with_temp_stores(|make| {
+        contract::contract_cleanup_candidates_only_eligible_of_requested_categories(make);
+        contract::contract_cleanup_candidates_order_by_category_then_size_then_id(make);
+        contract::contract_cleanup_candidates_keep_the_identity_bits_intact(make);
+        contract::contract_cleanup_candidates_are_empty_without_findings(make);
+    });
+}
+
+#[test]
+fn sqlite_store_should_satisfy_contract_scan_cleaned_at() {
+    with_temp_stores(|make| {
+        contract::contract_scan_cleaned_at_is_the_latest_log_entry_since_the_scan_ended(make);
+        contract::contract_scan_cleaned_at_ignores_other_scans_and_older_entries(make);
+    });
+}
+
+#[test]
+fn cleanup_queries_should_keep_schema_version_2_and_the_log_append_only() {
+    use crate::domain::junk::category::JunkCategory;
+    use crate::domain::ports::JunkFindingStore;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("data.db");
+    let store = SqliteStore::open(&path).unwrap();
+    store
+        .append_cleanup_log(&[contract::log_entry(2_000, r"C:	", Some(ScanId(3)))])
+        .unwrap();
+    assert_eq!(
+        store
+            .scan_cleaned_at(ScanId(3), EpochMillis(1_000))
+            .unwrap(),
+        Some(EpochMillis(2_000))
+    );
+    assert!(
+        store
+            .cleanup_candidates(ScanId(3), &[JunkCategory::TempUser])
+            .unwrap()
+            .is_empty()
+    );
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 2, "C-09 no agrega migraciones");
+    assert!(
+        conn.execute("UPDATE cleanup_log SET size_bytes = 0", [])
+            .is_err()
+    );
+    assert!(conn.execute("DELETE FROM cleanup_log", []).is_err());
+}
+
 // --- 6.2 persistencia real y conversiones ---
 #[test]
 fn sqlite_store_should_persist_changes_across_reopen_without_reseeding() {

@@ -571,3 +571,215 @@ pub(crate) fn contract_junk_findings_follow_scan_retention<S: Store>(make: impl 
     assert_eq!(page(&store, doomed, JunkCategory::TempUser).total, 0);
     assert_eq!(store.last_done_junk_scan().unwrap(), None);
 }
+
+// ---- C-09: candidatos de limpieza y fecha de limpieza de un escaneo ----
+
+fn candidate_paths(candidates: &[crate::domain::junk::model::StoredFinding]) -> Vec<&str> {
+    candidates.iter().map(|c| c.finding.path.as_str()).collect()
+}
+
+pub(crate) fn contract_cleanup_candidates_only_eligible_of_requested_categories<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    let scan = junk_scan(&store, 1_000);
+    let results = results_for(vec![
+        eligible(JunkCategory::TempUser, r"C:\t\small", 10, 1),
+        skipped(JunkCategory::TempUser, r"C:\t\link", "reparse_point"),
+        eligible(JunkCategory::TempUser, r"C:\t\big", 900, 2),
+        eligible(JunkCategory::WuCache, r"C:\w\a", 5, 3),
+        eligible(JunkCategory::WuCache, r"C:\w\b", 6, 4),
+        eligible(JunkCategory::WuCache, r"C:\w\c", 7, 5),
+    ]);
+    store
+        .complete_junk_scan(scan, &results, EpochMillis(1_500))
+        .unwrap();
+
+    let temp = store
+        .cleanup_candidates(scan, &[JunkCategory::TempUser])
+        .unwrap();
+    assert_eq!(candidate_paths(&temp), vec![r"C:\t\big", r"C:\t\small"]);
+    assert!(temp.iter().all(|c| c.finding.is_eligible()));
+    assert_eq!(temp[0].finding.size_bytes, 900);
+    assert_eq!(
+        temp[0].finding.state,
+        FindingState::Eligible(identity(2)),
+        "trae la identidad persistida"
+    );
+    let wu = store
+        .cleanup_candidates(scan, &[JunkCategory::WuCache])
+        .unwrap();
+    assert_eq!(wu.len(), 3);
+    // La fecha y el id de fila acompanan al candidato.
+    assert_eq!(
+        wu[0].finding.modified_at,
+        Some(EpochMillis(1_700_000_000_000))
+    );
+    assert!(wu[0].id > 0);
+}
+
+pub(crate) fn contract_cleanup_candidates_order_by_category_then_size_then_id<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    let scan = junk_scan(&store, 1_000);
+    let results = results_for(vec![
+        eligible(JunkCategory::WuCache, r"C:\w\x", 50, 1),
+        eligible(JunkCategory::TempUser, r"C:\t\tie-1", 10, 2),
+        eligible(JunkCategory::TempUser, r"C:\t\tie-2", 10, 3),
+        eligible(JunkCategory::TempUser, r"C:\t\big", 99, 4),
+        eligible(JunkCategory::CrashDumps, r"C:\d\z", 1, 5),
+    ]);
+    store
+        .complete_junk_scan(scan, &results, EpochMillis(1_500))
+        .unwrap();
+    // El orden no depende del orden pedido: sigue `JunkCategory::ALL`.
+    let candidates = store
+        .cleanup_candidates(
+            scan,
+            &[
+                JunkCategory::CrashDumps,
+                JunkCategory::WuCache,
+                JunkCategory::TempUser,
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        candidate_paths(&candidates),
+        vec![
+            r"C:\t\big",
+            r"C:\t\tie-1",
+            r"C:\t\tie-2",
+            r"C:\w\x",
+            r"C:\d\z"
+        ]
+    );
+}
+
+pub(crate) fn contract_cleanup_candidates_keep_the_identity_bits_intact<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    let scan = junk_scan(&store, 1_000);
+    let results = results_for(vec![
+        eligible(JunkCategory::TempUser, r"C:\t\max", 2, u128::MAX),
+        eligible(
+            JunkCategory::TempUser,
+            r"C:\t\beef",
+            1,
+            0x8000_0000_dead_beef,
+        ),
+    ]);
+    store
+        .complete_junk_scan(scan, &results, EpochMillis(1_500))
+        .unwrap();
+    let candidates = store
+        .cleanup_candidates(scan, &[JunkCategory::TempUser])
+        .unwrap();
+    assert_eq!(
+        candidates[0].finding.state,
+        FindingState::Eligible(identity(u128::MAX))
+    );
+    assert_eq!(
+        candidates[1].finding.state,
+        FindingState::Eligible(identity(0x8000_0000_dead_beef))
+    );
+}
+
+pub(crate) fn contract_cleanup_candidates_are_empty_without_findings<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    // Escaneo inexistente.
+    assert!(
+        store
+            .cleanup_candidates(ScanId(999), &[JunkCategory::TempUser])
+            .unwrap()
+            .is_empty()
+    );
+    let scan = junk_scan(&store, 1_000);
+    store
+        .complete_junk_scan(
+            scan,
+            &results_for(vec![eligible(JunkCategory::TempUser, r"C:\t\a", 1, 1)]),
+            EpochMillis(1_500),
+        )
+        .unwrap();
+    // Sin categorias pedidas, o una categoria sin hallazgos.
+    assert!(store.cleanup_candidates(scan, &[]).unwrap().is_empty());
+    assert!(
+        store
+            .cleanup_candidates(scan, &[JunkCategory::WuCache])
+            .unwrap()
+            .is_empty()
+    );
+    // Un escaneo posterior purga los hallazgos del anterior.
+    let newer = junk_scan(&store, 2_000);
+    store
+        .complete_junk_scan(newer, &results_for(vec![]), EpochMillis(2_100))
+        .unwrap();
+    assert!(
+        store
+            .cleanup_candidates(scan, &[JunkCategory::TempUser])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+pub(crate) fn contract_scan_cleaned_at_is_the_latest_log_entry_since_the_scan_ended<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    let scan = ScanId(7);
+    // El escaneo 7 termino en t=1000.
+    let since = EpochMillis(1_000);
+    assert_eq!(store.scan_cleaned_at(scan, since).unwrap(), None);
+    store
+        .append_cleanup_log(&[log_entry(1_500, r"C:\t\a", Some(scan))])
+        .unwrap();
+    store
+        .append_cleanup_log(&[
+            log_entry(1_800, r"C:\t\b", Some(scan)),
+            log_entry(1_600, r"C:\t\c", Some(scan)),
+        ])
+        .unwrap();
+    assert_eq!(
+        store.scan_cleaned_at(scan, since).unwrap(),
+        Some(EpochMillis(1_800))
+    );
+    // El limite inferior es inclusivo.
+    assert_eq!(
+        store.scan_cleaned_at(scan, EpochMillis(1_800)).unwrap(),
+        Some(EpochMillis(1_800))
+    );
+    assert_eq!(
+        store.scan_cleaned_at(scan, EpochMillis(1_801)).unwrap(),
+        None
+    );
+}
+
+pub(crate) fn contract_scan_cleaned_at_ignores_other_scans_and_older_entries<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    store
+        .append_cleanup_log(&[
+            log_entry(900, r"C:\t\old", Some(ScanId(7))),
+            log_entry(5_000, r"C:\t\other", Some(ScanId(8))),
+            log_entry(6_000, r"C:\t\none", None),
+        ])
+        .unwrap();
+    assert_eq!(
+        store
+            .scan_cleaned_at(ScanId(7), EpochMillis(1_000))
+            .unwrap(),
+        None,
+        "entradas anteriores al fin del escaneo, de otro escaneo o sin escaneo no cuentan"
+    );
+    assert_eq!(
+        store
+            .scan_cleaned_at(ScanId(8), EpochMillis(1_000))
+            .unwrap(),
+        Some(EpochMillis(5_000))
+    );
+}

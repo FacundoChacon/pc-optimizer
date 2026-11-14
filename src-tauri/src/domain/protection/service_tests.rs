@@ -79,6 +79,7 @@ fn check_should_allow_a_plain_file_with_real_path_size_identity_and_default_rule
             kind: EntryKind::File,
             size_bytes: 7,
             identity: id(100),
+            modified: None,
             rule: AllowRule::Default,
         }
     );
@@ -698,6 +699,7 @@ fn prepare_delete_should_report_cloud_and_never_hand_out_a_target() {
         kind: EntryKind::File,
         size_bytes: 1,
         identity: id(1),
+        modified: None,
         rule: AllowRule::Default,
     };
     let result = service(&fs).prepare_delete(&checked);
@@ -723,7 +725,7 @@ fn delete_flow_should_chain_check_prepare_move_to_trash_and_release() {
     let checked = allowed(service.check(Path::new(&format!(r"{TEMP}\a.tmp"))));
     let target = service.prepare_delete(&checked).unwrap();
     assert!(!fs.pinned().is_empty(), "el pin vive durante el movimiento");
-    assert_eq!(trash.move_to_trash(target.path()), Ok(()));
+    assert_eq!(trash.move_to_trash(&target), Ok(()));
     drop(target);
 
     assert_eq!(
@@ -834,4 +836,61 @@ fn check_rule_root_should_reject_a_browser_profile_folder() {
         service.check_rule_root(Path::new(chrome)),
         Err(R::BrowserProfile(Browser::Chrome))
     ));
+}
+
+// --- C-09 2.1: fecha de ultima escritura leida del elemento abierto (D-27) ---
+
+fn modified_fs(modified: Option<i64>) -> FakeFileSystem {
+    base_fs().with_file(
+        &format!(r"{TEMP}\dated.tmp"),
+        4,
+        modified.map(crate::domain::model::EpochMillis),
+    )
+}
+
+#[test]
+fn check_and_prepare_delete_should_report_the_last_write_of_the_opened_file() {
+    for date in [1000, 86_400_000] {
+        let fs = modified_fs(Some(date));
+        let checked = allowed(decide(&fs, &format!(r"{TEMP}\dated.tmp")));
+        assert_eq!(
+            checked.modified,
+            Some(crate::domain::model::EpochMillis(date))
+        );
+        let target = service(&fs).prepare_delete(&checked).unwrap();
+        assert_eq!(
+            target.checked().modified,
+            Some(crate::domain::model::EpochMillis(date))
+        );
+    }
+}
+
+#[test]
+fn check_and_prepare_delete_should_report_no_last_write_when_the_file_has_none() {
+    let fs = modified_fs(None);
+    let checked = allowed(decide(&fs, &format!(r"{TEMP}\dated.tmp")));
+    assert_eq!(checked.modified, None);
+    let target = service(&fs).prepare_delete(&checked).unwrap();
+    assert_eq!(target.checked().modified, None);
+}
+
+#[test]
+fn prepare_delete_should_report_the_handle_date_when_the_listing_is_stale() {
+    use crate::domain::model::EpochMillis;
+    let path = format!(r"{TEMP}\open.tmp");
+    let fs = modified_fs(Some(1000))
+        .with_file(&path, 4, Some(EpochMillis(1000)))
+        .with_stale_listing(&path, 4, Some(EpochMillis(900)));
+    // El listado de la carpeta todavia muestra la fecha vieja...
+    let listed = fs.read_dir(Path::new(TEMP)).unwrap();
+    let entry = listed
+        .iter()
+        .find(|entry| entry.path == Path::new(&path))
+        .unwrap();
+    assert_eq!(entry.meta.modified, Some(EpochMillis(900)));
+    // ...pero la re-verificacion informa la del archivo abierto.
+    let checked = allowed(decide(&fs, &path));
+    let target = service(&fs).prepare_delete(&checked).unwrap();
+    assert_eq!(target.checked().modified, Some(EpochMillis(1000)));
+    assert_eq!(target.checked().size_bytes, 4);
 }
