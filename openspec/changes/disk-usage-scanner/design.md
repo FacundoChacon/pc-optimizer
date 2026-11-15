@@ -741,3 +741,58 @@ TestingLibraryElementError: Unable to find an accessible element with the role "
 ```
   GREEN: `RootPicker`, `FolderTable` (migas, orden, paginación, filas de resto), `FileTable`, `DiskDetails`, hooks con navegación/orden/`loadMore`, `pickFolder` en `useFolderScan`; 2 ajustes de la propia pantalla (el aviso "sin carpetas" en simple y la sección de incidencias nombrada).
 - 8.8 (skill `ux-ui-revisor`, solo lectura, sobre el código y los estados; no se lanzó la app): hallazgos reales corregidos con TDD (RED: `toHaveFocus` fallaba): al entrar en una carpeta el botón pulsado desaparece y el teclado perdía el lugar → el foco pasa a la miga actual (y no se roba el foco al cargar). Descartados por ser de gusto o ya cubiertos: orden de columnas, copy de "no contabilizado" (explicado en llano con su ayuda), contraste (tokens ya con test; barra `accent` ≥ 3:1), `aria-live` del progreso (región `polite` más anunciador global), ancho angosto (tablas con `overflow-x-auto`, filas simples apiladas), una sola acción primaria por estado (cubierto por tests). Pendiente a observar en el smoke: la alerta de "Mostrar en el Explorador" aparece arriba de la pantalla, lejos del botón.
+
+### 9.1 Conteos finales (terminal NO elevada) frente a la línea base de 1.1
+
+| Suite | Línea base | Final |
+|---|---|---|
+| Vitest | 466 passed, 23 files | 587 passed, 30 files |
+| cargo lib | 935 passed + 19 ignored (954) | 1087 passed + 21 ignored (1108) |
+| `--test architecture` | 19 | 24 |
+| `--test manifest` | 5 | 5 |
+| `--test no_network_crates` | 9 | 9 |
+| `--test security_baseline` | 22 | 22 |
+| `domain::junk` / `domain::duplicates` | 73 / 107 | 77 / 107 |
+| Permisos `allow-*` propios / `core:*` / plugins | 21 / 0 / 0 | 27 / 0 / 0 |
+
+`cargo fmt --check`, `clippy --all-targets --all-features --locked -D warnings`, `npm run build` (tsc + vite) y `openspec validate disk-usage-scanner --strict`: verdes. `Cargo.lock`, `package-lock.json` y `tauri.conf.json` sin cambios (la feature `Win32_UI_Shell_Common` de `windows` no toca el lock). Los 2 `#[ignore = "abre UI nativa; se prueba en el smoke"]` nuevos son el selector y el Explorador reales.
+
+### Evidencia de TDD por grupo
+
+| Grupo | RED anotado | Observación |
+|---|---|---|
+| 2.1 ganchos del recorrido | sí (E0407, símbolo nuevo) | |
+| 2.2 `check_analysis_root` | sí (E0599) | |
+| 2.3 puertos | sí (E0432) | |
+| 3.1–3.5 modelo, clasificación, agregación, selección, top | sí, uno por tarea (símbolos nuevos) | |
+| 4.1 scanner | sí (E0425/E0432) | |
+| 4.2 cancelación y progreso | RED por mutación | el código ya estaba desde 4.1: desvío reconocido |
+| 4.3 refactor/contrato | n/a (doc y fmt) | |
+| 5.1 migración 004 | sí (17 fallos de esquema) | `AUTOINCREMENT` agregado por el contrato |
+| 5.2/5.3 `FolderStore` + paginación | sí (compartido, 44 errores E0599) | contrato escrito completo antes |
+| 5.4 interrumpidos/retención | RED por mutación | sentencias ya agregadas junto con 5.2 |
+| 6.1 volumen | sí (E0432/E0425) | |
+| 6.2 análisis real sobre tempdir | RED por mutación | sin código de producción nuevo |
+| 6.3 selector y Explorador | sí (E0425/E0432) | |
+| 6.4 arquitectura | RED por mutación | helpers y reglas escritos juntos |
+| 7.1 errores | sí (E0599/E0432) | |
+| 7.2 comandos | sí (103 errores E0425/E0422) | |
+| 7.3 baseline y capability | sí (permisos faltantes, comando no encontrado) | |
+| 8.1 ipc | sí (46 fallos, `is not a function`) | |
+| 8.2 catálogo/textos | sí (import no resuelto) | |
+| 8.3 navegación | sí (5 fallos) | |
+| 8.4 `ProportionBar` | sí (import no resuelto) | |
+| 8.5 provider/scan | sí (10 fallos) | |
+| 8.6 resultados simples | sí (20 fallos) | |
+| 8.7 avanzado | sí (21 fallos) | |
+| 8.8 foco al navegar | sí (1 fallo, `toHaveFocus`) | |
+
+### Desvíos y notas del apply
+
+- `folder_snapshot.id` y `large_file.id` con `AUTOINCREMENT` (D-09 decía `PRIMARY KEY`); ver 5.1–5.4.
+- Marcadores de nube solo en `cloud_files` (no en `file_count`); ver 3.3.
+- El resumen `cancelled` lleva `root.path = ""` y contadores en cero (el dominio no devuelve la ruta al cancelar).
+- `validate_root`/`AnalysisRoot` en `domain/disk_usage/root.rs` (no previsto en la lista de módulos de D-22); el scanner y los comandos lo comparten.
+- Los comandos IPC no incluyen `core:*` ni plugins; `pick_folder_root` es un comando genérico sobre el `Runtime` para obtener el `HWND` de la ventana principal (`WebviewWindow::hwnd()`; `windows` 0.62.2 es el único `windows` del lock).
+- `walkdir` sigue sin consumidor: quitarla cambiaría `Cargo.lock` y queda como decisión aparte del dueño.
+- Pendiente de observar en el smoke: la alerta de "Mostrar en el Explorador" aparece arriba de la pantalla, lejos del botón (8.8).
