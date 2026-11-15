@@ -1,12 +1,13 @@
 import type { ComponentType } from "react";
 import { CleanupScreen } from "../features/cleanup/CleanupScreen";
 import { HomeScreen } from "../features/dashboard/HomeScreen";
+import { DiskScreen } from "../features/disk/DiskScreen";
 import { DuplicatesScreen } from "../features/duplicates/DuplicatesScreen";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { es } from "../shared/i18n/es";
 import type { IconName } from "../shared/ui/Icon";
 
-export type ScreenId = "home" | "cleanup" | "duplicates" | "settings";
+export type ScreenId = "home" | "disk" | "cleanup" | "duplicates" | "settings";
 
 export interface ScreenDef {
   id: ScreenId;
@@ -18,6 +19,7 @@ export interface ScreenDef {
 /** Registro de pantallas implementadas: una pantalla nueva = una entrada aqui + su componente. */
 export const SCREENS: readonly ScreenDef[] = [
   { id: "home", label: es.nav.home, icon: "home", Component: HomeScreen },
+  { id: "disk", label: es.nav.disk, icon: "disk", Component: DiskScreen },
   { id: "cleanup", label: es.nav.cleanup, icon: "cleanup", Component: CleanupScreen },
   { id: "duplicates", label: es.nav.duplicates, icon: "duplicates", Component: DuplicatesScreen },
   { id: "settings", label: es.nav.settings, icon: "settings", Component: SettingsScreen },

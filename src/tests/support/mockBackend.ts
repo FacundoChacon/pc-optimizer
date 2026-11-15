@@ -13,9 +13,15 @@ import type {
   EmptyAck,
   EmptyRequest,
   EmptyResult,
+  FolderCrumb,
+  FolderEntry,
+  FolderScanEvent,
+  FolderScanSummary,
   JunkCategory,
   JunkFinding,
   JunkScanSummary,
+  LargeFileEntry,
+  PickResult,
   PrivilegeContext,
   ScanEvent,
   Settings,
@@ -46,7 +52,21 @@ export type BackendCommand =
   | "get_last_duplicate_scan"
   | "list_duplicate_groups"
   | "preview_duplicate_cleanup"
-  | "confirm_duplicate_cleanup";
+  | "confirm_duplicate_cleanup"
+  | "start_folder_scan"
+  | "get_last_folder_scan"
+  | "list_folder_children"
+  | "list_large_files"
+  | "pick_folder_root"
+  | "reveal_in_explorer";
+
+/** Una carpeta del analisis simulado con sus hijas y sus migas de pan. */
+export interface DiskPageFixture {
+  folder: FolderEntry;
+  breadcrumb: FolderCrumb[];
+  children: FolderEntry[];
+  remainderBytes: number;
+}
 
 export interface BackendCall {
   cmd: string;
@@ -95,6 +115,18 @@ export interface BackendState {
   dupCleanupEvents: CleanupEvent[];
   /** Lo que devuelve confirm_duplicate_cleanup; sus grupos resueltos quedan resueltos en dupGroups. */
   dupCleanupResult: DuplicateCleanupSummary | null;
+  /** Respuesta de get_last_folder_scan (`null` = todavia no hay analisis). */
+  diskLast: FolderScanSummary | null;
+  /** Lo que devuelve start_folder_scan al terminar; un resumen `done` pasa a ser `diskLast`. */
+  diskScanResult: FolderScanSummary | null;
+  /** Eventos que start_folder_scan envia por el canal apenas llega la invocacion. */
+  diskScanEvents: FolderScanEvent[];
+  /** Carpetas del ultimo analisis por id (`"root"` = la raiz). */
+  diskPages: Record<string, DiskPageFixture>;
+  /** Top de archivos grandes para list_large_files. */
+  diskFiles: LargeFileEntry[];
+  /** Respuestas sucesivas de pick_folder_root (un `AppError` hace fallar la llamada); sin mas, cancela. */
+  pickQueue: Array<PickResult | AppError>;
   /** Comandos que deben fallar con este error. */
   failures: Partial<Record<BackendCommand, AppError>>;
   /** Errores de una sola vez por comando: cada llamada consume el primero de la cola. */
@@ -115,6 +147,8 @@ export interface MockBackend {
   emitDuplicates: (events: readonly DuplicateScanEvent[]) => void;
   /** Envia eventos al canal de la ultima invocacion de confirm_duplicate_cleanup. */
   emitDuplicateCleanup: (events: readonly CleanupEvent[]) => void;
+  /** Envia eventos al canal de la ultima invocacion de start_folder_scan. */
+  emitFolderScan: (events: readonly FolderScanEvent[]) => void;
 }
 
 export const READY: StoreStatus = { status: "ready" };
@@ -160,6 +194,12 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     dupPreview: duplicatePreview(),
     dupCleanupEvents: [],
     dupCleanupResult: null,
+    diskLast: null,
+    diskScanResult: null,
+    diskScanEvents: [],
+    diskPages: {},
+    diskFiles: [],
+    pickQueue: [],
     failures: {},
     failureQueue: {},
     gates: {},
@@ -174,6 +214,8 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
   let sentDup = 0;
   let dupCleanupChannel: Channel<unknown> | null = null;
   let sentDupCleanup = 0;
+  let diskChannel: Channel<unknown> | null = null;
+  let sentDisk = 0;
   let dupPreviewCounter = 0;
   let previewCounter = 0;
   let emptyCounter = 0;
@@ -217,6 +259,12 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     sentDupCleanup += events.length;
   };
 
+  const emitFolderScan = (events: readonly FolderScanEvent[]): void => {
+    if (diskChannel === null) return;
+    sendChannelMessages(diskChannel, events, sentDisk);
+    sentDisk += events.length;
+  };
+
   mockIPC(async (cmd, args) => {
     calls.push({ cmd, args });
     const command = cmd as BackendCommand;
@@ -239,6 +287,11 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
       dupCleanupChannel = (args as { onProgress: Channel<unknown> }).onProgress;
       sentDupCleanup = 0;
       emitDuplicateCleanup(state.dupCleanupEvents);
+    }
+    if (command === "start_folder_scan") {
+      diskChannel = (args as { onProgress: Channel<unknown> }).onProgress;
+      sentDisk = 0;
+      emitFolderScan(state.diskScanEvents);
     }
     const gate = state.gates[command];
     if (gate !== undefined) await gate;
@@ -365,6 +418,62 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
         }
         return result === null ? null : { ...result, categories: [{ category: "duplicates" }] };
       }
+      case "start_folder_scan": {
+        const result = state.diskScanResult;
+        if (result !== null && result.status === "done") state.diskLast = result;
+        return result;
+      }
+      case "get_last_folder_scan":
+        return state.diskLast;
+      case "list_folder_children": {
+        const request = args as {
+          scanId: number;
+          folderId: number | null;
+          sort: "size" | "name";
+          offset: number;
+          limit: number;
+        };
+        const page = state.diskPages[request.folderId === null ? "root" : String(request.folderId)];
+        if (page === undefined) throw { kind: "folder_not_found", message: "not found" };
+        const children = [...page.children].sort((a, b) =>
+          request.sort === "name" ? a.name.localeCompare(b.name, "es") : b.sizeBytes - a.sizeBytes,
+        );
+        return {
+          scanId: request.scanId,
+          folder: page.folder,
+          breadcrumb: page.breadcrumb,
+          total: children.length,
+          items: children.slice(request.offset, request.offset + request.limit),
+          remainderBytes: page.remainderBytes,
+        };
+      }
+      case "list_large_files": {
+        const request = args as {
+          scanId: number;
+          sort: "size" | "newest" | "oldest";
+          offset: number;
+          limit: number;
+        };
+        const files = [...state.diskFiles].sort((a, b) => {
+          if (request.sort === "size") return b.sizeBytes - a.sizeBytes;
+          if (a.modifiedAt === null) return b.modifiedAt === null ? 0 : 1;
+          if (b.modifiedAt === null) return -1;
+          return request.sort === "newest" ? b.modifiedAt - a.modifiedAt : a.modifiedAt - b.modifiedAt;
+        });
+        return {
+          scanId: request.scanId,
+          total: files.length,
+          items: files.slice(request.offset, request.offset + request.limit),
+        };
+      }
+      case "pick_folder_root": {
+        const next = state.pickQueue.shift();
+        if (next === undefined) return { status: "cancelled" };
+        if ("kind" in next) throw next;
+        return next;
+      }
+      case "reveal_in_explorer":
+        return null;
       case "prepare_empty_recycle_bin": {
         blockedInMismatch();
         if (state.bin.itemCount === 0) throw { kind: "recycle_bin_already_empty", message: "empty" };
@@ -433,5 +542,6 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     emitCleanup,
     emitDuplicates,
     emitDuplicateCleanup,
+    emitFolderScan,
   };
 }

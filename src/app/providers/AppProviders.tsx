@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { CleanupProvider } from "../../features/cleanup/CleanupProvider";
 import { JunkScanProvider } from "../../features/cleanup/JunkScanProvider";
+import { DiskProvider } from "../../features/disk/DiskProvider";
 import { DuplicatesProvider } from "../../features/duplicates/DuplicatesProvider";
 import { Announcer } from "./Announcer";
 import { AppInfoProvider } from "./AppInfoProvider";
@@ -25,7 +26,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
               <JunkScanProvider>
                 <CleanupProvider>
                   <DuplicatesProvider>
-                    <NavigationProvider>{children}</NavigationProvider>
+                    <DiskProvider>
+                      <NavigationProvider>{children}</NavigationProvider>
+                    </DiskProvider>
                   </DuplicatesProvider>
                 </CleanupProvider>
               </JunkScanProvider>

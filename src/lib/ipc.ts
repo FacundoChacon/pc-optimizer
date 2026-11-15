@@ -1226,3 +1226,408 @@ export async function confirmDuplicateCleanup(
   const raw = await call<unknown>("confirm_duplicate_cleanup", { previewId, onProgress: channel });
   return decodeDuplicateCleanupSummary(raw, "confirm_duplicate_cleanup");
 }
+
+
+// ---------------------------------------------------------------------------------------------
+// Espacio en disco (C-07)
+// ---------------------------------------------------------------------------------------------
+
+/** Tipo de raiz del analisis (espejo de `RootKind::as_str`). */
+export type DiskRootKind = "system_drive" | "picked";
+
+/** Raiz pedida: el disco del sistema o la carpeta elegida, siempre por tipo o por `pickId`, nunca por ruta. */
+export type FolderRootRequest = { kind: "system_drive" } | { kind: "picked"; pickId: number };
+
+/** Cuanto se pudo leer de una carpeta (espejo de `Access::as_str`). */
+export type FolderAccess = "complete" | "incomplete" | "inaccessible";
+
+/** Por que una carpeta es opaca: se mide, pero nunca se muestra su interior (espejo de `OpaqueReason`). */
+export type OpaqueReason = "other_user_profile" | "recycle_bin" | "system_volume_information";
+
+/** Por que una carpeta no se pudo listar (espejo de `IssueReason`). */
+export type FolderIssueReason = "access_denied" | "not_found" | "io_error";
+
+/** Una carpeta sin acceso de la muestra (hasta 50). */
+export interface FolderIssue {
+  path: string;
+  reason: FolderIssueReason;
+}
+
+/** Espejo de `commands::disk_usage::FolderScanSummaryDto`. Un analisis `cancelled` no tiene carpetas. */
+export interface FolderScanSummary {
+  scanId: number;
+  status: "done" | "cancelled";
+  startedAt: number;
+  finishedAt: number | null;
+  root: { kind: DiskRootKind; path: string; folderId: number | null };
+  volume: { totalBytes: number; freeBytes: number } | null;
+  /** Espacio usado del volumen que el analisis no conto; solo con la raiz `system_drive`. */
+  unaccountedBytes: number | null;
+  /** Lo analizado supera lo usado del volumen (enlaces duros, compresion): se informa 0. */
+  overCounted: boolean;
+  totalBytes: number;
+  fileCount: number;
+  dirCount: number;
+  inaccessibleDirs: number;
+  reparseSkipped: number;
+  cloudFiles: number;
+  opaqueDirs: number;
+  foldersStored: number;
+  foldersTruncated: boolean;
+  issues: FolderIssue[];
+}
+
+/** Espejo de `FolderScanEventDto`: solo conteos, nunca rutas. */
+export type FolderScanEvent =
+  | { type: "started"; scanId: number; rootKind: DiskRootKind }
+  | { type: "walking"; filesSeen: number; dirsSeen: number; bytesSeen: number }
+  | { type: "saving" };
+
+/** Espejo de `FolderDto`. */
+export interface FolderEntry {
+  id: number;
+  name: string;
+  path: string;
+  sizeBytes: number;
+  directBytes: number;
+  fileCount: number;
+  dirCount: number;
+  access: FolderAccess;
+  opaque: OpaqueReason | null;
+  system: boolean;
+  junkHint: boolean;
+  hasChildren: boolean;
+}
+
+export interface FolderCrumb {
+  id: number;
+  name: string;
+}
+
+/** Espejo de `FolderPageDto`. `remainderBytes` = lo que no cubren los hijos guardados ("carpetas mas chicas"). */
+export interface FolderPage {
+  scanId: number;
+  folder: FolderEntry;
+  breadcrumb: FolderCrumb[];
+  total: number;
+  items: FolderEntry[];
+  remainderBytes: number;
+}
+
+/** Espejo de `LargeFileDto`. */
+export interface LargeFileEntry {
+  id: number;
+  name: string;
+  path: string;
+  folderId: number;
+  sizeBytes: number;
+  modifiedAt: number | null;
+}
+
+export interface LargeFilePage {
+  scanId: number;
+  total: number;
+  items: LargeFileEntry[];
+}
+
+export type FolderSort = "size" | "name";
+export type LargeFileSort = "size" | "newest" | "oldest";
+
+/** Respuesta de `pick_folder_root`: la ruta viaja solo para mostrarla; el analisis usa el `pickId`. */
+export type PickResult = { status: "picked"; pickId: number; path: string } | { status: "cancelled" };
+
+/** Elemento del ultimo analisis a mostrar en el Explorador (por id, nunca por ruta). */
+export interface RevealTarget {
+  kind: "folder" | "file";
+  id: number;
+}
+
+/** Cantidad maxima de incidencias de la muestra. */
+const MAX_FOLDER_ISSUES = 50;
+
+function isDiskRootKind(value: unknown): value is DiskRootKind {
+  return value === "system_drive" || value === "picked";
+}
+
+function isFolderAccess(value: unknown): value is FolderAccess {
+  return value === "complete" || value === "incomplete" || value === "inaccessible";
+}
+
+function isOpaqueReason(value: unknown): value is OpaqueReason {
+  return value === "other_user_profile" || value === "recycle_bin" || value === "system_volume_information";
+}
+
+function isIssueReason(value: unknown): value is FolderIssueReason {
+  return value === "access_denied" || value === "not_found" || value === "io_error";
+}
+
+function decodeFolderIssue(raw: unknown): FolderIssue | null {
+  if (!isRecord(raw)) return null;
+  const { path, reason } = raw;
+  return typeof path === "string" && path.length > 0 && isIssueReason(reason) ? { path, reason } : null;
+}
+
+const FOLDER_SCAN_COUNTERS = [
+  "scanId",
+  "startedAt",
+  "totalBytes",
+  "fileCount",
+  "dirCount",
+  "inaccessibleDirs",
+  "reparseSkipped",
+  "cloudFiles",
+  "opaqueDirs",
+  "foldersStored",
+] as const;
+
+function decodeVolume(raw: unknown): { totalBytes: number; freeBytes: number } | null | undefined {
+  if (raw === null) return null;
+  if (!isRecord(raw)) return undefined;
+  const { totalBytes, freeBytes } = raw;
+  return isCount(totalBytes) && isCount(freeBytes) ? { totalBytes, freeBytes } : undefined;
+}
+
+function decodeFolderScanSummary(raw: unknown, command: string): FolderScanSummary {
+  if (isRecord(raw) && isRecord(raw["root"]) && Array.isArray(raw["issues"])) {
+    const root = raw["root"];
+    const status = raw["status"];
+    const finishedAt = raw["finishedAt"];
+    const volume = decodeVolume(raw["volume"]);
+    const unaccountedBytes = raw["unaccountedBytes"];
+    const issues = raw["issues"].map(decodeFolderIssue);
+    const n = (key: (typeof FOLDER_SCAN_COUNTERS)[number]): number => raw[key] as number;
+    const folderId = root["folderId"];
+    const rootPath = root["path"];
+    const valid =
+      (status === "done" || status === "cancelled") &&
+      isDiskRootKind(root["kind"]) &&
+      typeof rootPath === "string" &&
+      (status === "done" ? rootPath.length > 0 && isCount(folderId) : folderId === null) &&
+      (finishedAt === null || isCount(finishedAt)) &&
+      volume !== undefined &&
+      (unaccountedBytes === null || isCount(unaccountedBytes)) &&
+      typeof raw["overCounted"] === "boolean" &&
+      typeof raw["foldersTruncated"] === "boolean" &&
+      FOLDER_SCAN_COUNTERS.every((key) => isCount(raw[key])) &&
+      issues.length <= MAX_FOLDER_ISSUES &&
+      issues.every((issue) => issue !== null);
+    if (valid) {
+      return {
+        scanId: n("scanId"),
+        status,
+        startedAt: n("startedAt"),
+        finishedAt: finishedAt as number | null,
+        root: { kind: root["kind"] as DiskRootKind, path: rootPath, folderId: folderId as number | null },
+        volume,
+        unaccountedBytes: unaccountedBytes as number | null,
+        overCounted: raw["overCounted"] as boolean,
+        totalBytes: n("totalBytes"),
+        fileCount: n("fileCount"),
+        dirCount: n("dirCount"),
+        inaccessibleDirs: n("inaccessibleDirs"),
+        reparseSkipped: n("reparseSkipped"),
+        cloudFiles: n("cloudFiles"),
+        opaqueDirs: n("opaqueDirs"),
+        foldersStored: n("foldersStored"),
+        foldersTruncated: raw["foldersTruncated"] as boolean,
+        issues: issues.filter((issue): issue is FolderIssue => issue !== null),
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeFolderScanEvent(raw: unknown): FolderScanEvent | null {
+  if (!isRecord(raw)) return null;
+  switch (raw["type"]) {
+    case "started": {
+      const { scanId, rootKind } = raw;
+      return isCount(scanId) && isDiskRootKind(rootKind) ? { type: "started", scanId, rootKind } : null;
+    }
+    case "walking": {
+      const { filesSeen, dirsSeen, bytesSeen } = raw;
+      return isCount(filesSeen) && isCount(dirsSeen) && isCount(bytesSeen)
+        ? { type: "walking", filesSeen, dirsSeen, bytesSeen }
+        : null;
+    }
+    case "saving":
+      return { type: "saving" };
+    default:
+      return null;
+  }
+}
+
+function decodeFolderEntry(raw: unknown): FolderEntry | null {
+  if (!isRecord(raw)) return null;
+  const { id, name, path, sizeBytes, directBytes, fileCount, dirCount, access, opaque, system, junkHint, hasChildren } =
+    raw;
+  if (
+    isCount(id) &&
+    typeof name === "string" &&
+    name.length > 0 &&
+    typeof path === "string" &&
+    path.length > 0 &&
+    isCount(sizeBytes) &&
+    isCount(directBytes) &&
+    isCount(fileCount) &&
+    isCount(dirCount) &&
+    isFolderAccess(access) &&
+    (opaque === null || isOpaqueReason(opaque)) &&
+    typeof system === "boolean" &&
+    typeof junkHint === "boolean" &&
+    typeof hasChildren === "boolean"
+  ) {
+    return {
+      id,
+      name,
+      path,
+      sizeBytes,
+      directBytes,
+      fileCount,
+      dirCount,
+      access,
+      opaque,
+      system,
+      junkHint,
+      hasChildren,
+    };
+  }
+  return null;
+}
+
+function decodeCrumb(raw: unknown): FolderCrumb | null {
+  if (!isRecord(raw)) return null;
+  const { id, name } = raw;
+  return isCount(id) && typeof name === "string" && name.length > 0 ? { id, name } : null;
+}
+
+function decodeFolderPage(raw: unknown, command: string): FolderPage {
+  if (isRecord(raw) && Array.isArray(raw["items"]) && Array.isArray(raw["breadcrumb"])) {
+    const folder = decodeFolderEntry(raw["folder"]);
+    const items = raw["items"].map(decodeFolderEntry);
+    const crumbs = raw["breadcrumb"].map(decodeCrumb);
+    const { scanId, total, remainderBytes } = raw;
+    if (
+      folder !== null &&
+      isCount(scanId) &&
+      isCount(total) &&
+      isCount(remainderBytes) &&
+      crumbs.length > 0 &&
+      crumbs.every((crumb) => crumb !== null) &&
+      items.every((item) => item !== null)
+    ) {
+      return {
+        scanId,
+        folder,
+        breadcrumb: crumbs.filter((crumb): crumb is FolderCrumb => crumb !== null),
+        total,
+        items: items.filter((item): item is FolderEntry => item !== null),
+        remainderBytes,
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeLargeFile(raw: unknown): LargeFileEntry | null {
+  if (!isRecord(raw)) return null;
+  const { id, name, path, folderId, sizeBytes, modifiedAt } = raw;
+  if (
+    isCount(id) &&
+    typeof name === "string" &&
+    name.length > 0 &&
+    typeof path === "string" &&
+    path.length > 0 &&
+    isCount(folderId) &&
+    isCount(sizeBytes) &&
+    (modifiedAt === null || isCount(modifiedAt))
+  ) {
+    return { id, name, path, folderId, sizeBytes, modifiedAt };
+  }
+  return null;
+}
+
+function decodeLargeFilePage(raw: unknown, command: string): LargeFilePage {
+  if (isRecord(raw) && Array.isArray(raw["items"])) {
+    const items = raw["items"].map(decodeLargeFile);
+    const { scanId, total } = raw;
+    if (isCount(scanId) && isCount(total) && items.every((item) => item !== null)) {
+      return { scanId, total, items: items.filter((item): item is LargeFileEntry => item !== null) };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodePickResult(raw: unknown, command: string): PickResult {
+  if (isRecord(raw)) {
+    if (raw["status"] === "cancelled") return { status: "cancelled" };
+    const { pickId, path } = raw;
+    if (raw["status"] === "picked" && isCount(pickId) && typeof path === "string" && path.length > 0) {
+      return { status: "picked", pickId, path };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+/**
+ * Inicia un analisis de espacio en disco de solo lectura. La raiz viaja por tipo o por `pickId`
+ * (nunca una ruta); el progreso llega por el canal de la invocacion (los eventos invalidos se
+ * ignoran) y la promesa se resuelve con el resumen final (`done` o `cancelled`).
+ */
+export async function startFolderScan(
+  root: FolderRootRequest,
+  onEvent: (event: FolderScanEvent) => void,
+): Promise<FolderScanSummary> {
+  const channel = new Channel<unknown>((raw) => {
+    const event = decodeFolderScanEvent(raw);
+    if (event !== null) onEvent(event);
+  });
+  const raw = await call<unknown>("start_folder_scan", {
+    root: root.kind === "picked" ? { kind: "picked", pickId: root.pickId } : { kind: "system_drive" },
+    onProgress: channel,
+  });
+  return decodeFolderScanSummary(raw, "start_folder_scan");
+}
+
+/** Resumen del ultimo analisis terminado, o `null` si todavia no hay ninguno. */
+export async function getLastFolderScan(): Promise<FolderScanSummary | null> {
+  const raw = await call<unknown>("get_last_folder_scan");
+  return raw === null ? null : decodeFolderScanSummary(raw, "get_last_folder_scan");
+}
+
+/** Hijos de una carpeta del ultimo analisis (`folderId = null` = la raiz); 1 a 200 por pagina. */
+export async function listFolderChildren(
+  scanId: number,
+  folderId: number | null,
+  sort: FolderSort,
+  offset: number,
+  limit: number,
+): Promise<FolderPage> {
+  return decodeFolderPage(
+    await call<unknown>("list_folder_children", { scanId, folderId, sort, offset, limit }),
+    "list_folder_children",
+  );
+}
+
+/** Una pagina del top de archivos grandes del ultimo analisis (1 a 200 por pagina). */
+export async function listLargeFiles(
+  scanId: number,
+  sort: LargeFileSort,
+  offset: number,
+  limit: number,
+): Promise<LargeFilePage> {
+  return decodeLargeFilePage(
+    await call<unknown>("list_large_files", { scanId, sort, offset, limit }),
+    "list_large_files",
+  );
+}
+
+/** Abre el selector de carpeta del sistema; el backend valida la eleccion y devuelve su `pickId`. */
+export async function pickFolderRoot(): Promise<PickResult> {
+  return decodePickResult(await call<unknown>("pick_folder_root"), "pick_folder_root");
+}
+
+/** Muestra un elemento del ultimo analisis en el Explorador (lo selecciona, nunca lo abre). */
+export async function revealInExplorer(scanId: number, target: RevealTarget): Promise<void> {
+  await call<unknown>("reveal_in_explorer", { scanId, target: { kind: target.kind, id: target.id } });
+}

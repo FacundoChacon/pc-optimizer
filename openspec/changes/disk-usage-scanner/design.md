@@ -663,3 +663,81 @@ folder_commands_should_answer_their_error_and_empty_cases_over_ipc: called `Resu
 ```
 
   GREEN: `generate_handler!` con los 6 comandos (el comando genérico `pick_folder_root<R: Runtime>` se registra sin turbofish), `PickedRootSlot` y `PickerGate` gestionados, 6 permisos `allow-*` en `capabilities/main-window.json` (27 propios, 0 `core:*`, 0 plugins) y los 6 `*.toml` autogenerados nuevos por `build.rs`. `tauri.conf.json`, `Cargo.lock` y `package-lock.json` sin cambios. `cargo test`: lib 1087 passed / 21 ignored, architecture 24, manifest 5, no_network_crates 9, security_baseline 22.
+
+### 8.1 `src/lib/ipc.ts` y mock del backend — RED
+
+`npx vitest run src/tests/disk/ipc.test.ts` (46 tests; decodificadores estrictos, envío por tipo/`pickId`, eventos inválidos ignorados, errores tipados; `diskFixtures.ts` y el mock con los 6 comandos), antes de escribir `startFolderScan` y compañía:
+
+```
+Tests  46 failed (46)
+TypeError: startFolderScan is not a function (5x) / getLastFolderScan (3x) / listFolderChildren (3x) / listLargeFiles (2x) / pickFolderRoot (3x) / revealInExplorer (2x)
+```
+GREEN: tipos, decodificadores y 6 funciones en `ipc.ts` (único punto de IPC), 46/46 y `tsc --noEmit` limpio.
+
+### 8.2 Catálogo `es.disk.*`, errores y `diskText.ts` — RED
+
+`npx vitest run src/tests/i18n/diskText.test.ts` (12 tests: etiquetas opacas, acceso, motivos de rechazo y del Explorador leídos del final del mensaje, porcentaje/tamaño en texto, los 6 errores nuevos), antes del módulo:
+
+```
+FAIL  src/tests/i18n/diskText.test.ts
+Error: Failed to resolve import "../../features/disk/diskText" from "src/tests/i18n/diskText.test.ts". Does the file exist?
+Tests  no tests
+```
+
+### 8.2 GREEN y 8.3 Navegación
+
+- 8.2 GREEN: `es.disk.*`, 6 textos en `es.errors.*`, `es.nav.disk` y `features/disk/diskText.ts` (opaca/acceso/motivos/porcentaje); `src/tests/i18n` + `uiLiterals` 132 passed. Primera corrida: `sharePercent` redondeaba a 0 un porcentaje diminuto (`1 MB · 0 %`); se corrigió para que quede "menos de 1 %".
+- 8.3 RED (`src/tests/disk/navigation.test.tsx`, 3 tests, más las 2 listas de entradas de `shell.test.tsx` y `duplicatesScreen.test.tsx` actualizadas a 5):
+
+```
+AssertionError: expected [ 'home', 'cleanup', …(2) ] to deeply equal [ 'home', 'disk', 'cleanup', …(2) ]
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "Espacio en disco"
+Test Files  3 failed (3) / Tests: 5 failed
+```
+  GREEN: entrada `disk` entre Inicio y Limpieza (icono nuevo), `DiskScreen` con su encabezado (el contenido real llega en 8.5–8.7); `aria-current="page"` y foco en `main` por el `NavigationProvider` existente.
+
+### 8.4 `ProportionBar` — RED
+
+`npx vitest run src/tests/disk/proportionBar.test.tsx` (5 tests: ancho en porcentaje, 0 %/100 %, valores fuera de rango o NaN acotados, `aria-hidden` sin rol, ningún `style` en línea), antes del componente:
+
+```
+Error: Failed to resolve import "../../features/disk/ProportionBar" from "src/tests/disk/proportionBar.test.tsx". Does the file exist?
+Tests  no tests
+```
+GREEN: SVG con dos `<rect>` (pista `fill-surface`, valor `fill-accent` con `width="NN%"`), `aria-hidden`, `focusable="false"`; 5/5. `contrast.test.ts` suma `accent` a los tokens con al menos 3:1 sobre ambas superficies (verde: 19 tests entre ambos archivos).
+
+### 8.5 `DiskProvider` + `useFolderScan` — RED
+
+`npx vitest run src/tests/disk/diskScan.test.tsx` (10 tests: estado inicial con una sola acción primaria, análisis por tipo de raíz, progreso en región `aria-live`, "guardando", cancelar con el id (también antes de que llegue), error del catálogo con reintento, error al leer el último análisis, volver a la pantalla con un análisis en curso, límite 5 de la raíz), con la pantalla reducida a su encabezado:
+
+```
+FAIL src/tests/disk/diskScan.test.tsx  (10 tests)
+× explica que solo se lee y 'Analizar disco C:' es la unica accion primaria
+× analiza el disco del sistema por tipo de raiz y muestra el progreso en una region aria-live
+× cancelar pide cancel_scan con el id del analisis y conserva el resultado anterior
+... Tests  10 failed (10)
+```
+
+### 8.5 GREEN y 8.6 RED
+
+- 8.5 GREEN: `useFolderScanState` (progreso por conteo, cancelación con id diferido, aviso distinto sin análisis previo), `useFolderPageState`, `DiskProvider` (entre los demás proveedores), `DiskProgressPanel` y la pantalla; 10/10. Primera corrida: 2 fallos propios del test y de un detalle del hook (el mismo aviso aparece también en la región anunciadora, y sin análisis previo debe decir "Análisis cancelado." en vez de "se conserva el resultado anterior"); corregidos.
+- 8.6 RED: `npx vitest run src/tests/disk/diskResults.test.tsx` (20 tests: resumen del disco y de carpeta, no contabilizado con su ayuda y nota de "supera lo usado", avisos de inaccesibles/nube, "Analizar de nuevo" secundaria sin acción primaria, 5 carpetas con barra sin `style`, etiqueta de sistema, opacas sin nombre ni acciones, estados incompleta/sin acceso, 5 archivos con fecha o "Sin fecha", "Mostrar en el Explorador" por id para carpeta y archivo, fallo con motivo y reintento, bloqueo en over-the-shoulder, "Revisar en Limpieza" solo con sugerencia), con la pantalla solo con la lista de nombres:
+
+```
+Tests  20 failed (20)
+TestingLibraryElementError: Unable to find role="region" and name "Archivos más grandes"   (20x)
+```
+
+8.6 GREEN: `DiskSummaryCard`, `FolderList`, `LargeFileList`, `ItemActions` (botón del Explorador por id, "Revisar en Limpieza" que solo navega, bloqueo con motivo en over-the-shoulder), `useLargeFilesState`, `useRevealState`; las 20 pruebas de resultados en verde a la primera, más `uiLiterals` (un literal `{": "}` detectado por la guardia se movió al catálogo/JSX) y `tsc --noEmit` limpio: 91 passed entre `src/tests/disk` y la guardia.
+
+### 8.7 RED/GREEN y 8.8 revisión UX
+
+- 8.7 RED: `npx vitest run src/tests/disk/diskAdvanced.test.tsx` (23 tests: selector de raíz y su rechazo/cancelación/ocupado/pérdida del `pickId`, "Analizar" deshabilitado con motivo, tabla navegable con migas, orden, paginación 50 + "Ver más", filas de resto y sueltos, estado con código crudo, top de archivos ordenable y paginado, panel de detalles), con la pantalla simple:
+
+```
+Tests  21 failed | 2 passed (23)     (las 2 que pasan son las guardas de "simple no muestra selector ni detalles")
+TestingLibraryElementError: Unable to find role="table" and name "Lo que más ocupa"   (14x)
+TestingLibraryElementError: Unable to find an accessible element with the role "radio" and name "Una carpeta…"   (6x)
+```
+  GREEN: `RootPicker`, `FolderTable` (migas, orden, paginación, filas de resto), `FileTable`, `DiskDetails`, hooks con navegación/orden/`loadMore`, `pickFolder` en `useFolderScan`; 2 ajustes de la propia pantalla (el aviso "sin carpetas" en simple y la sección de incidencias nombrada).
+- 8.8 (skill `ux-ui-revisor`, solo lectura, sobre el código y los estados; no se lanzó la app): hallazgos reales corregidos con TDD (RED: `toHaveFocus` fallaba): al entrar en una carpeta el botón pulsado desaparece y el teclado perdía el lugar → el foco pasa a la miga actual (y no se roba el foco al cargar). Descartados por ser de gusto o ya cubiertos: orden de columnas, copy de "no contabilizado" (explicado en llano con su ayuda), contraste (tokens ya con test; barra `accent` ≥ 3:1), `aria-live` del progreso (región `polite` más anunciador global), ancho angosto (tablas con `overflow-x-auto`, filas simples apiladas), una sola acción primaria por estado (cubierto por tests). Pendiente a observar en el smoke: la alerta de "Mostrar en el Explorador" aparece arriba de la pantalla, lejos del botón.

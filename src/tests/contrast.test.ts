@@ -45,7 +45,8 @@ describe("tokens del tema (styles.css)", () => {
     expect(contrastRatio(color("on-accent"), color(name))).toBeGreaterThanOrEqual(4.5);
   });
 
-  it.each(["focus", "border-strong"])("%s tiene al menos 3:1 sobre ambas superficies", (name) => {
+  // `accent` tambien rellena las barras proporcionales de Espacio en disco.
+  it.each(["focus", "border-strong", "accent"])("%s tiene al menos 3:1 sobre ambas superficies", (name) => {
     for (const bg of backgrounds) {
       expect(contrastRatio(color(name), color(bg)), `${name} / ${bg}`).toBeGreaterThanOrEqual(3);
     }

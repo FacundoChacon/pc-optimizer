@@ -62,6 +62,7 @@ describe("Layouts y NavList (8.2)", () => {
     expect(settings).not.toHaveAttribute("aria-current");
     expect(SCREENS.map((s) => s.label)).toEqual([
       es.nav.home,
+      es.nav.disk,
       es.nav.cleanup,
       es.nav.duplicates,
       es.nav.settings,
