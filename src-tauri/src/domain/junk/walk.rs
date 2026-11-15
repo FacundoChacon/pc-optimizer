@@ -21,6 +21,11 @@ pub trait WalkVisitor {
     fn reparse_point(&mut self, path: PathBuf);
     /// Carpeta excluida por el predicado de `walk_directory`: no se desciende a ella.
     fn excluded_dir(&mut self, _path: PathBuf) {}
+    /// Carpeta listada con exito; llega ANTES de los archivos y subcarpetas que contiene (C-07).
+    /// Implementacion vacia por defecto: C-08 y C-11 no la usan.
+    fn dir_listed(&mut self, _path: &Path) {}
+    /// Carpeta que no se pudo listar (o raiz inutilizable); `inaccessible` cuenta igual (C-07).
+    fn dir_inaccessible(&mut self, _path: &Path, _error: &PortError) {}
 }
 
 /// Predicado de exclusion de carpetas por nombre (comparado por quien lo implementa).
@@ -135,8 +140,15 @@ impl<F: FileSystem, V: WalkVisitor> Walker<'_, F, V> {
         }
         match self.fs.metadata(root) {
             Err(PortError::NotFound(_)) => return false,
-            Err(_) => self.inaccessible += 1,
-            Ok(meta) if meta.kind != EntryKind::Directory => self.inaccessible += 1,
+            Err(error) => {
+                self.inaccessible += 1;
+                self.visitor.dir_inaccessible(root, &error);
+            }
+            Ok(meta) if meta.kind != EntryKind::Directory => {
+                self.inaccessible += 1;
+                let error = PortError::Unsupported("not_a_directory".into());
+                self.visitor.dir_inaccessible(root, &error);
+            }
             Ok(_) => self.walk_tree(root),
         }
         true
@@ -169,10 +181,12 @@ impl<F: FileSystem, V: WalkVisitor> Walker<'_, F, V> {
         match self.fs.read_dir(dir) {
             Ok(mut entries) => {
                 entries.sort_by_cached_key(|entry| fold_component(&file_name(&entry.path)));
+                self.visitor.dir_listed(dir);
                 Some(entries)
             }
-            Err(_) => {
+            Err(error) => {
                 self.inaccessible += 1;
+                self.visitor.dir_inaccessible(dir, &error);
                 None
             }
         }

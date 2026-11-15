@@ -65,3 +65,7 @@ El drag & drop desde Explorador (nivel de integridad medio) hacia la ventana ele
 
 - Cada fuente (WMI, NVML, ADLX, PDH) es un adaptador tras un trait de `domain/ports.rs` con un fake para tests.
 - NVML/ADLX se cargan dinámicamente y de forma opcional; su ausencia no es un error.
+
+## Nota C-07: selector de carpeta y Explorador en el proceso elevado
+
+`pick_folder_root` (`IFileOpenDialog` con `FOS_PICKFOLDERS`) y `reveal_in_explorer` (`SHOpenFolderAndSelectItems`, nunca `ShellExecute`) corren en hilos COM STA propios del backend, sin plugins `dialog`/`shell` ni capabilities nuevas. Riesgo conocido: el diálogo del shell carga extensiones de terceros dentro del proceso elevado (mitigado con `FOS_PICKFOLDERS`). En over-the-shoulder el Explorador está bloqueado.

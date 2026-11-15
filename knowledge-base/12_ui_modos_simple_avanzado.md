@@ -56,3 +56,7 @@ Gobernanza: **LOW** (UI, catálogos, tipos).
 - Componentes compartidos con variantes `simple`/`advanced` en vez de pantallas duplicadas (**Suposición**).
 - Librería de gráficos: pendiente (PA-01). Requisito: render eficiente de series en vivo y tema oscuro.
 - Drag & drop desde el Explorador no funciona hacia ventanas elevadas (UIPI): ofrecer selector de carpeta.
+
+## Nota C-07: pantalla Espacio en disco
+
+Entrada de navegación entre Inicio y Limpieza. Simple: "Analizar disco C:", resumen, 5 carpetas más grandes y 5 archivos más grandes. Avanzado: selector de raíz, lista navegable con migas y orden, top de archivos y panel de detalles. Visualización con barras proporcionales; el treemap queda diferido (desvío respecto de "Treemap/lista completa").

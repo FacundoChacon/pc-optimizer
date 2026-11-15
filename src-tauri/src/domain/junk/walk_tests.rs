@@ -443,3 +443,108 @@ fn walk_should_count_a_root_that_is_a_file_as_inaccessible() {
     assert!(visitor.candidates.is_empty());
     assert!(read_dirs(&fs).is_empty());
 }
+
+// ---- Ganchos `dir_listed` / `dir_inaccessible` (C-07, D-05) ----
+
+/// Visitante que registra el orden exacto de los eventos.
+#[derive(Default)]
+struct Events {
+    log: Vec<String>,
+}
+
+impl WalkVisitor for Events {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+    fn file_seen(&mut self) {}
+    fn candidate(&mut self, entry: DirEntry) {
+        self.log.push(format!("file {}", entry.path.display()));
+    }
+    fn reparse_point(&mut self, path: PathBuf) {
+        self.log.push(format!("reparse {}", path.display()));
+    }
+    fn dir_listed(&mut self, path: &Path) {
+        self.log.push(format!("listed {}", path.display()));
+    }
+    fn dir_inaccessible(&mut self, path: &Path, error: &PortError) {
+        self.log
+            .push(format!("denied {} {error:?}", path.display()));
+    }
+}
+
+fn walk_all(fs: &FakeFileSystem, root: &str) -> (WalkReport, Vec<String>) {
+    let mut visitor = Events::default();
+    let report = walk_directory(fs, Path::new(root), |_| false, &mut visitor);
+    (report, visitor.log)
+}
+
+#[test]
+fn walk_should_announce_each_directory_before_its_own_files() {
+    let fs = FakeFileSystem::new()
+        .with_dir(TEMP)
+        .with_file(r"C:\Windows\Temp\a.tmp", 10, None)
+        .with_dir(r"C:\Windows\Temp\sub")
+        .with_file(r"C:\Windows\Temp\sub\b.tmp", 20, None);
+    let (report, log) = walk_all(&fs, TEMP);
+    assert_eq!(report.inaccessible, 0);
+    assert_eq!(
+        log,
+        vec![
+            r"listed C:\Windows\Temp".to_string(),
+            r"file C:\Windows\Temp\a.tmp".to_string(),
+            r"listed C:\Windows\Temp\sub".to_string(),
+            r"file C:\Windows\Temp\sub\b.tmp".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn walk_should_report_a_directory_that_cannot_be_listed_and_keep_going() {
+    let fs = FakeFileSystem::new()
+        .with_dir(TEMP)
+        .with_dir(r"C:\Windows\Temp\locked")
+        .with_dir(r"C:\Windows\Temp\ok")
+        .with_file(r"C:\Windows\Temp\ok\b.tmp", 5, None)
+        .fail_on_op(
+            r"C:\Windows\Temp\locked",
+            FsOp::ReadDir,
+            PortError::PermissionDenied("x".into()),
+        );
+    let (report, log) = walk_all(&fs, TEMP);
+    assert_eq!(report.inaccessible, 1, "el contador existente no cambia");
+    assert_eq!(
+        log,
+        vec![
+            r"listed C:\Windows\Temp".to_string(),
+            r#"denied C:\Windows\Temp\locked PermissionDenied("x")"#.to_string(),
+            r"listed C:\Windows\Temp\ok".to_string(),
+            r"file C:\Windows\Temp\ok\b.tmp".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn walk_should_not_report_a_missing_root_as_inaccessible() {
+    let fs = FakeFileSystem::new();
+    let (report, log) = walk_all(&fs, TEMP);
+    assert!(!report.present);
+    assert!(
+        log.is_empty(),
+        "una raiz inexistente no emite eventos: {log:?}"
+    );
+}
+
+#[test]
+fn walk_should_report_an_unreadable_root_through_the_hook() {
+    let fs = FakeFileSystem::new().with_dir(TEMP).fail_on_op(
+        TEMP,
+        FsOp::ReadDir,
+        PortError::Io("boom".into()),
+    );
+    let (report, log) = walk_all(&fs, TEMP);
+    assert_eq!(report.inaccessible, 1);
+    assert_eq!(
+        log,
+        vec![r#"denied C:\Windows\Temp Io("boom")"#.to_string()]
+    );
+}

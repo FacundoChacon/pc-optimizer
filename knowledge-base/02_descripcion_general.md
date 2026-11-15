@@ -79,3 +79,7 @@ No hay API REST. Contrato entre UI y backend = comandos Tauri (allowlist) y even
 
 - Instalador NSIS/MSI por GitHub Releases, **sin firma** en v0.x (advertencia SmartScreen documentada en README del repo).
 - Sin auto-update en v0.x.
+
+## Nota C-07: comandos reales del análisis de disco
+
+`start_folder_scan`, `get_last_folder_scan`, `list_folder_children`, `list_large_files`, `pick_folder_root`, `reveal_in_explorer` (más `cancel_scan` existente). El selector y el Explorador usan COM del shell en hilos STA propios, sin plugins `dialog`/`shell`. La interfaz nunca envía rutas: raíz por tipo o `pickId`, elementos por id del último análisis.

@@ -238,3 +238,7 @@ Organizadas por épica y luego por historia (US-NNN). Cada historia lleva **hito
 - [ ] Persistido en `settings`.
 
 **Reglas relacionadas**: RN-GLB-03
+
+## Nota C-07: criterios reales de US-006 / US-007
+
+US-006: lista navegable con barras proporcionales (sin treemap; diferido), hasta 20 000 carpetas guardadas, carpetas sin acceso informadas sin romper el análisis. US-007: los 500 archivos más grandes, ordenables por tamaño y fecha dentro de ese top. Acciones: "Mostrar en el Explorador" y, para ubicaciones de la whitelist, "Revisar en Limpieza" (nunca borra).

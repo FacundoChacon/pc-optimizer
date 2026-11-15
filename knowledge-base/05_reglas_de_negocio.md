@@ -90,3 +90,10 @@ Cada regla tiene un código único `RN-{DOMINIO}-{NN}`. Las reglas de LIMPIEZA y
 - **RN-GLB-02**: Sin red: ninguna funcionalidad puede depender de conectividad ni enviar datos.
 - **RN-GLB-03**: Todo texto de UI sale de un catálogo centralizado (preparado para i18n; ver 12).
 - **RN-GLB-04**: Gobernanza: borrado y tweaks del sistema = HIGH; scanners/monitor = MEDIUM; UI/catálogos/tipos = LOW (ver 08).
+
+## Reglas del análisis de disco (C-07)
+
+- **RN-ANA-01**: el análisis es de solo lectura: no abre archivos, no mueve ni borra nada; no sigue enlaces (junction, symlink, punto de montaje).
+- **RN-ANA-02**: raíces permitidas: `C:\` (volumen del sistema) o una carpeta del mismo volumen validada por `check_analysis_root` (rechaza otros volúmenes, perfiles ajenos, entradas de sistema de la raíz y reparse).
+- **RN-ANA-03**: perfiles ajenos, `$Recycle.Bin` y `System Volume Information` son opacos: se mide su tamaño pero ninguna ruta interior se guarda ni se muestra. En over-the-shoulder todos los perfiles son opacos.
+- **RN-ANA-04**: tamaño lógico; hard links por nombre; archivos de nube suman 0 bytes y se cuentan aparte.
