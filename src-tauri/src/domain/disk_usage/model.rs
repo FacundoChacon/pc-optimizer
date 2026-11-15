@@ -28,6 +28,11 @@ impl PickId {
             .map(Self)
     }
 
+    /// Identificador a partir de un contador del backend, acotado al mayor entero seguro.
+    pub fn from_counter(counter: u64) -> Self {
+        Self(counter.min(MAX_SAFE_INTEGER.unsigned_abs()))
+    }
+
     pub fn get(self) -> u64 {
         self.0
     }
@@ -123,6 +128,17 @@ impl IssueReason {
             PortError::NotFound(_) => Self::NotFound,
             PortError::InUse(_) | PortError::Unsupported(_) | PortError::Io(_) => Self::IoError,
         }
+    }
+}
+
+coded_enum! {
+    /// Por que no se puede mostrar un elemento en el Explorador (D-13).
+    RevealReason {
+        TargetMissing => "target_missing",
+        Opaque => "opaque",
+        DifferentUser => "different_user",
+        Undetermined => "undetermined",
+        ShellError => "shell_error",
     }
 }
 

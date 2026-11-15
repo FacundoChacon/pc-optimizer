@@ -569,6 +569,13 @@ fn the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_co
         "allow-list-duplicate-groups",
         "allow-preview-duplicate-cleanup",
         "allow-confirm-duplicate-cleanup",
+        // C-07: exactamente seis permisos propios nuevos para el analisis de disco.
+        "allow-start-folder-scan",
+        "allow-get-last-folder-scan",
+        "allow-list-folder-children",
+        "allow-list-large-files",
+        "allow-pick-folder-root",
+        "allow-reveal-in-explorer",
     ] {
         assert_eq!(
             permissions.iter().filter(|p| *p == expected).count(),
@@ -581,7 +588,7 @@ fn the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_co
             .iter()
             .filter(|p| p.starts_with("allow-"))
             .count(),
-        21
+        27
     );
     assert!(permissions.iter().all(|p| !p.starts_with("core:")));
 }

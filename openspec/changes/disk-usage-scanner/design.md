@@ -624,3 +624,42 @@ error: could not compile `pc-optimizer` (lib test) due to 22 previous errors
 - 6.3 GREEN: `WindowsFolderPicker` (`pcopt-folder-picker`) y `WindowsExplorer` (`pcopt-reveal`), COM STA por llamada, `catch_unwind`, códigos `io_0x…` sin texto del sistema; 103 passed / 21 ignored en `adapters::windows::` (los 2 `#[ignore = "abre UI nativa; se prueba en el smoke"]` compilan). `ERROR_CANCELLED` → `Ok(None)`.
 - 6.4: `tests/architecture.rs` suma `production_code_should_never_execute_or_open_an_item_through_the_shell` (ningún `ShellExecute*` en producción) y `unsafe_should_only_appear_in_the_declared_windows_adapters` (lista de 9 archivos, la nueva solo con `explorer.rs`, `folder_picker.rs`, `volume.rs`), más tests del helper (comentarios, `#[cfg(test)]` y falsos amigos como `unsafe_code`). Como las reglas se escribieron junto con los helpers y el código real no las viola, el RED es por mutación: quitando `volume.rs` de la lista y metiendo `ShellExecuteW` en `explorer.rs` fallan `production_code_should_never_execute_or_open_an_item_through_the_shell` (`explorer.rs: ShellExecute`) y `unsafe_should_only_appear_in_the_declared_windows_adapters` (`volume.rs: 1 uso(s) de unsafe`); restaurado, `--test architecture` = 24 passed (19 + 5).
 - Conteo de `unsafe {` por archivo (antes -> después): `fs.rs` 2 -> 2, `known_folders.rs` 4 -> 4, `privileges.rs` 22 -> 22, `recycle_bin.rs` 1 -> 1, `recycle_bin_empty.rs` 3 -> 3, `recycle_bin_policy.rs` 3 -> 3, `explorer.rs` 0 -> 5, `folder_picker.rs` 0 -> 9, `volume.rs` 0 -> 1 (cada bloque con `// SAFETY:`; `undocumented_unsafe_blocks = deny` lo vigila en clippy).
+
+### 7.1 Errores de IPC — RED
+
+`cargo test --lib --locked error::` (2 tests nuevos, antes de las variantes):
+
+```
+error[E0432]: unresolved import `crate::domain::disk_usage::model::RevealReason`   (2x)
+error[E0599]: no variant ... named `FolderRootRejected` / `FolderPickNotFound` / `FolderPickerBusy` / `FolderPickerUnavailable` / `FolderNotFound` / `RevealUnavailable` found for enum `error::AppError`
+error: could not compile `pc-optimizer` (lib test) due to 12 previous errors
+```
+
+### 7.2 `commands/disk_usage.rs` — RED
+
+Antes de `root.rs::validate_root`/`rejection_code` (6 tests de `root_tests.rs`: el motivo de rechazo y la raíz validada como tipo; el scanner lo reutiliza) y de la lógica de comandos, `cargo test --lib --locked domain::disk_usage::root` y `commands::disk_usage` (27 tests en `disk_usage_tests.rs`):
+
+```
+error[E0425]: cannot find function `rejection_code` in this scope   (3x)
+error[E0425]: cannot find function `validate_root` in this scope    (5x)
+error[E0422]: cannot find struct, variant or union type `FolderPorts` / `RevealTargetArg` / `RootArg` in this scope
+error[E0425]: cannot find function `run_folder_scan` / `list_children` (21x) / `list_files` (8x) / `last_folder_scan` / `pick_folder_run` / `reveal_run`
+error[E0425]: cannot find type `PickedRootSlot` / `PickerGate` / `PickResultDto` / `FolderScanSummaryDto` / `FolderPageDto` / `LargeFilePageDto` / `FolderScanEventDto`
+error: could not compile `pc-optimizer` (lib test) due to 103 previous errors
+```
+
+### 7.1–7.3 GREEN y 7.3 RED
+
+- 7.1 GREEN: 6 variantes de `AppError` (`folder_root_rejected` con el código del motivo en el mensaje, `folder_pick_not_found`, `folder_picker_busy`, `folder_picker_unavailable`, `folder_not_found`, `reveal_unavailable` con motivo); 18 tests de `error::` en verde, mensajes sin barras invertidas ni rutas.
+- 7.2 GREEN: `domain/disk_usage/root.rs` (`validate_root` devuelve un `AnalysisRoot`, único camino a un análisis; `rejection_code` con `not_a_directory`/`not_found` y los códigos de `ProtectedReason`; el scanner lo reutiliza) y `commands/disk_usage.rs` (lógica genérica sobre puertos, `PickedRootSlot` con ids crecientes y una sola selección viva, `PickerGate` con lease RAII, DTOs camelCase, 6 comandos IPC). 30 tests de `commands::disk_usage` y 99 de `disk_usage` en verde. Desvío menor: el resumen `cancelled` lleva `root.path = ""` (el dominio no devuelve la ruta al cancelar) y `PickId::from_counter` satura en 2^53-1 (test agregado antes: RED `no associated function named from_counter`) para evitar `expect()`.
+- 7.3 RED: con las 6 entradas nuevas en `APP_COMMANDS`, el baseline de 27 permisos y el test IPC de `lib.rs` antes de registrar nada:
+
+```
+real_capabilities_should_grant_exactly_the_app_commands: permisos y APP_COMMANDS difieren:
+  ["permiso faltante: allow-get-last-folder-scan", "... allow-list-folder-children", "... allow-list-large-files",
+   "... allow-pick-folder-root", "... allow-reveal-in-explorer", "... allow-start-folder-scan"]
+the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_core_permission: allow-start-folder-scan left: 0 right: 1
+folder_commands_should_answer_their_error_and_empty_cases_over_ipc: called `Result::unwrap()` on an `Err` value: String("Command get_last_folder_scan not found")
+```
+
+  GREEN: `generate_handler!` con los 6 comandos (el comando genérico `pick_folder_root<R: Runtime>` se registra sin turbofish), `PickedRootSlot` y `PickerGate` gestionados, 6 permisos `allow-*` en `capabilities/main-window.json` (27 propios, 0 `core:*`, 0 plugins) y los 6 `*.toml` autogenerados nuevos por `build.rs`. `tauri.conf.json`, `Cargo.lock` y `package-lock.json` sin cambios. `cargo test`: lib 1087 passed / 21 ignored, architecture 24, manifest 5, no_network_crates 9, security_baseline 22.

@@ -12,6 +12,8 @@ use crate::domain::disk_usage::classify::Classifier;
 use crate::domain::disk_usage::model::{
     FolderCounters, FolderScanResults, MAX_STORED_FOLDERS, RootKind, StoredFolder, StoredLargeFile,
 };
+use crate::domain::disk_usage::root::validate_root;
+pub use crate::domain::disk_usage::root::{FolderScanError, RootChoice};
 use crate::domain::disk_usage::select::select_folders;
 use crate::domain::disk_usage::top_files::nearest_kept;
 use crate::domain::junk::walk::{WalkEnd, WalkVisitor, walk_directory};
@@ -19,7 +21,6 @@ use crate::domain::ports::{DirEntry, EntryKind, FileSystem, PortError, VolumeSpa
 use crate::domain::protection::context::{ContextError, ProtectionContext};
 use crate::domain::protection::decision::{ProtectedReason, ResolveFailure};
 use crate::domain::protection::path::{NormalizedPath, normalize_lexical};
-use crate::domain::protection::service::PathProtection;
 
 /// Cada cuantos archivos vistos se avisa (D-17): por conteo, sin reloj.
 pub const PROGRESS_EVERY_FILES: u64 = 4_096;
@@ -34,24 +35,10 @@ pub trait FolderScanObserver {
     fn saving(&mut self);
 }
 
-/// Que analizar, ya traducido por el comando.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RootChoice {
-    SystemDrive,
-    /// Ruta elegida con el selector; se vuelve a validar al iniciar.
-    Picked(NormalizedPath),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderScanOutcome {
     Completed(FolderScanResults),
     Cancelled,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum FolderScanError {
-    #[error("analysis root rejected: {}", .0.code())]
-    RootRejected(ProtectedReason),
 }
 
 /// Analiza `root` y devuelve el resultado, o `Cancelled` sin resultado.
@@ -65,22 +52,12 @@ pub fn scan_folders<F: FileSystem, V: VolumeSpace, O: FolderScanObserver>(
     cancel: &AtomicBool,
     observer: &mut O,
 ) -> Result<FolderScanOutcome, FolderScanError> {
+    let root = validate_root(fs, &protection, &root)?;
     let ctx = protection
         .map_err(|_| FolderScanError::RootRejected(ProtectedReason::ContextUnavailable))?;
-    let (kind, requested) = match root {
-        RootChoice::SystemDrive => {
-            let drive = format!(r"{}:\", ctx.system_drive());
-            let path = normalize_lexical(&drive)
-                .map_err(|_| FolderScanError::RootRejected(ProtectedReason::ContextUnavailable))?;
-            (RootKind::SystemDrive, path)
-        }
-        RootChoice::Picked(path) => (RootKind::Picked, path),
-    };
-    let service = PathProtection::new(fs, Ok(ctx.clone()));
-    let root_path = service
-        .check_analysis_root(&requested.to_path_buf())
-        .map_err(FolderScanError::RootRejected)?;
-    let root_buf = root_path.to_path_buf();
+    let kind = root.kind();
+    let root_path = root.path();
+    let root_buf = root.to_path_buf();
 
     let classifier = Classifier::new(&ctx);
     let mut tracked = Tracked {
@@ -118,7 +95,7 @@ pub fn scan_folders<F: FileSystem, V: VolumeSpace, O: FolderScanObserver>(
         &tree,
         &classifier,
         kind,
-        &root_path,
+        root_path,
         volume_info,
     )))
 }

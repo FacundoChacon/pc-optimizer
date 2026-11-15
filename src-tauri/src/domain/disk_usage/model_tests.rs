@@ -92,3 +92,12 @@ fn sort_orders_should_parse_their_ipc_names() {
     assert_eq!(LargeFileSort::parse("size"), Some(LargeFileSort::Size));
     assert_eq!(LargeFileSort::parse("name"), None);
 }
+
+#[test]
+fn pick_id_from_counter_should_keep_small_values_and_saturate_at_the_safe_integer() {
+    assert_eq!(PickId::from_counter(1).get(), 1);
+    assert_eq!(PickId::from_counter(42).get(), 42);
+    let max = (1u64 << 53) - 1;
+    assert_eq!(PickId::from_counter(max).get(), max);
+    assert_eq!(PickId::from_counter(u64::MAX).get(), max);
+}

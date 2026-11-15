@@ -16,6 +16,7 @@
 pub mod aggregate;
 pub mod classify;
 pub mod model;
+pub mod root;
 pub mod scanner;
 pub mod select;
 pub mod top_files;

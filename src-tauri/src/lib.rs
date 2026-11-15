@@ -30,6 +30,8 @@ pub fn app_builder<R: tauri::Runtime>(
         .manage(commands::scan::ScanEnvironment::default())
         .manage(commands::cleanup::CleanupPreviews::default())
         .manage(commands::recycle_bin::EmptyRequests::default())
+        .manage(commands::disk_usage::PickedRootSlot::default())
+        .manage(commands::disk_usage::PickerGate::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
             commands::settings::get_settings,
@@ -51,7 +53,13 @@ pub fn app_builder<R: tauri::Runtime>(
             commands::duplicates::get_last_duplicate_scan,
             commands::duplicates::list_duplicate_groups,
             commands::duplicates::preview_duplicate_cleanup,
-            commands::duplicates::confirm_duplicate_cleanup
+            commands::duplicates::confirm_duplicate_cleanup,
+            commands::disk_usage::start_folder_scan,
+            commands::disk_usage::get_last_folder_scan,
+            commands::disk_usage::list_folder_children,
+            commands::disk_usage::list_large_files,
+            commands::disk_usage::pick_folder_root,
+            commands::disk_usage::reveal_in_explorer
         ])
 }
 
@@ -344,6 +352,59 @@ mod tests {
         assert_eq!(not_running["kind"], "preview_not_found");
         let last = invoke(&window, "get_last_junk_scan", serde_json::json!({}));
         assert_eq!(last, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn folder_commands_should_answer_their_error_and_empty_cases_over_ipc() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let window = window_for_scans(dir.path());
+
+        assert_eq!(
+            invoke(&window, "get_last_folder_scan", serde_json::json!({})),
+            serde_json::Value::Null
+        );
+        let unknown_root = invoke_error(
+            &window,
+            "start_folder_scan",
+            serde_json::json!({"root": {"kind": "everything"}, "onProgress": "__CHANNEL__:1"}),
+        );
+        assert_eq!(unknown_root["kind"], "invalid_argument");
+        let unknown_pick = invoke_error(
+            &window,
+            "start_folder_scan",
+            serde_json::json!({"root": {"kind": "picked", "pickId": 5}, "onProgress": "__CHANNEL__:1"}),
+        );
+        assert_eq!(unknown_pick["kind"], "folder_pick_not_found");
+        let invalid_limit = invoke_error(
+            &window,
+            "list_folder_children",
+            serde_json::json!({"scanId": 1, "folderId": null, "sort": "size", "offset": 0, "limit": 201}),
+        );
+        assert_eq!(invalid_limit["kind"], "invalid_argument");
+        let unknown_scan = invoke_error(
+            &window,
+            "list_folder_children",
+            serde_json::json!({"scanId": 1, "folderId": null, "sort": "size", "offset": 0, "limit": 10}),
+        );
+        assert_eq!(unknown_scan["kind"], "scan_not_found");
+        let files = invoke_error(
+            &window,
+            "list_large_files",
+            serde_json::json!({"scanId": 1, "sort": "newest", "offset": 0, "limit": 10}),
+        );
+        assert_eq!(files["kind"], "scan_not_found");
+        let bad_target = invoke_error(
+            &window,
+            "reveal_in_explorer",
+            serde_json::json!({"scanId": 1, "target": {"kind": "executable", "id": 1}}),
+        );
+        assert_eq!(bad_target["kind"], "invalid_argument");
+        let no_scan = invoke_error(
+            &window,
+            "reveal_in_explorer",
+            serde_json::json!({"scanId": 1, "target": {"kind": "file", "id": 1}}),
+        );
+        assert_eq!(no_scan["kind"], "scan_not_found");
     }
 
     #[test]
