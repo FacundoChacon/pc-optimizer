@@ -1,7 +1,7 @@
 //! Modelo del analisis de espacio en disco (C-07, design D-01, D-04, D-07, D-08, D-11).
 
 use crate::domain::duplicates::model::RequestError;
-use crate::domain::model::EpochMillis;
+use crate::domain::model::{EpochMillis, Scan};
 use crate::domain::ports::{PortError, VolumeSpaceInfo};
 
 /// Carpetas que se guardan como maximo por analisis (D-07).
@@ -215,6 +215,175 @@ pub fn unaccounted(
             over_counted: false,
         },
     }
+}
+
+impl FolderScanResults {
+    /// Invariantes que toda implementacion de `FolderStore` exige antes de guardar: una sola raiz
+    /// (la primera), padres antes que hijas con la profundidad coherente, rutas unicas, archivos
+    /// que apuntan a una carpeta guardada, a lo sumo `MAX_ISSUES` incidencias y contadores que
+    /// caben en un entero con signo de 64 bits.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let fits = |value: u64| i64::try_from(value).is_ok();
+        let c = &self.counters;
+        let counters = [
+            c.total_bytes,
+            c.file_count,
+            c.dir_count,
+            c.inaccessible_dirs,
+            c.reparse_skipped,
+            c.cloud_files,
+            c.opaque_dirs,
+            c.folders_stored,
+        ];
+        if !counters.into_iter().all(fits) {
+            return Err("counter exceeds i64::MAX");
+        }
+        if self.root_path.is_empty() {
+            return Err("empty root path");
+        }
+        if let Some(volume) = &self.volume
+            && (volume.total_bytes == 0 || !fits(volume.total_bytes) || !fits(volume.free_bytes))
+        {
+            return Err("invalid volume space");
+        }
+        if self.folders.is_empty() || self.folders.len() > MAX_STORED_FOLDERS {
+            return Err("invalid folder count");
+        }
+        if c.folders_stored != self.folders.len() as u64 {
+            return Err("folders_stored does not match the folders");
+        }
+        let mut paths = std::collections::HashSet::new();
+        for (index, folder) in self.folders.iter().enumerate() {
+            let expected_depth = match (index, folder.parent) {
+                (0, None) => 0,
+                (0, Some(_)) | (_, None) => return Err("only the first folder is the root"),
+                (_, Some(parent)) if parent < index => self.folders[parent].depth + 1,
+                _ => return Err("parent must come before its child"),
+            };
+            if folder.depth != expected_depth {
+                return Err("depth does not follow the parent");
+            }
+            if folder.path.is_empty() || !paths.insert(folder.path.as_str()) {
+                return Err("empty or repeated folder path");
+            }
+            if folder.direct_bytes > folder.size_bytes
+                || !fits(folder.size_bytes)
+                || !fits(folder.file_count)
+                || !fits(folder.dir_count)
+            {
+                return Err("invalid folder sizes");
+            }
+        }
+        if self.large_files.len() > MAX_LARGE_FILES {
+            return Err("too many large files");
+        }
+        let mut file_paths = std::collections::HashSet::new();
+        for file in &self.large_files {
+            if file.folder >= self.folders.len()
+                || file.size_bytes == 0
+                || !fits(file.size_bytes)
+                || file.path.is_empty()
+                || !file_paths.insert(file.path.as_str())
+                || file.modified_at.is_some_and(|at| at.0 <= 0)
+            {
+                return Err("invalid large file");
+            }
+        }
+        if self.issues.len() > MAX_ISSUES {
+            return Err("too many issues");
+        }
+        let mut issue_paths = std::collections::HashSet::new();
+        if self
+            .issues
+            .iter()
+            .any(|issue| issue.path.is_empty() || !issue_paths.insert(issue.path.as_str()))
+        {
+            return Err("invalid issue");
+        }
+        Ok(())
+    }
+}
+
+/// Una carpeta leida de la base, con su id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRow {
+    pub id: i64,
+    pub parent_id: Option<i64>,
+    pub path: String,
+    pub depth: u32,
+    pub size_bytes: u64,
+    pub direct_bytes: u64,
+    pub file_count: u64,
+    pub dir_count: u64,
+    pub access: Access,
+    pub opaque: Option<OpaqueReason>,
+    pub system: bool,
+    pub junk_hint: bool,
+    /// Tiene carpetas hijas guardadas.
+    pub has_children: bool,
+}
+
+impl FolderRow {
+    /// Nombre para mostrar: el ultimo componente (la raiz del analisis, su ruta completa).
+    pub fn name(&self) -> String {
+        if self.depth == 0 {
+            return self.path.clone();
+        }
+        self.path
+            .rsplit('\\')
+            .next()
+            .unwrap_or(&self.path)
+            .to_string()
+    }
+}
+
+/// Un paso de las migas de pan, de la raiz a la carpeta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderCrumb {
+    pub id: i64,
+    pub name: String,
+}
+
+/// Pagina de los hijos de una carpeta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderPage {
+    pub folder: FolderRow,
+    pub breadcrumb: Vec<FolderCrumb>,
+    /// Hijos guardados de la carpeta (todos, no solo los de la pagina).
+    pub total: u64,
+    pub items: Vec<FolderRow>,
+    /// Tamano de la carpeta menos lo directo menos la suma de todos sus hijos guardados.
+    pub remainder_bytes: u64,
+}
+
+/// Un archivo grande leido de la base.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LargeFileRow {
+    pub id: i64,
+    pub folder_id: i64,
+    pub path: String,
+    pub size_bytes: u64,
+    pub modified_at: Option<EpochMillis>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LargeFilePage {
+    pub total: u64,
+    pub items: Vec<LargeFileRow>,
+}
+
+/// Resumen de un analisis terminado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderScanSummary {
+    pub scan: Scan,
+    pub root_kind: RootKind,
+    pub root_path: String,
+    pub volume: Option<VolumeSpaceInfo>,
+    pub counters: FolderCounters,
+    pub folders_truncated: bool,
+    /// `None` si las carpetas ya se purgaron (hay un analisis mas nuevo).
+    pub root_folder_id: Option<i64>,
+    pub issues: Vec<FolderIssue>,
 }
 
 /// Orden de los hijos de una carpeta.

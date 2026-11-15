@@ -1,5 +1,9 @@
 //! Puertos de persistencia: ajustes, escaneos, bitacora de limpieza y hallazgos de basura.
 
+use crate::domain::disk_usage::model::{
+    FolderPage, FolderRow, FolderScanResults, FolderScanSummary, FolderSort, LargeFilePage,
+    LargeFileRow, LargeFileSort,
+};
 use crate::domain::duplicates::model::{
     DuplicateGroupPage, DuplicateScanResults, DuplicateScanSummary, GroupResolution,
     StoredDuplicateGroup,
@@ -157,12 +161,62 @@ pub trait DuplicateStore {
     ) -> Result<(), StoreError>;
 }
 
+/// Analisis de espacio en disco (C-07). Solo registros de la base: ninguna operacion actua sobre
+/// archivos.
+pub trait FolderStore {
+    /// Guarda de forma ATOMICA el resultado, las carpetas (el padre antes que la hija), los
+    /// archivos grandes y las incidencias de un analisis `Running`, elimina las carpetas, archivos
+    /// e incidencias de todo analisis anterior (se conservan su escaneo y su resultado) y
+    /// finaliza el escaneo como `Done`. Si algo falla no queda nada y el escaneo sigue `Running`.
+    ///
+    /// Errores: `NotFound` (escaneo inexistente), `InvalidState` (no es de carpetas o no esta
+    /// `Running`), `Constraint` (resultado invalido: ver `FolderScanResults::validate`).
+    fn complete_folder_scan(
+        &self,
+        scan_id: ScanId,
+        results: &FolderScanResults,
+        finished_at: EpochMillis,
+    ) -> Result<(), StoreError>;
+    /// Resumen del analisis `Done` mas reciente; ignora `Cancelled`/`Error` y otros tipos.
+    fn last_done_folder_scan(&self) -> Result<Option<FolderScanSummary>, StoreError>;
+    /// Resumen de un analisis concreto; `None` si no existe o no tiene resultado.
+    fn folder_scan_summary(&self, scan_id: ScanId)
+    -> Result<Option<FolderScanSummary>, StoreError>;
+    /// Hijos de una carpeta (`None` = la raiz del analisis), ordenados, con sus migas de pan y el
+    /// resto. `NotFound` si el analisis ya no tiene carpetas o la carpeta es de otro analisis.
+    fn list_folder_children(
+        &self,
+        scan_id: ScanId,
+        folder_id: Option<i64>,
+        sort: FolderSort,
+        offset: u64,
+        limit: u32,
+    ) -> Result<FolderPage, StoreError>;
+    /// Archivos grandes del analisis; un analisis sin archivos (o desconocido) da una pagina vacia.
+    fn list_large_files(
+        &self,
+        scan_id: ScanId,
+        sort: LargeFileSort,
+        offset: u64,
+        limit: u32,
+    ) -> Result<LargeFilePage, StoreError>;
+    /// Una carpeta del analisis; `None` si no existe o es de otro analisis.
+    fn get_folder(&self, scan_id: ScanId, folder_id: i64) -> Result<Option<FolderRow>, StoreError>;
+    /// Un archivo grande del analisis; `None` si no existe o es de otro analisis.
+    fn get_large_file(
+        &self,
+        scan_id: ScanId,
+        file_id: i64,
+    ) -> Result<Option<LargeFileRow>, StoreError>;
+}
+
 /// Persistencia completa.
 pub trait Store:
-    SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore + DuplicateStore
+    SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore + DuplicateStore + FolderStore
 {
 }
-impl<T: SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore + DuplicateStore> Store
-    for T
+impl<
+    T: SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore + DuplicateStore + FolderStore,
+> Store for T
 {
 }

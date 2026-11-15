@@ -3,6 +3,7 @@
 pub mod connection;
 mod duplicates;
 pub mod errors;
+mod folders;
 mod junk;
 pub mod migrations;
 pub mod recovery;
@@ -44,6 +45,13 @@ const SQL_DROP_ORPHAN_DUPLICATE_GROUPS: &str =
     "DELETE FROM duplicate_group WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
 const SQL_DROP_ORPHAN_DUPLICATE_ROOTS: &str = "DELETE FROM duplicate_scan_root WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
 const SQL_DROP_ORPHAN_DUPLICATE_RESULTS: &str = "DELETE FROM duplicate_scan_result WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_LARGE_FILES: &str =
+    "DELETE FROM large_file WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_FOLDERS: &str =
+    "DELETE FROM folder_snapshot WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_FOLDER_ISSUES: &str =
+    "DELETE FROM folder_scan_issue WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
+const SQL_DROP_ORPHAN_FOLDER_RESULTS: &str = "DELETE FROM folder_scan_result WHERE scan_id IN (SELECT id FROM scan WHERE status = 'running')";
 const SQL_CLOSE_ORPHANS: &str = "UPDATE scan SET status = 'error', finished_at = max(started_at, CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE status = 'running'";
 const SQL_INSERT_LOG: &str = "INSERT INTO cleanup_log(ts, category, path, size_bytes, outcome, scan_id, error_detail) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
@@ -91,6 +99,10 @@ fn close_orphan_scans(conn: &mut Connection) -> Result<(), StoreError> {
         SQL_DROP_ORPHAN_DUPLICATE_GROUPS,
         SQL_DROP_ORPHAN_DUPLICATE_ROOTS,
         SQL_DROP_ORPHAN_DUPLICATE_RESULTS,
+        SQL_DROP_ORPHAN_LARGE_FILES,
+        SQL_DROP_ORPHAN_FOLDERS,
+        SQL_DROP_ORPHAN_FOLDER_ISSUES,
+        SQL_DROP_ORPHAN_FOLDER_RESULTS,
         SQL_CLOSE_ORPHANS,
     ] {
         tx.execute(sql, []).map_err(map_sqlite_error)?;
@@ -288,6 +300,8 @@ impl CleanupLogStore for SqliteStore {
 
 #[cfg(test)]
 mod duplicates_schema_tests;
+#[cfg(test)]
+mod folders_schema_tests;
 #[cfg(test)]
 mod schema_tests;
 #[cfg(test)]

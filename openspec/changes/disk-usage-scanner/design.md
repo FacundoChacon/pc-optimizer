@@ -557,3 +557,70 @@ Se restauró el código real (`scanner.rs` idéntico al de 4.1) y los 21 tests d
 ### 4.3 Refactor y contrato; cierre de la Parte 1
 
 Doc de contrato en `domain/disk_usage/mod.rs`; `cargo fmt` aplicado; el test de arquitectura recorre `domain/` recursivamente, así que `disk_usage/` ya está cubierto. Gates de la Parte 1: cargo lib 1012 passed / 19 ignored (935 + 77 nuevos), architecture 19, manifest 5, no_network_crates 9, security_baseline 22; fmt, clippy `-D warnings`, `openspec validate --strict` verdes; `Cargo.lock` y `package-lock.json` sin cambios.
+
+### 5.1 Migración 004 — RED
+
+`cargo test --lib --locked adapters::sqlite` (14 tests nuevos en `folders_schema_tests.rs` + los de `user_version = 4` actualizados), antes de `004_folders.sql`: 17 fallos.
+
+```
+test result: FAILED. 88 passed; 17 failed
+migration_004_should_leave_user_version_4_with_the_four_tables: assertion `left == right` failed  left: 3  right: 4
+folder_snapshot_should_require_a_parent_exactly_when_it_is_not_the_root: called `Result::unwrap()` on an `Err` value:
+  SqliteFailure(..., Some("no such table: folder_snapshot"))
+```
+
+### 5.2 `FolderStore` — RED
+
+`cargo test --lib --locked folders_contract` (12 funciones de contrato en `domain/ports/folders_store_contract.rs`, registradas para `InMemoryStore` y para `SqliteStore` sobre archivo temporal), antes de la interfaz:
+
+```
+error[E0599]: no method named `complete_folder_scan` found for type parameter `S` in the current scope   (+4)
+error[E0599]: no method named `last_done_folder_scan` found ...   (13x)
+error[E0599]: no method named `list_folder_children` found ...    (11x + 1)
+error[E0599]: no method named `list_large_files` / `get_folder` / `get_large_file` / `folder_scan_summary` found ...
+error: could not compile `pc-optimizer` (lib test) due to 44 previous errors
+```
+
+### 5.1–5.4 GREEN y notas
+
+- 5.1: `004_folders.sql` registrada; 105 tests de `adapters::sqlite` en verde (14 nuevos de esquema + los de `user_version` y lista de tablas actualizados mecánicamente a 4). Desvío menor: `folder_snapshot.id` y `large_file.id` son `INTEGER PRIMARY KEY AUTOINCREMENT` (el diseño decía `PRIMARY KEY`): sin AUTOINCREMENT SQLite reutiliza los ids tras la purga del análisis anterior y un id viejo pasaba por una carpeta del análisis nuevo (lo detectó el contrato "carpeta de otro análisis → NotFound").
+- 5.2 y 5.3 comparten la misma salida RED (arriba): la batería de contrato `folders_store_contract.rs` (12 funciones) se escribió completa antes de la interfaz e incluye la paginación/orden de hijos y archivos de 5.3 (10/30/20 → 30/20/10; nombre plegado con desempate por id; migas de pan; página fuera de rango; carpeta ajena → `NotFound`; sin fecha al final). GREEN: `FolderStore` + `InMemoryStore` + `SqliteStore` (`adapters/sqlite/folders.rs`), 41 tests de filtro `folders` en verde.
+- 5.4 RED (por mutación, porque la limpieza de huérfanos ya se había agregado en `mod.rs` junto con 5.2): quitando las 4 sentencias `SQL_DROP_ORPHAN_*` de carpetas, `open_should_close_an_interrupted_folders_scan_keeping_the_last_done_tree` falla:
+
+```
+assertion `left == right` failed: folder_scan_result
+  left: 1
+  right: 0
+```
+Restauradas las sentencias, `cargo test --lib --locked adapters::sqlite` = 107 passed (la cascada por retención de 50 la cubre `contract_rows_follow_scan_retention` en ambos stores).
+
+### 6.1 `WindowsVolumeSpace` — RED
+
+`cargo test --lib --locked adapters::windows::volume` (4 tests sobre un `TempDir`; `volume.rs` solo con el `mod tests`):
+
+```
+error[E0432]: unresolved import `volume::WindowsVolumeSpace`
+error[E0425]: cannot find value `WindowsVolumeSpace` in this scope   (x3)
+```
+
+### 6.1 GREEN y 6.2 (sin código de producción nuevo)
+
+- 6.1 GREEN: `WindowsVolumeSpace` (`GetDiskFreeSpaceExW`, un único `unsafe` con `// SAFETY:`), 4 tests en verde. El total libre devuelto es `lpTotalNumberOfFreeBytes` (el del volumen, no el del llamador con cuotas).
+- 6.2: la integración usa solo código ya existente (`scan_folders` + `WindowsFileSystem` + `WindowsVolumeSpace`), así que no hay RED por símbolo nuevo. Los 2 tests (`adapters/windows/disk_usage.rs`, solo `TempDir`, junction con `mklink /J`, ACL con `icacls` y restauración en un `Drop`) se escribieron antes de correrlos. RED por mutación: con `reparse_skipped` sin contar, `real_scan_should_sum_a_known_tree_and_skip_the_junction` falla (`left: 0, right: 1`); restaurado, 2/2 en verde. El caso `icacls` corrió completo en esta máquina (no se omitió) y solo se omite si el listado no fue denegado (token con `SeBackupPrivilege`).
+
+### 6.3 `WindowsFolderPicker` y `WindowsExplorer` — RED
+
+`cargo test --lib --locked adapters::windows::` (7 tests del selector + 4 del Explorador + 2 `#[ignore = "abre UI nativa; se prueba en el smoke"]`; `folder_picker.rs`/`explorer.rs` solo con el `mod tests`):
+
+```
+error[E0425]: cannot find function `code_detail` in this scope   (3x)
+error[E0425]: cannot find type `BackendError` in this scope / `WindowsExplorer` / `WindowsFolderPicker`
+error[E0432]: unresolved imports `explorer::WindowsExplorer`, `folder_picker::WindowsFolderPicker`
+error: could not compile `pc-optimizer` (lib test) due to 22 previous errors
+```
+
+### 6.3 GREEN y 6.4 (RED por mutación)
+
+- 6.3 GREEN: `WindowsFolderPicker` (`pcopt-folder-picker`) y `WindowsExplorer` (`pcopt-reveal`), COM STA por llamada, `catch_unwind`, códigos `io_0x…` sin texto del sistema; 103 passed / 21 ignored en `adapters::windows::` (los 2 `#[ignore = "abre UI nativa; se prueba en el smoke"]` compilan). `ERROR_CANCELLED` → `Ok(None)`.
+- 6.4: `tests/architecture.rs` suma `production_code_should_never_execute_or_open_an_item_through_the_shell` (ningún `ShellExecute*` en producción) y `unsafe_should_only_appear_in_the_declared_windows_adapters` (lista de 9 archivos, la nueva solo con `explorer.rs`, `folder_picker.rs`, `volume.rs`), más tests del helper (comentarios, `#[cfg(test)]` y falsos amigos como `unsafe_code`). Como las reglas se escribieron junto con los helpers y el código real no las viola, el RED es por mutación: quitando `volume.rs` de la lista y metiendo `ShellExecuteW` en `explorer.rs` fallan `production_code_should_never_execute_or_open_an_item_through_the_shell` (`explorer.rs: ShellExecute`) y `unsafe_should_only_appear_in_the_declared_windows_adapters` (`volume.rs: 1 uso(s) de unsafe`); restaurado, `--test architecture` = 24 passed (19 + 5).
+- Conteo de `unsafe {` por archivo (antes -> después): `fs.rs` 2 -> 2, `known_folders.rs` 4 -> 4, `privileges.rs` 22 -> 22, `recycle_bin.rs` 1 -> 1, `recycle_bin_empty.rs` 3 -> 3, `recycle_bin_policy.rs` 3 -> 3, `explorer.rs` 0 -> 5, `folder_picker.rs` 0 -> 9, `volume.rs` 0 -> 1 (cada bloque con `// SAFETY:`; `undocumented_unsafe_blocks = deny` lo vigila en clippy).

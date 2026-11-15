@@ -27,6 +27,8 @@ pub(crate) mod fakes_content;
 #[cfg(test)]
 pub(crate) mod fakes_shell;
 #[cfg(test)]
+pub(crate) mod folders_store_contract;
+#[cfg(test)]
 pub(crate) mod fs_contract;
 #[cfg(test)]
 pub(crate) mod store_contract;
@@ -45,7 +47,8 @@ pub use sensors::{SensorSample, Sensors};
 pub use session::SessionIdentity;
 pub use shell::{Explorer, FolderPicker};
 pub use store::{
-    CleanupLogStore, DuplicateStore, JunkFindingStore, ScanStore, SettingsStore, Store, StoreError,
+    CleanupLogStore, DuplicateStore, FolderStore, JunkFindingStore, ScanStore, SettingsStore,
+    Store, StoreError,
 };
 pub use trash::{Trash, TrashError};
 pub use volume::{VolumeSpace, VolumeSpaceInfo};

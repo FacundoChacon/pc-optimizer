@@ -4,6 +4,11 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::domain::disk_usage::model::{
+    FolderCrumb, FolderIssue, FolderPage, FolderRow, FolderScanResults, FolderScanSummary,
+    FolderSort, LargeFilePage, LargeFileRow, LargeFileSort,
+};
+use crate::domain::disk_usage::select::remainder_bytes;
 use crate::domain::duplicates::model::{
     DuplicateGroupPage, DuplicateScanResults, DuplicateScanSummary, GroupResolution, MinSize,
     RootResult, ScanCounters, StoredDuplicateFile, StoredDuplicateGroup,
@@ -20,12 +25,13 @@ use crate::domain::model::{
 use crate::domain::ports::recycle_bin_empty::EmptyError;
 use crate::domain::ports::{
     AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, DuplicateStore, EntryKind,
-    FileIdentity, FileMeta, FileSystem, JunkFindingStore, PortError, RecycleBinEmptier,
-    RecycleBinInfo, RecycleBinPolicy, RecycleBinUsage, ScanStore, SensorSample, Sensors,
-    SessionIdentity, SettingsStore, StoreError, Trash, TrashError,
+    FileIdentity, FileMeta, FileSystem, FolderStore, JunkFindingStore, PortError,
+    RecycleBinEmptier, RecycleBinInfo, RecycleBinPolicy, RecycleBinUsage, ScanStore, SensorSample,
+    Sensors, SessionIdentity, SettingsStore, StoreError, Trash, TrashError,
 };
 use crate::domain::privileges::UserSid;
 use crate::domain::protection::context::ContentFolder;
+use crate::domain::protection::path::fold_component;
 use crate::domain::protection::service::DeleteTarget;
 use crate::domain::recycle_bin::root::VolumeRoot;
 
@@ -749,6 +755,13 @@ struct StoreInner {
     duplicate_groups: Vec<MemGroup>,
     next_group_id: i64,
     next_dup_file_id: i64,
+    /// Analisis de carpetas: resultado sin filas, carpetas, archivos grandes e incidencias.
+    folder_results: Vec<(ScanId, FolderScanResults)>,
+    folder_rows: Vec<MemFolder>,
+    large_rows: Vec<MemLarge>,
+    folder_issues: Vec<(ScanId, FolderIssue)>,
+    next_folder_id: i64,
+    next_large_id: i64,
 }
 
 /// Grupo de duplicados guardado en memoria.
@@ -784,6 +797,8 @@ impl InMemoryStore {
                 next_finding_id: 1,
                 next_group_id: 1,
                 next_dup_file_id: 1,
+                next_folder_id: 1,
+                next_large_id: 1,
                 ..StoreInner::default()
             }),
         }
@@ -847,6 +862,14 @@ impl ScanStore for InMemoryStore {
         inner
             .duplicate_groups
             .retain(|group| !pruned.contains(&group.scan));
+        inner
+            .folder_results
+            .retain(|(scan, _)| !pruned.contains(scan));
+        inner.folder_rows.retain(|f| !pruned.contains(&f.scan));
+        inner.large_rows.retain(|f| !pruned.contains(&f.scan));
+        inner
+            .folder_issues
+            .retain(|(scan, _)| !pruned.contains(scan));
         Ok(id)
     }
 
@@ -1305,6 +1328,299 @@ fn to_stored_group(group: &MemGroup) -> StoredDuplicateGroup {
         blake3: group.blake3.clone(),
         resolved_at: group.resolved_at,
         files,
+    }
+}
+
+/// Carpeta guardada en memoria (sin la raiz de resultados).
+struct MemFolder {
+    scan: ScanId,
+    row: FolderRow,
+}
+
+/// Archivo grande guardado en memoria.
+struct MemLarge {
+    scan: ScanId,
+    row: LargeFileRow,
+}
+
+fn mem_folder_summary(
+    inner: &StoreInner,
+    scan: &Scan,
+) -> Result<Option<FolderScanSummary>, StoreError> {
+    let Some((_, meta)) = inner.folder_results.iter().find(|(id, _)| *id == scan.id) else {
+        return Ok(None);
+    };
+    Ok(Some(FolderScanSummary {
+        scan: scan.clone(),
+        root_kind: meta.root_kind,
+        root_path: meta.root_path.clone(),
+        volume: meta.volume,
+        counters: meta.counters,
+        folders_truncated: meta.folders_truncated,
+        root_folder_id: inner
+            .folder_rows
+            .iter()
+            .find(|f| f.scan == scan.id && f.row.parent_id.is_none())
+            .map(|f| f.row.id),
+        issues: inner
+            .folder_issues
+            .iter()
+            .filter(|(id, _)| *id == scan.id)
+            .map(|(_, issue)| issue.clone())
+            .collect(),
+    }))
+}
+
+fn mem_has_children(inner: &StoreInner, scan: ScanId, id: i64) -> bool {
+    inner
+        .folder_rows
+        .iter()
+        .any(|f| f.scan == scan && f.row.parent_id == Some(id))
+}
+
+fn mem_folder(inner: &StoreInner, scan: ScanId, id: i64) -> Option<FolderRow> {
+    inner
+        .folder_rows
+        .iter()
+        .find(|f| f.scan == scan && f.row.id == id)
+        .map(|f| FolderRow {
+            has_children: mem_has_children(inner, scan, id),
+            ..f.row.clone()
+        })
+}
+
+fn crumb(row: &FolderRow) -> FolderCrumb {
+    FolderCrumb {
+        id: row.id,
+        name: row.name(),
+    }
+}
+
+impl FolderStore for InMemoryStore {
+    fn complete_folder_scan(
+        &self,
+        scan_id: ScanId,
+        results: &FolderScanResults,
+        finished_at: EpochMillis,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.lock()?;
+        let scan = inner
+            .scans
+            .iter()
+            .find(|s| s.id == scan_id)
+            .ok_or_else(|| StoreError::NotFound(format!("scan {}", scan_id.0)))?;
+        if scan.kind != ScanKind::Folders || scan.status != ScanStatus::Running {
+            return Err(StoreError::InvalidState(format!(
+                "scan {} is not a running folders scan",
+                scan_id.0
+            )));
+        }
+        // Se valida TODO antes de tocar el estado: el guardado es atomico.
+        results
+            .validate()
+            .map_err(|reason| StoreError::Constraint(reason.to_string()))?;
+        let others: Vec<ScanId> = inner
+            .scans
+            .iter()
+            .filter(|s| s.kind == ScanKind::Folders && s.id != scan_id)
+            .map(|s| s.id)
+            .collect();
+        inner.folder_rows.retain(|f| !others.contains(&f.scan));
+        inner.large_rows.retain(|f| !others.contains(&f.scan));
+        inner
+            .folder_issues
+            .retain(|(scan, _)| !others.contains(scan));
+        let mut ids: Vec<i64> = Vec::with_capacity(results.folders.len());
+        for folder in &results.folders {
+            let id = inner.next_folder_id;
+            inner.next_folder_id += 1;
+            ids.push(id);
+            inner.folder_rows.push(MemFolder {
+                scan: scan_id,
+                row: FolderRow {
+                    id,
+                    parent_id: folder.parent.map(|parent| ids[parent]),
+                    path: folder.path.clone(),
+                    depth: folder.depth,
+                    size_bytes: folder.size_bytes,
+                    direct_bytes: folder.direct_bytes,
+                    file_count: folder.file_count,
+                    dir_count: folder.dir_count,
+                    access: folder.access,
+                    opaque: folder.opaque,
+                    system: folder.system,
+                    junk_hint: folder.junk_hint,
+                    has_children: false,
+                },
+            });
+        }
+        for file in &results.large_files {
+            let id = inner.next_large_id;
+            inner.next_large_id += 1;
+            inner.large_rows.push(MemLarge {
+                scan: scan_id,
+                row: LargeFileRow {
+                    id,
+                    folder_id: ids[file.folder],
+                    path: file.path.clone(),
+                    size_bytes: file.size_bytes,
+                    modified_at: file.modified_at,
+                },
+            });
+        }
+        for issue in &results.issues {
+            inner.folder_issues.push((scan_id, issue.clone()));
+        }
+        let mut meta = results.clone();
+        meta.folders.clear();
+        meta.large_files.clear();
+        meta.issues.clear();
+        inner.folder_results.push((scan_id, meta));
+        if let Some(scan) = inner.scans.iter_mut().find(|s| s.id == scan_id) {
+            scan.status = ScanStatus::Done;
+            scan.finished_at = Some(finished_at);
+        }
+        Ok(())
+    }
+
+    fn last_done_folder_scan(&self) -> Result<Option<FolderScanSummary>, StoreError> {
+        let inner = self.lock()?;
+        let latest = inner
+            .scans
+            .iter()
+            .filter(|s| s.kind == ScanKind::Folders && s.status == ScanStatus::Done)
+            .max_by_key(|s| (s.started_at, s.id));
+        match latest {
+            None => Ok(None),
+            Some(scan) => mem_folder_summary(&inner, scan),
+        }
+    }
+
+    fn folder_scan_summary(
+        &self,
+        scan_id: ScanId,
+    ) -> Result<Option<FolderScanSummary>, StoreError> {
+        let inner = self.lock()?;
+        match inner.scans.iter().find(|s| s.id == scan_id) {
+            None => Ok(None),
+            Some(scan) => mem_folder_summary(&inner, scan),
+        }
+    }
+
+    fn list_folder_children(
+        &self,
+        scan_id: ScanId,
+        folder_id: Option<i64>,
+        sort: FolderSort,
+        offset: u64,
+        limit: u32,
+    ) -> Result<FolderPage, StoreError> {
+        let inner = self.lock()?;
+        let target = match folder_id {
+            None => inner
+                .folder_rows
+                .iter()
+                .find(|f| f.scan == scan_id && f.row.parent_id.is_none())
+                .map(|f| f.row.id),
+            Some(id) => Some(id),
+        }
+        .and_then(|id| mem_folder(&inner, scan_id, id))
+        .ok_or_else(|| StoreError::NotFound(format!("folder of scan {}", scan_id.0)))?;
+        let mut breadcrumb = vec![crumb(&target)];
+        let mut parent = target.parent_id;
+        while let Some(id) = parent {
+            let Some(row) = mem_folder(&inner, scan_id, id) else {
+                break;
+            };
+            breadcrumb.push(crumb(&row));
+            parent = row.parent_id;
+        }
+        breadcrumb.reverse();
+        let mut children: Vec<FolderRow> = inner
+            .folder_rows
+            .iter()
+            .filter(|f| f.scan == scan_id && f.row.parent_id == Some(target.id))
+            .filter_map(|f| mem_folder(&inner, scan_id, f.row.id))
+            .collect();
+        match sort {
+            FolderSort::Size => children.sort_by_key(|r| (std::cmp::Reverse(r.size_bytes), r.id)),
+            FolderSort::Name => {
+                children.sort_by_cached_key(|r| (fold_component(&r.name()), r.id));
+            }
+        }
+        let remainder = remainder_bytes(
+            target.size_bytes,
+            target.direct_bytes,
+            children.iter().map(|r| r.size_bytes),
+        );
+        let total = children.len() as u64;
+        let items = children
+            .into_iter()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            .take(limit as usize)
+            .collect();
+        Ok(FolderPage {
+            folder: target,
+            breadcrumb,
+            total,
+            items,
+            remainder_bytes: remainder,
+        })
+    }
+
+    fn list_large_files(
+        &self,
+        scan_id: ScanId,
+        sort: LargeFileSort,
+        offset: u64,
+        limit: u32,
+    ) -> Result<LargeFilePage, StoreError> {
+        let inner = self.lock()?;
+        let mut files: Vec<LargeFileRow> = inner
+            .large_rows
+            .iter()
+            .filter(|f| f.scan == scan_id)
+            .map(|f| f.row.clone())
+            .collect();
+        match sort {
+            LargeFileSort::Size => files.sort_by_key(|f| (std::cmp::Reverse(f.size_bytes), f.id)),
+            // Sin fecha al final en ambos ordenes.
+            LargeFileSort::Newest => files.sort_by_key(|f| {
+                (
+                    f.modified_at.is_none(),
+                    std::cmp::Reverse(f.modified_at),
+                    f.id,
+                )
+            }),
+            LargeFileSort::Oldest => {
+                files.sort_by_key(|f| (f.modified_at.is_none(), f.modified_at, f.id));
+            }
+        }
+        let total = files.len() as u64;
+        let items = files
+            .into_iter()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            .take(limit as usize)
+            .collect();
+        Ok(LargeFilePage { total, items })
+    }
+
+    fn get_folder(&self, scan_id: ScanId, folder_id: i64) -> Result<Option<FolderRow>, StoreError> {
+        let inner = self.lock()?;
+        Ok(mem_folder(&inner, scan_id, folder_id))
+    }
+
+    fn get_large_file(
+        &self,
+        scan_id: ScanId,
+        file_id: i64,
+    ) -> Result<Option<LargeFileRow>, StoreError> {
+        Ok(self
+            .lock()?
+            .large_rows
+            .iter()
+            .find(|f| f.scan == scan_id && f.row.id == file_id)
+            .map(|f| f.row.clone()))
     }
 }
 
@@ -2078,6 +2394,25 @@ mod tests {
     #[test]
     fn in_memory_store_should_satisfy_contract_junk_complete_requires_a_running_junk_scan() {
         contract::contract_junk_complete_requires_a_running_junk_scan(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_the_folders_contract() {
+        use crate::domain::ports::folders_store_contract as folders;
+        folders::contract_round_trip(InMemoryStore::new);
+        folders::contract_opaque_folders_keep_their_flags_and_have_no_children(InMemoryStore::new);
+        folders::contract_failed_save_is_atomic(InMemoryStore::new);
+        folders::contract_complete_requires_a_running_folders_scan(InMemoryStore::new);
+        folders::contract_second_scan_purges_the_previous_tree_keeping_its_result(
+            InMemoryStore::new,
+        );
+        folders::contract_other_scan_kinds_are_untouched(InMemoryStore::new);
+        folders::contract_last_done_ignores_unfinished_and_other_kinds(InMemoryStore::new);
+        folders::contract_children_sort_page_and_breadcrumb(InMemoryStore::new);
+        folders::contract_equal_sizes_and_names_tie_break_by_id(InMemoryStore::new);
+        folders::contract_a_folder_of_another_scan_is_not_found(InMemoryStore::new);
+        folders::contract_large_files_sort_page_and_lookup(InMemoryStore::new);
+        folders::contract_rows_follow_scan_retention(InMemoryStore::new);
     }
 
     #[test]
