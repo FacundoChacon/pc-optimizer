@@ -12,13 +12,14 @@ afterEach(() => {
 });
 
 describe("navegacion: Espacio en disco", () => {
-  it("el registro tiene 5 entradas con Espacio en disco entre Inicio y Limpieza", () => {
-    expect(SCREENS.map((screen) => screen.id)).toEqual(["home", "disk", "cleanup", "duplicates", "settings"]);
+  it("el registro tiene 6 entradas con Espacio en disco entre Inicio y Limpieza", () => {
+    expect(SCREENS.map((screen) => screen.id)).toEqual(["home", "disk", "cleanup", "duplicates", "monitor", "settings"]);
     expect(SCREENS.map((screen) => screen.label)).toEqual([
       es.nav.home,
       es.nav.disk,
       es.nav.cleanup,
       es.nav.duplicates,
+      es.nav.monitor,
       es.nav.settings,
     ]);
     expect(DEFAULT_SCREEN).toBe("home");
@@ -29,7 +30,7 @@ describe("navegacion: Espacio en disco", () => {
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: es.nav.label });
     const labels = within(nav).getAllByRole("button").map((button) => button.textContent);
-    expect(labels).toEqual([es.nav.home, es.nav.disk, es.nav.cleanup, es.nav.duplicates, es.nav.settings]);
+    expect(labels).toEqual([es.nav.home, es.nav.disk, es.nav.cleanup, es.nav.duplicates, es.nav.monitor, es.nav.settings]);
     fireEvent.click(within(nav).getByRole("button", { name: es.nav.disk }));
     expect(await screen.findByRole("heading", { level: 1, name: es.disk.title })).toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: es.nav.disk })).toHaveAttribute("aria-current", "page");

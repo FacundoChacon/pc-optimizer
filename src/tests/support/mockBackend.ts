@@ -30,6 +30,7 @@ import type {
 import { preview } from "./cleanupFixtures";
 import { duplicatePreview } from "./duplicateFixtures";
 import { sendChannelMessages } from "./junkFixtures";
+import { snapshot } from "./monitorFixtures";
 
 export type BackendCommand =
   | "get_app_info"
@@ -58,7 +59,9 @@ export type BackendCommand =
   | "list_folder_children"
   | "list_large_files"
   | "pick_folder_root"
-  | "reveal_in_explorer";
+  | "reveal_in_explorer"
+  | "start_monitor_stream"
+  | "stop_monitor_stream";
 
 /** Una carpeta del analisis simulado con sus hijas y sus migas de pan. */
 export interface DiskPageFixture {
@@ -121,6 +124,10 @@ export interface BackendState {
   diskScanResult: FolderScanSummary | null;
   /** Eventos que start_folder_scan envia por el canal apenas llega la invocacion. */
   diskScanEvents: FolderScanEvent[];
+  /** Respuesta cruda de start_monitor_stream (puede ser invalida a proposito). */
+  monitorSnapshot: unknown;
+  /** Eventos crudos que start_monitor_stream envia por el canal apenas llega la invocacion. */
+  monitorEvents: unknown[];
   /** Carpetas del ultimo analisis por id (`"root"` = la raiz). */
   diskPages: Record<string, DiskPageFixture>;
   /** Top de archivos grandes para list_large_files. */
@@ -149,6 +156,8 @@ export interface MockBackend {
   emitDuplicateCleanup: (events: readonly CleanupEvent[]) => void;
   /** Envia eventos al canal de la ultima invocacion de start_folder_scan. */
   emitFolderScan: (events: readonly FolderScanEvent[]) => void;
+  /** Envia eventos crudos al canal de la ultima invocacion de start_monitor_stream. */
+  emitMonitor: (events: readonly unknown[]) => void;
 }
 
 export const READY: StoreStatus = { status: "ready" };
@@ -197,6 +206,8 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     diskLast: null,
     diskScanResult: null,
     diskScanEvents: [],
+    monitorSnapshot: snapshot(),
+    monitorEvents: [],
     diskPages: {},
     diskFiles: [],
     pickQueue: [],
@@ -216,6 +227,8 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
   let sentDupCleanup = 0;
   let diskChannel: Channel<unknown> | null = null;
   let sentDisk = 0;
+  let monitorChannel: Channel<unknown> | null = null;
+  let sentMonitor = 0;
   let dupPreviewCounter = 0;
   let previewCounter = 0;
   let emptyCounter = 0;
@@ -265,6 +278,12 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     sentDisk += events.length;
   };
 
+  const emitMonitor = (events: readonly unknown[]): void => {
+    if (monitorChannel === null) return;
+    sendChannelMessages(monitorChannel, events, sentMonitor);
+    sentMonitor += events.length;
+  };
+
   mockIPC(async (cmd, args) => {
     calls.push({ cmd, args });
     const command = cmd as BackendCommand;
@@ -292,6 +311,11 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
       diskChannel = (args as { onProgress: Channel<unknown> }).onProgress;
       sentDisk = 0;
       emitFolderScan(state.diskScanEvents);
+    }
+    if (command === "start_monitor_stream") {
+      monitorChannel = (args as { onSample: Channel<unknown> }).onSample;
+      sentMonitor = 0;
+      emitMonitor(state.monitorEvents);
     }
     const gate = state.gates[command];
     if (gate !== undefined) await gate;
@@ -529,6 +553,10 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
         };
         return finished;
       }
+      case "start_monitor_stream":
+        return state.monitorSnapshot;
+      case "stop_monitor_stream":
+        return null;
       default:
         throw { kind: "internal", message: `unknown command ${cmd}` };
     }
@@ -543,5 +571,6 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     emitDuplicates,
     emitDuplicateCleanup,
     emitFolderScan,
+    emitMonitor,
   };
 }

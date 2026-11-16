@@ -1631,3 +1631,228 @@ export async function pickFolderRoot(): Promise<PickResult> {
 export async function revealInExplorer(scanId: number, target: RevealTarget): Promise<void> {
   await call<unknown>("reveal_in_explorer", { scanId, target: { kind: target.kind, id: target.id } });
 }
+
+// ---------------------------------------------------------------------------------------------
+// Monitor en vivo (C-06)
+// ---------------------------------------------------------------------------------------------
+
+/** Nivel de una metrica (espejo de `commands::monitor::LevelDto`). */
+export type MonitorLevel = "normal" | "high" | "very_high" | "unknown";
+/** Nivel del espacio del volumen del sistema. */
+export type MonitorSpaceLevel = "normal" | "almost_full" | "unknown";
+/** Por que una metrica esta (o no) presente. */
+export type MetricAvailability = "ok" | "warming_up" | "after_gap" | "source_error" | "not_supported";
+
+/** Una muestra por segundo; cada metrica es `null` si esta ausente (nunca 0). */
+export interface MonitorSample {
+  seq: number;
+  /** Milisegundos desde la epoca Unix. */
+  at: number;
+  gapBefore: boolean;
+  cpuPct: number | null;
+  memUsedBytes: number | null;
+  memTotalBytes: number | null;
+  volumeTotalBytes: number | null;
+  volumeFreeBytes: number | null;
+  diskActivePct: number | null;
+  diskReadBps: number | null;
+  diskWriteBps: number | null;
+}
+
+export interface MetricSummary {
+  current: number | null;
+  avg60: number | null;
+  peak: number | null;
+  level: MonitorLevel;
+}
+
+export interface MonitorAvailability {
+  cpu: MetricAvailability;
+  memory: MetricAvailability;
+  volume: MetricAvailability;
+  diskActive: MetricAvailability;
+  diskIo: MetricAvailability;
+}
+
+export interface MonitorSummary {
+  cpu: MetricSummary;
+  memory: MetricSummary;
+  diskActive: MetricSummary;
+  volume: { usedPct: number | null; level: MonitorSpaceLevel };
+  availability: MonitorAvailability;
+  gapsInWindow: number;
+  avgReadMicros: number | null;
+}
+
+export interface MonitorSnapshot {
+  subscriptionId: number;
+  intervalMs: number;
+  windowMs: number;
+  samples: MonitorSample[];
+  summary: MonitorSummary | null;
+}
+
+/** Evento del flujo, etiquetado por `kind` (no `type` como los escaneos). */
+export type MonitorEvent =
+  | { kind: "sample"; sample: MonitorSample; summary: MonitorSummary }
+  | { kind: "stopped"; reason: "sampler_failed" };
+
+const MONITOR_LEVELS: readonly unknown[] = ["normal", "high", "very_high", "unknown"];
+const MONITOR_SPACE_LEVELS: readonly unknown[] = ["normal", "almost_full", "unknown"];
+const MONITOR_AVAILABILITY: readonly unknown[] = ["ok", "warming_up", "after_gap", "source_error", "not_supported"];
+
+/** `undefined` = invalido; `null` = ausente. */
+function nullable(value: unknown, valid: (v: unknown) => boolean): number | null | undefined {
+  if (value === null) return null;
+  return valid(value) ? (value as number) : undefined;
+}
+
+function isFiniteNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function decodeMonitorSample(raw: unknown): MonitorSample | null {
+  if (!isRecord(raw)) return null;
+  const { seq, at, gapBefore } = raw;
+  if (!isCount(seq) || typeof at !== "number" || !Number.isSafeInteger(at) || typeof gapBefore !== "boolean") {
+    return null;
+  }
+  const cpuPct = nullable(raw["cpuPct"], isFiniteNumber);
+  const diskActivePct = nullable(raw["diskActivePct"], isFiniteNumber);
+  const memUsedBytes = nullable(raw["memUsedBytes"], isCount);
+  const memTotalBytes = nullable(raw["memTotalBytes"], isCount);
+  const volumeTotalBytes = nullable(raw["volumeTotalBytes"], isCount);
+  const volumeFreeBytes = nullable(raw["volumeFreeBytes"], isCount);
+  const diskReadBps = nullable(raw["diskReadBps"], isCount);
+  const diskWriteBps = nullable(raw["diskWriteBps"], isCount);
+  const fields = [
+    cpuPct,
+    diskActivePct,
+    memUsedBytes,
+    memTotalBytes,
+    volumeTotalBytes,
+    volumeFreeBytes,
+    diskReadBps,
+    diskWriteBps,
+  ];
+  if (fields.some((field) => field === undefined)) return null;
+  return {
+    seq,
+    at,
+    gapBefore,
+    cpuPct: cpuPct ?? null,
+    memUsedBytes: memUsedBytes ?? null,
+    memTotalBytes: memTotalBytes ?? null,
+    volumeTotalBytes: volumeTotalBytes ?? null,
+    volumeFreeBytes: volumeFreeBytes ?? null,
+    diskActivePct: diskActivePct ?? null,
+    diskReadBps: diskReadBps ?? null,
+    diskWriteBps: diskWriteBps ?? null,
+  };
+}
+
+function decodeMetricSummary(raw: unknown): MetricSummary | null {
+  if (!isRecord(raw)) return null;
+  const current = nullable(raw["current"], isFiniteNumber);
+  const avg60 = nullable(raw["avg60"], isFiniteNumber);
+  const peak = nullable(raw["peak"], isFiniteNumber);
+  const level = raw["level"];
+  if (current === undefined || avg60 === undefined || peak === undefined || !MONITOR_LEVELS.includes(level)) {
+    return null;
+  }
+  return { current, avg60, peak, level: level as MonitorLevel };
+}
+
+function decodeMonitorAvailability(raw: unknown): MonitorAvailability | null {
+  if (!isRecord(raw)) return null;
+  const keys = ["cpu", "memory", "volume", "diskActive", "diskIo"] as const;
+  if (!keys.every((key) => MONITOR_AVAILABILITY.includes(raw[key]))) return null;
+  return {
+    cpu: raw["cpu"] as MetricAvailability,
+    memory: raw["memory"] as MetricAvailability,
+    volume: raw["volume"] as MetricAvailability,
+    diskActive: raw["diskActive"] as MetricAvailability,
+    diskIo: raw["diskIo"] as MetricAvailability,
+  };
+}
+
+function decodeMonitorSummary(raw: unknown): MonitorSummary | null {
+  if (!isRecord(raw)) return null;
+  const cpu = decodeMetricSummary(raw["cpu"]);
+  const memory = decodeMetricSummary(raw["memory"]);
+  const diskActive = decodeMetricSummary(raw["diskActive"]);
+  const availability = decodeMonitorAvailability(raw["availability"]);
+  const volume = raw["volume"];
+  const gapsInWindow = raw["gapsInWindow"];
+  const avgReadMicros = nullable(raw["avgReadMicros"], isCount);
+  if (!isRecord(volume) || cpu === null || memory === null || diskActive === null || availability === null) return null;
+  const usedPct = nullable(volume["usedPct"], isFiniteNumber);
+  if (
+    usedPct === undefined ||
+    !MONITOR_SPACE_LEVELS.includes(volume["level"]) ||
+    !isCount(gapsInWindow) ||
+    avgReadMicros === undefined
+  ) {
+    return null;
+  }
+  return {
+    cpu,
+    memory,
+    diskActive,
+    volume: { usedPct, level: volume["level"] as MonitorSpaceLevel },
+    availability,
+    gapsInWindow,
+    avgReadMicros,
+  };
+}
+
+function decodeMonitorEvent(raw: unknown): MonitorEvent | null {
+  if (!isRecord(raw)) return null;
+  if (raw["kind"] === "stopped") {
+    return raw["reason"] === "sampler_failed" ? { kind: "stopped", reason: "sampler_failed" } : null;
+  }
+  if (raw["kind"] === "sample") {
+    const sample = decodeMonitorSample(raw["sample"]);
+    const summary = decodeMonitorSummary(raw["summary"]);
+    return sample !== null && summary !== null ? { kind: "sample", sample, summary } : null;
+  }
+  return null;
+}
+
+function decodeMonitorSnapshot(raw: unknown, command: string): MonitorSnapshot {
+  if (isRecord(raw) && Array.isArray(raw["samples"])) {
+    const { subscriptionId, intervalMs, windowMs } = raw;
+    const samples = raw["samples"].map(decodeMonitorSample);
+    const summary = raw["summary"] === null ? null : decodeMonitorSummary(raw["summary"]);
+    if (
+      isCount(subscriptionId) &&
+      isCount(intervalMs) &&
+      isCount(windowMs) &&
+      samples.every((s): s is MonitorSample => s !== null) &&
+      (raw["summary"] === null || summary !== null)
+    ) {
+      return { subscriptionId, intervalMs, windowMs, samples, summary };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+/**
+ * Se suscribe al monitor: devuelve la ventana actual y, por el canal, cada muestra nueva (los
+ * eventos invalidos se ignoran). Una suscripcion nueva reemplaza a la anterior en el backend.
+ */
+export async function startMonitorStream(
+  onEvent: (event: MonitorEvent) => void,
+): Promise<{ snapshot: MonitorSnapshot }> {
+  const channel = new Channel<unknown>((raw) => {
+    const event = decodeMonitorEvent(raw);
+    if (event !== null) onEvent(event);
+  });
+  const raw = await call<unknown>("start_monitor_stream", { onSample: channel });
+  return { snapshot: decodeMonitorSnapshot(raw, "start_monitor_stream") };
+}
+
+/** Cancela la suscripcion; un id viejo no afecta a la vigente. */
+export async function stopMonitorStream(subscriptionId: number): Promise<void> {
+  await call<unknown>("stop_monitor_stream", { subscriptionId });
+}

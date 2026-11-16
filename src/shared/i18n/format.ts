@@ -42,3 +42,15 @@ const DATE_TIME = new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle
 export function formatDateTime(epochMillis: number): string {
   return DATE_TIME.format(new Date(epochMillis));
 }
+
+/** Velocidad legible (base 1024): `512 B/s`, `1,5 KB/s`, `35,3 MB/s`. */
+export function formatRate(bytesPerSecond: number): string {
+  return `${formatBytes(bytesPerSecond)}/s`;
+}
+
+const CLOCK = new Intl.DateTimeFormat("es", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+/** Hora local con segundos (`14:03:07`) a partir de milisegundos desde la epoca Unix. */
+export function formatClock(epochMillis: number): string {
+  return CLOCK.format(new Date(epochMillis));
+}
