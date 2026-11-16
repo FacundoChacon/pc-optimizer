@@ -418,3 +418,68 @@ Nota: `winmd-api-search` (skill) no se invocó para PDH: las firmas se verificar
 ### Conteos tras la parte 3
 
 `cargo test --locked`: lib **1169 passed** (+24 sobre la parte 2; +82 sobre la línea base 1087), 23 ignored; `architecture` 24; `manifest` 5; `no_network_crates` 9; `security_baseline` 22. Vitest 592 (`--maxWorkers=2`); `npm run typecheck` verde; fmt y clippy `-D warnings` verdes.
+
+### Evidencia RED (parte 4)
+
+- **6.1** `npx vitest run src/tests/charts/scales.test.ts`: `Error: Failed to resolve import "../../shared/charts/scales" ... Does the file exist?` (símbolo nuevo). GREEN: `13 passed` (cinco puntos con el tercero nulo → `M0 50L25 0M75 25L100 0`; `gapBefore` corta aunque ambos valores existan; puntos fuera del dominio descartados; serie vacía o todo nulos → `""`; valores acotados al eje; `niceMax(37 MB/s)` = 50 MB/s, 1 200 → 2 000, 100 → 100, 0/NaN → 1; `timeDomain`).
+- **6.2** `npx vitest run src/tests/charts/meter.test.tsx`: `Failed to resolve import "../../shared/charts/Meter"`. GREEN: `5 passed` (42 % → `width="42%"` + `fill-accent` + texto + sin `style`; 55 % alto → `fill-warning`; 130 → 100 %, NaN → 0 %; muy alto → `fill-danger` y nivel fuera del SVG; nulo/`unknown` → sin relleno y "No disponible").
+- **6.3** `npx vitest run src/tests/charts/timeSeriesChart.test.tsx`: `Failed to resolve import "../../shared/charts/TimeSeriesChart"`. GREEN: `8 passed` (un `path` por serie, `role=group` con nombre, 0 atributos `style`, sin clases `transition`; leyenda con 2 series; flechas mueven el cursor y la lectura muestra hora y valor; lectura con `g[transform]`; "Ver tabla" = 60 filas máx. + "No disponible"; muestra nueva cambia el camino; hueco = 2 tramos). Un solo eje Y, `viewBox` fijo (texto sin deformar) y leyenda para 2 o más series.
+- **6.4** `npx vitest run src/tests/contrast.test.ts` con `series-2` agregado al test y sin token: `Error: Falta el token --color-series-2` (2 failed). El helper `parseColorTokens` tampoco aceptaba dígitos en el nombre (`[a-z-]+` pasó a `[a-z0-9-]+`, soporte de tests). GREEN tras definir el token: `15 passed`.
+- **7.1** `npx vitest run src/tests/monitor/ipc.test.ts`: `TypeError: startMonitorStream is not a function` (15 failed). GREEN: `15 passed` (snapshot con métricas `null` y sin resumen; resumen completo con campos extra ignorados; nivel, disponibilidad y nivel de espacio desconocidos, campo faltante, número inseguro (2^53), porcentaje no numérico y respuesta no objeto → `invalid_response`; el canal entrega las muestras en orden y descarta eventos inválidos, `kind` desconocido y `stopped` con motivo desconocido; `monitor_unavailable` se propaga; `stop` envía `subscriptionId` numérico). `mockBackend` gana `monitorSnapshot`, `monitorEvents`, `emitMonitor` y los 2 comandos.
+- **7.2** `npx vitest run src/tests/i18n/monitorText.test.ts`: `Failed to resolve import "../../features/monitor/monitorText"`. GREEN: `146 passed` en `src/tests/i18n` + `uiLiterals` (niveles, disponibilidad con explicación y `ok` sin nota, frases por métrica, `percentText`, `formatRate(0)` = `0 B/s`, `1536` = `1,5 KB/s`, `512`, `37_000_000` = `35,3 MB/s`, mensaje `monitor_unavailable`). Se agrega `formatClock` (hora con segundos).
+- **7.3** `npx vitest run src/tests/monitor/navigation.test.tsx src/tests/app src/tests/disk/navigation.test.tsx src/tests/duplicates/duplicatesScreen.test.tsx`: `6 failed | 89 passed` (Monitor ausente del registro y de la navegación). GREEN: 6 entradas en orden (Inicio, Espacio en disco, Limpieza, Duplicados, Monitor, Configuración), icono propio, `aria-current="page"` y foco en `main`; se actualizaron mecánicamente los conteos de `app/providers`, `app/shell`, `disk/navigation` y `duplicates`.
+- **7.4** `npx vitest run src/tests/monitor/provider.test.tsx`: `Failed to resolve import "../../features/monitor/MonitorProvider"`. GREEN: `10 passed` (una sola suscripción y ventana inicial; sin consumidores no hay suscripción; dos consumidores comparten y `stop_monitor_stream` con el id solo al desmontar el último; muestras del canal sin duplicar por `seq`; eventos durante el arranque se bufferizan y se aplican sin duplicar; ventana de 300; `stopped` y `monitor_unavailable` → no disponible; sin muestras 3 intervalos → `stale` (fake timers de `setInterval` y `Date`) y se recupera; con `document.hidden` no re-renderiza y al volver muestra lo acumulado).
+- **7.5** `npx vitest run src/tests/monitor/simple.test.tsx`: `TestingLibraryElementError: Unable to find role="region" and name "Procesador"` (8 failed). GREEN: `8 passed` (tres tarjetas con valor y nivel, sin botones en `main`; CPU en calentamiento → "Midiendo…" sin "0 %"; disco `not_supported` → "No disponible" + explicación; espacio "Casi lleno"; frase llana en muy alto; anuncio `polite` solo al cambiar de nivel y sin `aria-live` en `main`; monitor no disponible → `role=alert` con `es.errors.monitor_unavailable`; sin muestras → "Esperando la primera medición…").
+- **7.6** `npx vitest run src/tests/monitor/advanced.test.tsx`: `Unable to find role="region" and name "Medidores"` (9 failed). GREEN: `9 passed` (4 medidores con actual, promedio 60 s y pico; métrica ausente sin relleno y con su motivo; 4 gráficos y el de CPU cambia con una muestra nueva; lectura/escritura = 2 series con leyenda; hueco = 2 tramos; cursor con teclado; detalles: intervalo `1 s`, muestras, huecos, costo `1,8 ms`, códigos crudos `warming_up` y `not_supported`; costo nulo → "Sin dato"; 0 `style` en `main`).
+- **7.7** (UX, RED) `timeSeriesChart.test.tsx` con la lectura legible: `1 failed | 7 passed` (la lectura usaba `text-[13px]` sin halo). GREEN: `8 passed`.
+
+### Paleta (6.4): `validate_palette.js` de la skill `dataviz`, modo oscuro, superficie `#0f1115`
+
+Par `#4f9cf9` (accent) + `#cf7a2a` (`--color-series-2`):
+
+```
+[FAIL] Lightness band         outside band: [["#4f9cf9",0.687]]
+[PASS] Chroma floor           all 2 >= 0.1
+[PASS] CVD separation         worst adjacent #cf7a2a<->#4f9cf9 dE 27.9 (protan) · tritan 27.4
+[PASS] Normal-vision floor    worst adjacent dE 29.5 (normal)
+[PASS] Contrast vs surface    all 2 >= 3:1
+```
+
+El único FAIL es la banda de luminosidad del **`accent` preexistente** (OKLCH L 0,687, apenas sobre el tope de la banda); `series-2` la cumple. Se descartaron `#e08a3c`, `#f0a050` y `#d9822f` (fuera de banda) y `#d98cf0` (CVD dE 1,9, FAIL). Mitigación: las dos series llevan leyenda y el cursor nombra cada serie con su valor; no dependen solo del color. `contrast.test.ts`: `series-2` >= 3:1 sobre ambas superficies (verde).
+
+### Revisión UX (7.7, skill `ux-ui-revisor`, sobre el código de ambos modos; la app no se lanzó)
+
+Corregido (hallazgo real, legibilidad y WCAG 1.4.3/1.4.4):
+1. **Lectura del cursor ilegible**: texto SVG de 13 unidades en un `viewBox` de 600 que se escala a ~0,75 (cerca de 10 px) y sin fondo sobre la línea y la retícula. Fix: 16 unidades y halo de la superficie (`paint-order="stroke"` + `stroke-surface`, atributos, sin `style`).
+2. **Literal ":" en `MonitorTiles`** (lo detectó `uiLiterals`): pasó a `es.monitor.labelValue`.
+
+Descartados (gusto o sin base verificable, o ya cubiertos):
+- El texto de ayuda de teclado se repite en los 4 gráficos: es la descripción de cada control enfocable.
+- "Sin datos recientes" sin `role="status"`: una región viva insertada con contenido no se anuncia de forma fiable y el estado es visible; se evita sumar `aria-live` (D-17).
+- Etiqueta de medidor de 8 rem que puede envolver "Actividad del disco": envolver es correcto a 960 px.
+- "Normal" en gris en medidores y verde en tarjetas: ambos llevan icono y texto; es consistencia estética.
+- Nombre igual en leyenda y gráfico: son roles distintos (`list` y `group`).
+
+Lo que ya funciona: nivel siempre con icono y texto, foco visible y cursor por teclado, tabla alternativa, sin animaciones, "No disponible" o "Midiendo…" en lugar de 0, 0 atributos `style`.
+
+### Desvíos de implementación (parte 4)
+
+- `src/tests/support/contrast.ts`: el patrón de `parseColorTokens` acepta dígitos para leer `series-2`.
+- Etiqueta del disco en las tarjetas: "Disco del sistema" (el DTO no lleva la letra de la unidad, D-14).
+- `Meter`: nivel `unknown` o valor `null` no dibujan relleno; en el medidor de espacio `almost_full` se muestra como advertencia con el texto "Casi lleno".
+- El catálogo agrega `metrics.spaceUsed` ("Espacio usado") para el medidor de espacio (valor = porcentaje usado).
+- `MonitorProvider` va dentro de `DiskProvider` y antes de `NavigationProvider`; la suscripción es perezosa (solo con consumidores), por eso los tests existentes no abren el flujo.
+- No existe `npm run lint` en el proyecto (no se corrió).
+
+### Conteos finales (8.1)
+
+| Comando | Resultado (baseline de 1.1) |
+|---|---|
+| `npx vitest run --maxWorkers=2` | **677 passed** en 39 archivos (592 + 85 nuevos); `npm test` con todos los hilos conserva el flaky de carga conocido de 1.1 |
+| `npm run typecheck` y `npm run build` | verdes (JS 378,6 kB, gzip 109 kB) |
+| `cargo test --locked` | lib **1169 passed**, 23 ignored (sin cambios en la parte 4; baseline 1087 + 82); `architecture` 24; `manifest` 5; `no_network_crates` 9; `security_baseline` 22 |
+| `cargo fmt --check` y clippy `--all-targets --all-features --locked -D warnings` | verdes |
+| `openspec validate live-monitor --strict` | válido |
+| `package-lock.json` y `Cargo.lock` | sin cambios |
+
+Cada tarea de comportamiento de los grupos 1 a 7 tiene su salida RED anotada (partes 1 a 4). Pendientes: 8.3 (smoke con el dueño) y 8.4 (cierre).
