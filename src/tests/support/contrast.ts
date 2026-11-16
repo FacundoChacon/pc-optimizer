@@ -20,7 +20,7 @@ export function contrastRatio(hexA: string, hexB: string): number {
 /** Extrae los tokens `--color-*` declarados en el CSS crudo. */
 export function parseColorTokens(css: string): Record<string, string> {
   const tokens: Record<string, string> = {};
-  for (const m of css.matchAll(/--color-([a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
+  for (const m of css.matchAll(/--color-([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
     if (m[1] !== undefined && m[2] !== undefined) tokens[m[1]] = m[2];
   }
   return tokens;
