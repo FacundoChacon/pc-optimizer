@@ -26,7 +26,6 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 thiserror = "=2.0.21"
 sysinfo = { version = "=0.40.3", default-features = false, features = ["system", "disk", "component"] }
-walkdir = "=2.5.0"
 trash = "=5.3.0"
 rusqlite = { version = "=0.42.0", features = ["bundled"] }
 blake3 = "=1.8.7"
@@ -46,7 +45,7 @@ undocumented_unsafe_blocks = "deny"
 
 # Dependencias de runtime fijadas desde C-01 (ver design D-02) pero aun sin consumidores.
 # Tras C-02 ya se usan rusqlite, thiserror y serde_json. Siguen sin uso: sysinfo (C-06)
-# y walkdir (C-07 recorre sobre el puerto `FileSystem`, ver design D-05; quitarla es decision aparte del dueno); windows ya lo usa C-03, trash lo usa C-09 y blake3 lo usa C-11. El lint no admite
+# (walkdir se quito en el cierre de C-07: recorre sobre el puerto `FileSystem`, ver design D-05); windows ya lo usa C-03, trash lo usa C-09 y blake3 lo usa C-11. El lint no admite
 # excepciones por dependencia: lo quita el ultimo consumidor.
 [lints.cargo]
 unused_dependencies = "allow"
