@@ -54,9 +54,16 @@ Gobernanza: **LOW** (UI, catálogos, tipos).
 
 - El modo se guarda en `settings.ui_mode`; el cambio no requiere reinicio.
 - Componentes compartidos con variantes `simple`/`advanced` en vez de pantallas duplicadas (**Suposición**).
-- Librería de gráficos: pendiente (PA-01). Requisito: render eficiente de series en vivo y tema oscuro.
+- Gráficos: componentes SVG propios, sin librería (PA-01 resuelta en C-06): render eficiente de series en vivo y tema oscuro por tokens.
 - Drag & drop desde el Explorador no funciona hacia ventanas elevadas (UIPI): ofrecer selector de carpeta.
 
 ## Nota C-07: pantalla Espacio en disco
 
 Entrada de navegación entre Inicio y Limpieza. Simple: "Analizar disco C:", resumen, 5 carpetas más grandes y 5 archivos más grandes. Avanzado: selector de raíz, lista navegable con migas y orden, top de archivos y panel de detalles. Visualización con barras proporcionales; el treemap queda diferido (desvío respecto de "Treemap/lista completa").
+
+## Nota C-06: pantalla Monitor
+
+- Entrada "Monitor" en la navegación, entre Duplicados y Configuración.
+- Modo simple: tres tarjetas (Procesador, Memoria, Disco del sistema) con valor y nivel en palabras con icono; sin acción primaria.
+- Modo avanzado: lista de medidores lineales (no gauges circulares) con actual, promedio de 60 s y pico; cuatro gráficos de 5 min (CPU, memoria, tiempo activo, lectura/escritura) y panel de detalles con la disponibilidad de cada métrica.
+- La lista de procesos se difiere a un change propio (privacidad en over-the-shoulder y costo de refresco).

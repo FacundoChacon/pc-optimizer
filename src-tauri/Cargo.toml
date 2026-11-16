@@ -29,7 +29,7 @@ sysinfo = { version = "=0.40.3", default-features = false, features = ["system",
 trash = "=5.3.0"
 rusqlite = { version = "=0.42.0", features = ["bundled"] }
 blake3 = "=1.8.7"
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Performance", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tauri = { version = "=2.12.5", features = ["test"] }
@@ -43,9 +43,11 @@ unwrap_used = "deny"
 expect_used = "deny"
 undocumented_unsafe_blocks = "deny"
 
-# Dependencias de runtime fijadas desde C-01 (ver design D-02) pero aun sin consumidores.
-# Tras C-02 ya se usan rusqlite, thiserror y serde_json. Siguen sin uso: sysinfo (C-06)
-# (walkdir se quito en el cierre de C-07: recorre sobre el puerto `FileSystem`, ver design D-05); windows ya lo usa C-03, trash lo usa C-09 y blake3 lo usa C-11. El lint no admite
-# excepciones por dependencia: lo quita el ultimo consumidor.
+# Dependencias de runtime fijadas desde C-01 (ver design D-02). Ya tienen consumidor:
+# rusqlite, thiserror y serde_json (C-02), windows (C-03), trash (C-09), blake3 (C-11) y sysinfo
+# (C-06, monitor en vivo: CPU, memoria y contadores de disco; el tiempo activo del disco va por
+# PDH con la feature `Win32_System_Performance` de `windows`). walkdir se quito en el cierre de
+# C-07: recorre sobre el puerto `FileSystem`, ver design D-05. El lint no admite excepciones por
+# dependencia: lo quita el ultimo consumidor.
 [lints.cargo]
 unused_dependencies = "allow"

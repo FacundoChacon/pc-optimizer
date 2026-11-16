@@ -159,3 +159,7 @@
 **Origen**: inferido de RN-PROT.
 **Riesgo si es falso**: carpetas montadas por junction aparecen como vacías.
 **Cómo validar**: pruebas con junctions comunes (OneDrive, perfiles).
+
+## Decisión C-06: gráficos propios en SVG (resuelve PA-01)
+
+Los medidores y las series temporales del monitor se dibujan con componentes SVG propios (`src/shared/charts/`), sin librería de gráficos: sin dependencia nueva, CSP de producción intacta (`style-src 'self'`, sin atributos `style`), tema por tokens y testeable en jsdom. uPlot queda como alternativa preferida si C-15 necesita 24 h con zoom (el cambio sería local a `TimeSeriesChart`). Aprobada por el dueño el 2026-11-16 junto con el resto de las decisiones de C-06.

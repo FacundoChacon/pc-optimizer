@@ -83,3 +83,7 @@ No hay API REST. Contrato entre UI y backend = comandos Tauri (allowlist) y even
 ## Nota C-07: comandos reales del análisis de disco
 
 `start_folder_scan`, `get_last_folder_scan`, `list_folder_children`, `list_large_files`, `pick_folder_root`, `reveal_in_explorer` (más `cancel_scan` existente). El selector y el Explorador usan COM del shell en hilos STA propios, sin plugins `dialog`/`shell`. La interfaz nunca envía rutas: raíz por tipo o `pickId`, elementos por id del último análisis.
+
+## Nota C-06: comandos y flujo del monitor en vivo
+
+`start_monitor_stream` (recibe un `Channel` de la invocación y responde con la ventana actual y el resumen) y `stop_monitor_stream` (por `subscriptionId`). El muestreo corre en un hilo propio desde el arranque y entrega cada muestra al único suscriptor por ese `Channel`: sin `emit`/`listen`, sin permisos `core:*`, sin polling desde la UI. Las respuestas no llevan rutas ni datos de usuario. El monitor no es un `ActiveJob` y no usa la base.
