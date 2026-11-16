@@ -253,7 +253,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 - **Scope**:
   - Nota C-05: aquí (primer consumidor) va el selector de carpeta como alternativa a drag & drop (UIPI), junto con C-21 si llega antes.
   - Migración 004 (la 002 la tomó C-08 y la 003 C-11, que se implementó antes; el runner exige versiones contiguas; si C-07 mergea primero se renumeran): `folder_snapshot` (UNIQUE(scan_id, path), índice (path, scan_id), `parent_id` autorreferencia).
-  - Recorrido con `walkdir` sin seguir junctions/symlinks; progreso por eventos y cancelación; carpetas inaccesibles reportadas sin romper el escaneo.
+  - Recorrido sobre el puerto `FileSystem` (D-05) sin seguir junctions/symlinks; progreso por eventos y cancelación; carpetas inaccesibles reportadas sin romper el escaneo.
   - Comandos `start_scan(kind=folders)`, `cancel_scan`; treemap/lista por carpeta y top de archivos pesados (US-006, US-007) ordenable por tamaño y fecha.
   - Acciones: revelar en Explorador o enviar a revisión de limpieza (nunca borra directo).
   - UI: resumen + top 5 (simple); treemap/lista completa (avanzado).

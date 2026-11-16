@@ -12,7 +12,7 @@
 | Capa | Tecnologías | Versión mínima |
 |------|-------------|----------------|
 | Shell de escritorio | Tauri 2 | 2.x |
-| Backend (Rust) | `sysinfo`, `walkdir`, `trash`, `rusqlite`, `blake3`, `windows` / `windows-sys` (Win32, WMI) | Rust estable reciente (**Suposición:** MSRV = última estable al iniciar) |
+| Backend (Rust) | `sysinfo`, `trash`, `rusqlite`, `blake3`, `windows` / `windows-sys` (Win32, WMI) | Rust estable reciente (**Suposición:** MSRV = última estable al iniciar) |
 | Frontend | React + Vite + TypeScript + Tailwind | React 18+, Vite 5+, TS 5+ (**Suposición**) |
 | Persistencia | SQLite local (vía `rusqlite`) | SQLite 3.x bundled |
 | Gráficos | **TBD** (pregunta abierta PA-01, ver 10) | — |

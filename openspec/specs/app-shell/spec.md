@@ -73,14 +73,18 @@ Cada comando IPC propio SHALL quedar sujeto al control de acceso del runtime y e
 
 #### Scenario: Lista exacta de comandos habilitados
 - **WHEN** la suite de tests compara los comandos propios declarados en el backend con los permisos de comandos de las capabilities
-- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan`, `list_junk_findings`, `preview_cleanup`, `confirm_cleanup`, `cancel_cleanup`, `prepare_empty_recycle_bin`, `acknowledge_empty_recycle_bin`, `empty_recycle_bin`, `start_duplicate_scan`, `get_last_duplicate_scan`, `list_duplicate_groups`, `preview_duplicate_cleanup` y `confirm_duplicate_cleanup`)
+- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan`, `list_junk_findings`, `preview_cleanup`, `confirm_cleanup`, `cancel_cleanup`, `prepare_empty_recycle_bin`, `acknowledge_empty_recycle_bin`, `empty_recycle_bin`, `start_duplicate_scan`, `get_last_duplicate_scan`, `list_duplicate_groups`, `preview_duplicate_cleanup`, `confirm_duplicate_cleanup`, `start_folder_scan`, `get_last_folder_scan`, `list_folder_children`, `list_large_files`, `pick_folder_root` y `reveal_in_explorer`)
 
 #### Scenario: Progreso sin permisos de eventos
-- **WHEN** se revisan las capabilities tras agregar el escaneo de basura, la limpieza, el vaciado de la Papelera y la búsqueda de duplicados
+- **WHEN** se revisan las capabilities tras agregar el escaneo de basura, la limpieza, el vaciado de la Papelera, la búsqueda de duplicados y el análisis de uso del disco
 - **THEN** no contienen permisos `core:*` (de eventos ni de otro tipo) ni de plugins; el progreso viaja por el canal de la propia invocación
 
+#### Scenario: Selector y Explorador sin plugins
+- **WHEN** se revisan las capabilities tras agregar el selector de carpeta y "Mostrar en el Explorador"
+- **THEN** no contienen permisos de los plugins `dialog`, `shell`, `opener` ni `fs`; ambas acciones son comandos propios del backend
+
 ### Requirement: Navegación entre pantallas del shell
-La interfaz SHALL ofrecer un shell común con navegación entre las pantallas registradas (hoy: Inicio, Limpieza, Duplicados y Configuración, en ese orden), que muestra una sola pantalla a la vez, arranca en Inicio y marca la pantalla activa de forma accesible.
+La interfaz SHALL ofrecer un shell común con navegación entre las pantallas registradas (hoy: Inicio, Espacio en disco, Limpieza, Duplicados y Configuración, en ese orden), que muestra una sola pantalla a la vez, arranca en Inicio y marca la pantalla activa de forma accesible.
 
 #### Scenario: Arranque en Inicio
 - **WHEN** la app termina de cargar la configuración
@@ -97,6 +101,10 @@ La interfaz SHALL ofrecer un shell común con navegación entre las pantallas re
 #### Scenario: Ir a Duplicados
 - **WHEN** el usuario activa la entrada "Duplicados" de la navegación
 - **THEN** se muestra la pantalla Duplicados con su encabezado principal y la entrada queda marcada como actual
+
+#### Scenario: Ir a Espacio en disco
+- **WHEN** el usuario activa la entrada "Espacio en disco" de la navegación
+- **THEN** se muestra la pantalla Espacio en disco con su encabezado principal y la entrada queda marcada como actual
 
 #### Scenario: Solo pantallas implementadas
 - **WHEN** se renderiza la navegación
