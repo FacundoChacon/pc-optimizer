@@ -381,3 +381,20 @@ Nota: `winmd-api-search` (skill) no se invocó para PDH: las firmas se verificar
 ### Conteos tras la parte 1
 
 `cargo test --locked`: lib **1132 passed** (+45), 21 ignored; `architecture` 24; `manifest` 5; `no_network_crates` 9; `security_baseline` 22. `cargo fmt --check` y clippy `-D warnings` verdes. `Cargo.lock` sin cambios.
+
+### Evidencia RED (parte 2)
+
+- **4.1** `cargo test --locked --lib adapters::windows::pdh` sin `pdh.rs` de producción: `error[E0425]: cannot find function map_idle in this scope` (y `counter_path`, `map_call_failure`, `PdhIdleTime`). GREEN: `6 passed; 1 ignored`; triangulación (idle 130 → 0, idle −5 → 100, `PDH_INVALID_DATA` → `WarmingUp`, otro estado y NaN → `SourceError`, letra en mayúscula, no-letra rechazada, `open('7')`/`open('/')` → `NotSupported`). Lectura real a mano: `cargo test --locked --lib adapters::windows::pdh -- --include-ignored` → `8 passed` (dos colecciones separadas 1,1 s dan un valor en 0..=100).
+- **4.2** `cargo test --locked --lib adapters::windows::sensors`: `error[E0425]: cannot find function select_system_disk in this scope` (y `memory_reading`, `volume_reading`, `WindowsSensors`). GREEN: `6 passed; 1 ignored` (`C:\`/`D:\`/`E:\` → índice; `c:` sin barra; ninguno coincide o punto de montaje dentro de la unidad → `NotSupported`; usada = total − disponible acotada; total 0 → `SourceError`; falla de `VolumeSpace` → `SourceError`). Real a mano: `--include-ignored` → `7 passed` (primera lectura CPU `WarmingUp`; segunda en 0..=100, memoria usada ≤ total, volumen libre ≤ total).
+- **4.3** `cargo test --locked --test architecture unsafe` con `pdh.rs` presente y fuera de la lista: `unsafe fuera de los adaptadores declarados: ["src/adapters/windows/pdh.rs: 7 uso(s) de unsafe"]` (la regla actual lo detecta). GREEN: `pdh.rs` agregado a `UNSAFE_ALLOWED_FILES` (9 → 10 archivos): `architecture` 24 passed. Conteo de `unsafe` por archivo: sin cambios en los 9 anteriores; `pdh.rs` 7 usos (8 bloques/funciones, cada uno con `// SAFETY:`; `sensors.rs` no tiene `unsafe`). `no_network_crates` 9 passed; clippy `-D warnings` verde; `Cargo.lock` sin cambios.
+
+### Decisiones de implementación (parte 2)
+
+- `PdhIdleTime` y `WindowsSensors` no son `Send` (handles PDH crudos): la parte 3 los construye dentro del hilo de muestreo con una fábrica, sin `unsafe impl Send`.
+- `PdhIdleTime::open` toma una primera colección como línea base; `read_active_pct` colecta y formatea. `PDH_INVALID_DATA` (primera colección) → `WarmingUp`; cualquier otro error de PDH → `SourceError`; al abrir/agregar el contador → `NotSupported`.
+- `WindowsSensors::new(drive)` recibe la letra del volumen del sistema (la resuelve quien lo construye con el contexto de protección); el disco de `sysinfo` se elige una vez en la construcción y por ciclo solo se refresca su uso de E/S.
+- La CPU de la primera lectura es `WarmingUp` en el adaptador (sysinfo devuelve 0 al fijar la base: ese 0 nunca sale).
+
+### Conteos tras la parte 2
+
+`cargo test --locked`: lib **1145 passed** (+13 sobre la parte 1), **23 ignored** (+2: lectura PDH real y sensores reales); `architecture` 24; `manifest` 5; `no_network_crates` 9; `security_baseline` 22. fmt y clippy `-D warnings` verdes. `Cargo.lock` sin cambios.
