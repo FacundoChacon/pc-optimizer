@@ -576,6 +576,8 @@ fn the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_co
         "allow-list-large-files",
         "allow-pick-folder-root",
         "allow-reveal-in-explorer",
+        "allow-start-monitor-stream",
+        "allow-stop-monitor-stream",
     ] {
         assert_eq!(
             permissions.iter().filter(|p| *p == expected).count(),
@@ -588,7 +590,7 @@ fn the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_co
             .iter()
             .filter(|p| p.starts_with("allow-"))
             .count(),
-        27
+        29
     );
     assert!(permissions.iter().all(|p| !p.starts_with("core:")));
 }

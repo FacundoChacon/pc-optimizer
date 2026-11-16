@@ -31,6 +31,8 @@
     "allow-list-folder-children",
     "allow-list-large-files",
     "allow-pick-folder-root",
-    "allow-reveal-in-explorer"
+    "allow-reveal-in-explorer",
+    "allow-start-monitor-stream",
+    "allow-stop-monitor-stream"
   ]
 }

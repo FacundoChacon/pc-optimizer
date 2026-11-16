@@ -31,4 +31,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "list_large_files",
     "pick_folder_root",
     "reveal_in_explorer",
+    "start_monitor_stream",
+    "stop_monitor_stream",
 ];
