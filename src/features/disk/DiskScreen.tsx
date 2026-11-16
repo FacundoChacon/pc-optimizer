@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import { useSettings } from "../../app/providers/SettingsProvider";
-import type { AppError } from "../../lib/ipc";
+import type { AppError, FolderScanSummary } from "../../lib/ipc";
 import { errorMessage } from "../../shared/i18n/errors";
 import { es } from "../../shared/i18n/es";
 import { Button } from "../../shared/ui/Button";
@@ -19,6 +19,23 @@ import { RootPicker } from "./RootPicker";
 
 function revealErrorText(error: AppError): string {
   return error.kind === "reveal_unavailable" ? revealUnavailableText(error) : errorMessage(error);
+}
+
+/** Ruta comparable: sin prefijo `\\?\`, sin barras finales y sin distinguir mayusculas (Windows). */
+function normalizePath(path: string): string {
+  return path
+    .replace(/^\\\\\?\\/, "")
+    .replace(/[\\/]+$/, "")
+    .toLowerCase();
+}
+
+/** La raiz elegida es la del ultimo analisis: solo entonces se ofrece "Analizar de nuevo". */
+function sameRoot(last: FolderScanSummary | null, folderMode: boolean, pickedPath: string | null): boolean {
+  if (last === null) return false;
+  if (!folderMode) return last.root.kind === "system_drive";
+  return (
+    last.root.kind === "picked" && pickedPath !== null && normalizePath(last.root.path) === normalizePath(pickedPath)
+  );
 }
 
 /**
@@ -45,7 +62,11 @@ export function DiskScreen() {
   const scanId = last?.scanId ?? 0;
   const parentBytes = folders.page?.folder.sizeBytes ?? 0;
   const folderMode = advanced && scan.rootChoice === "folder";
-  const scanLabel = last !== null ? es.disk.scanAgain : folderMode ? es.disk.scanFolder : es.disk.scanDisk;
+  const scanLabel = sameRoot(last, folderMode, scan.picked?.path ?? null)
+    ? es.disk.scanAgain
+    : folderMode
+      ? es.disk.scanFolder
+      : es.disk.scanDisk;
 
   return (
     <div className="flex flex-col gap-4">

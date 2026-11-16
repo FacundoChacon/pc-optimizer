@@ -411,3 +411,49 @@ describe("Avanzado: foco al navegar (revision UX 8.8)", () => {
     expect(crumbs.contains(document.activeElement)).toBe(false);
   });
 });
+
+describe("Avanzado: etiqueta del boton segun la raiz elegida", () => {
+  const pickedRoot = (path: string) => diskSummary({ root: { kind: "picked", path, folderId: 1 } });
+  const scanLabelButton = () => screen.getByRole("button", { name: /Analizar/ });
+
+  it("con el disco elegido y el ultimo analisis del disco dice 'Analizar de nuevo'", async () => {
+    await openResults();
+    expect(scanLabelButton()).toHaveTextContent(t.scanAgain);
+  });
+
+  it("con una carpeta distinta a la del ultimo analisis dice 'Analizar carpeta'", async () => {
+    await openResults({
+      diskLast: pickedRoot("C:\Games"),
+      pickQueue: [{ status: "picked", pickId: 4, path: "C:\Other" }],
+    });
+    fireEvent.click(folderRadio());
+    fireEvent.click(pickButton());
+    await screen.findByText(format(t.pickedPath, { path: "C:\Other" }));
+    expect(scanLabelButton()).toHaveTextContent(t.scanFolder);
+    expect(scanLabelButton()).not.toHaveTextContent(t.scanAgain);
+  });
+
+  it("con la misma carpeta del ultimo analisis (aunque cambie mayuscula o barra final) dice 'Analizar de nuevo'", async () => {
+    await openResults({
+      diskLast: pickedRoot("C:\Games"),
+      pickQueue: [{ status: "picked", pickId: 4, path: "c:\games\\" }],
+    });
+    fireEvent.click(folderRadio());
+    fireEvent.click(pickButton());
+    await screen.findByText(format(t.pickedPath, { path: "c:\games\\" }));
+    expect(scanLabelButton()).toHaveTextContent(t.scanAgain);
+  });
+
+  it("con el disco elegido pero el ultimo analisis de una carpeta dice 'Analizar disco C:'", async () => {
+    await openResults({ diskLast: pickedRoot("C:\Games") });
+    expect(scanLabelButton()).toHaveTextContent(t.scanDisk);
+  });
+
+  it("con una carpeta elegida y el ultimo analisis del disco dice 'Analizar carpeta'", async () => {
+    await openResults({ pickQueue: [{ status: "picked", pickId: 4, path: "C:\Games" }] });
+    fireEvent.click(folderRadio());
+    fireEvent.click(pickButton());
+    await screen.findByText(format(t.pickedPath, { path: "C:\Games" }));
+    expect(scanLabelButton()).toHaveTextContent(t.scanFolder);
+  });
+});
