@@ -249,7 +249,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/10_preguntas_abiertas.md` (PA-01)
 
 ### [C-07] `disk-usage-scanner`
-- **Estado**: `[~]` en curso (rama `feat/disk-usage-scanner`)
+- **Estado**: `[x]` completado (smoke guiado con el dueño 2026-11-16; rama `feat/disk-usage-scanner`)
 - **Scope**:
   - Nota C-05: aquí (primer consumidor) va el selector de carpeta como alternativa a drag & drop (UIPI), junto con C-21 si llega antes.
   - Migración 004 (la 002 la tomó C-08 y la 003 C-11, que se implementó antes; el runner exige versiones contiguas; si C-07 mergea primero se renumeran): `folder_snapshot` (UNIQUE(scan_id, path), índice (path, scan_id), `parent_id` autorreferencia).
@@ -260,7 +260,8 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - Tests: árbol temporal, junction no seguida, cancelación, carpeta sin permisos.
   - Decisiones aprobadas (2026-11-14, D-01..D-25 todas según la recomendación): raíz `C:\` (simple y avanzado) + una carpeta elegida (solo avanzado) con selector `IFileOpenDialog` propio (sin plugin `dialog`) y `pickId` (la interfaz nunca envía rutas); `check_analysis_root` en `path-protection`; perfiles ajenos, `$Recycle.Bin` y SVI opacos; hasta 20 000 carpetas y 500 archivos grandes persistidos; migración 004 (`folder_scan_result`, `folder_snapshot`, `large_file`, `folder_scan_issue`); 6 comandos nuevos y 6 permisos (27 en total).
   - Desvíos: recorrido sobre el puerto `FileSystem` y no `walkdir` (D-05); `start_folder_scan` propio en vez de `start_scan(kind=folders)` (D-18); lista con barras SVG y treemap diferido (D-12); "enviar a revisión de limpieza" = enlace a Limpieza solo para ubicaciones de la whitelist (D-14); "Mostrar en el Explorador" con `SHOpenFolderAndSelectItems` (D-13).
-  - Pendiente del dueño: `walkdir` queda sin consumidor; quitarla cambia `Cargo.lock` y es decisión aparte.
+  - `walkdir` quitada del `Cargo.toml` en el cierre (aprobado por el dueño, commit `6714efc`).
+  - Desvíos del smoke (2026-11-16): el paso 14 (release elevado con selector y Explorador) NO se ejecutó (WebView2 no respeta los argumentos de CDP en release elevado y UIPI bloquea a UIA; el dueño canceló el segundo UAC); la medición de D-21 en release (`C:` completo ≤ 5 min) queda PENDIENTE y debe hacerse antes de C-13 (en debug: 420 s, 1,53 M archivos, pico 127 MB). El release ignora `PCOPT_DATA_DIR`. Corregido en el cierre (commit `2b20532`): el botón dice "Analizar de nuevo" solo si la raíz elegida es la del último resultado. Detalle en `design.md` §Apply notes.
   - Nota para C-12: el dashboard puede consumir `get_last_folder_scan`. Nota para C-25: el índice `(path, scan_id)` ya existe; la retención de snapshots para tendencias la define C-25 (hoy solo el último análisis conserva carpetas).
 - **Dependencias**: `C-02, C-03, C-04`
 - **Governance**: MEDIO (MEDIUM)

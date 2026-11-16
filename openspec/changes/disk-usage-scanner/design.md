@@ -794,5 +794,13 @@ TestingLibraryElementError: Unable to find an accessible element with the role "
 - El resumen `cancelled` lleva `root.path = ""` y contadores en cero (el dominio no devuelve la ruta al cancelar).
 - `validate_root`/`AnalysisRoot` en `domain/disk_usage/root.rs` (no previsto en la lista de módulos de D-22); el scanner y los comandos lo comparten.
 - Los comandos IPC no incluyen `core:*` ni plugins; `pick_folder_root` es un comando genérico sobre el `Runtime` para obtener el `HWND` de la ventana principal (`WebviewWindow::hwnd()`; `windows` 0.62.2 es el único `windows` del lock).
-- `walkdir` sigue sin consumidor: quitarla cambiaría `Cargo.lock` y queda como decisión aparte del dueño.
+- `walkdir` quitada en el cierre (aprobado por el dueño; commit `6714efc`): sin consumidor, `Cargo.lock` solo pierde la entrada raíz.
 - Pendiente de observar en el smoke: la alerta de "Mostrar en el Explorador" aparece arriba de la pantalla, lejos del botón (8.8).
+
+### 9.3 Resultados del smoke guiado (2026-11-16)
+
+- Ejecución en debug conducida por CDP con base temporal. Pasos 1–12 en verde. El selector nativo (`IFileOpenDialog`) se condujo con UIA + `WM_SETTEXT` sobre el control 1152 + `BM_CLICK` sobre el botón 1 (UIA los expone como Pane sin patrones). "Mostrar en el Explorador" verificado con `Shell.Application` `Windows()` (carpeta abierta y `SelectedItems`). Junction rechazada (`reparse_point`); cancelar conserva el resultado anterior; 30 000 archivos en 307 ms.
+- Paso 13 (`C:` completo en debug): 420 s, pico 127 MB, 1,53 M archivos, 20 000 carpetas guardadas (truncado), base de 7,6 MB. D-04 se cumple: no hay rutas dentro de carpetas opacas. El objetivo de D-21 (≤ 5 min) aplica a release, así que este dato no es concluyente: la medición de D-21 en release queda PENDIENTE (hay que medirla antes de C-13).
+- Paso 14 (release elevado): NO completado. En el release elevado `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` no se respeta (sin CDP) y UIPI bloquea a UIA desde una sesión no elevada; el dueño canceló el segundo UAC y decidió detenerse. Además, el release ignora `PCOPT_DATA_DIR` (usa la base real en `%LOCALAPPDATA%\pc-optimizer\data.db`).
+- Hallazgo de UX: tras un análisis, el botón decía "Analizar de nuevo" aun con otra raíz elegida. Corregido en el cierre (commit `2b20532`): solo dice "Analizar de nuevo" si la raíz elegida es la del último resultado (disco o ruta normalizada sin mayúsculas ni barra final); si no, "Analizar disco C:" / "Analizar carpeta". La persistencia no cambia (D-10: una fila de resumen por análisis). 5 tests nuevos en `diskAdvanced.test.tsx` (RED: 3 fallos; GREEN: 114/114 en `src/tests/disk`).
+- Conteos finales del cierre: Vitest 592, `cargo test --lib` 1087 (+21 ignored), arquitectura 24, 27 permisos; fmt y clippy `-D warnings` limpios.
