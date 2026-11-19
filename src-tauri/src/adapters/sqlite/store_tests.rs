@@ -62,6 +62,30 @@ fn sqlite_store_should_satisfy_log_contracts() {
     });
 }
 
+#[test]
+fn sqlite_store_should_satisfy_contract_cleanup_runs() {
+    with_temp_stores(|make| {
+        contract::contract_cleanup_runs_group_rows_of_one_scan(make);
+        contract::contract_cleanup_runs_split_entries_without_scan(make);
+        contract::contract_cleanup_runs_empty_log_is_an_empty_list(make);
+        contract::contract_cleanup_runs_list_distinct_categories_and_keep_detail(make);
+        contract::contract_cleanup_runs_page_by_cursor_without_repeats(make);
+        contract::contract_cleanup_runs_same_timestamp_has_a_stable_order(make);
+        contract::contract_cleanup_runs_zero_limit_is_empty(make);
+        contract::contract_cleanup_runs_new_rows_move_a_run_to_the_top(make);
+    });
+}
+
+#[test]
+fn sqlite_store_should_satisfy_contract_cleanup_run_entries() {
+    with_temp_stores(|make| {
+        contract::contract_cleanup_run_entries_page_in_insertion_order(make);
+        contract::contract_cleanup_run_entries_entry_key_returns_only_that_row(make);
+        contract::contract_cleanup_run_entries_unknown_key_is_an_empty_page(make);
+        contract::contract_cleanup_run_entries_never_mix_other_scans(make);
+    });
+}
+
 // --- C-08: hallazgos de basura ---
 #[test]
 fn sqlite_store_should_satisfy_contract_junk_scan_round_trip() {
@@ -653,5 +677,61 @@ mod orphan_scans {
                 .unwrap();
             assert_eq!(rows, 0, "{table}");
         }
+    }
+}
+
+/// Benchmark de C-12 D-10: sin indice nuevo, la primera pagina de limpiezas y una pagina de
+/// items deben seguir siendo rapidas con 100 000 filas. Se corre a mano:
+/// `cargo test --locked --ignored --nocapture cleanup_runs_benchmark`.
+#[test]
+#[ignore = "mide rendimiento sobre 100 000 filas en un tempdir"]
+fn cleanup_runs_benchmark_should_page_100_000_rows_quickly() {
+    let dir = TempDir::new().unwrap();
+    let store = SqliteStore::open(&dir.path().join("data.db")).unwrap();
+    let rows: Vec<NewCleanupLogEntry> = (0..100_000_i64)
+        .map(|n| NewCleanupLogEntry {
+            ts: EpochMillis(1_000 + n),
+            category: "temp_user".into(),
+            path: format!(r"C:\Users\x\AppData\Local\Temp\file-{n}.tmp"),
+            size_bytes: 1_024,
+            outcome: CleanupOutcome::MovedToTrash,
+            scan_id: Some(ScanId(1 + n / 500)),
+            error_detail: None,
+        })
+        .collect();
+    store.append_cleanup_log(&rows).unwrap();
+
+    let started = std::time::Instant::now();
+    let runs = store.cleanup_runs(None, 50).unwrap();
+    let runs_ms = started.elapsed().as_millis();
+    let cursor = runs.last().map(|run| crate::domain::ports::RunCursor {
+        finished_at: run.finished_at,
+        key: run.key,
+    });
+    let started = std::time::Instant::now();
+    let second = store.cleanup_runs(cursor, 50).unwrap();
+    let second_ms = started.elapsed().as_millis();
+    let started = std::time::Instant::now();
+    let (total, page) = store
+        .cleanup_run_entries(
+            crate::domain::ports::CleanupRunKey::Scan(ScanId(100)),
+            200,
+            200,
+        )
+        .unwrap();
+    let entries_ms = started.elapsed().as_millis();
+
+    println!(
+        "BENCH first runs page ({} runs): {runs_ms} ms; second page ({}): {second_ms} ms; entries page ({} of {total}): {entries_ms} ms",
+        runs.len(),
+        second.len(),
+        page.len()
+    );
+    assert_eq!(runs.len(), 50);
+    assert_eq!(page.len(), 200);
+    // El limite de 100 ms (D-10) aplica al binario optimizado: en debug SQLite se compila sin
+    // optimizar y tarda ~1,7 veces mas.
+    if !cfg!(debug_assertions) {
+        assert!(runs_ms < 100, "la pagina de limpiezas tardo {runs_ms} ms");
     }
 }

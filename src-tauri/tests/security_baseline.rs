@@ -578,6 +578,9 @@ fn the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_co
         "allow-reveal-in-explorer",
         "allow-start-monitor-stream",
         "allow-stop-monitor-stream",
+        // C-12: exactamente dos permisos propios nuevos, de solo lectura, para el historial.
+        "allow-list-cleanup-runs",
+        "allow-list-cleanup-entries",
     ] {
         assert_eq!(
             permissions.iter().filter(|p| *p == expected).count(),
@@ -590,7 +593,7 @@ fn the_empty_recycle_bin_and_duplicate_commands_should_be_granted_without_any_co
             .iter()
             .filter(|p| p.starts_with("allow-"))
             .count(),
-        29
+        31
     );
     assert!(permissions.iter().all(|p| !p.starts_with("core:")));
 }

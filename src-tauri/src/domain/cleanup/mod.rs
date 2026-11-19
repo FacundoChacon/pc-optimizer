@@ -26,6 +26,7 @@
 
 pub mod detail;
 pub mod execute;
+pub mod history;
 pub mod lifecycle;
 pub mod model;
 pub mod preview;

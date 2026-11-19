@@ -49,8 +49,8 @@ pub use sensors::{
 pub use session::SessionIdentity;
 pub use shell::{Explorer, FolderPicker};
 pub use store::{
-    CleanupLogStore, DuplicateStore, FolderStore, JunkFindingStore, ScanStore, SettingsStore,
-    Store, StoreError,
+    CleanupLogStore, CleanupRunKey, CleanupRunRow, DuplicateStore, FolderStore, JunkFindingStore,
+    OutcomeCounts, RunCursor, ScanStore, SettingsStore, Store, StoreError,
 };
 pub use trash::{Trash, TrashError};
 pub use volume::{VolumeSpace, VolumeSpaceInfo};

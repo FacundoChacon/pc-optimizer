@@ -33,7 +33,8 @@ Gobernanza: **LOW** (UI, catálogos, tipos).
 |----------|--------|----------|------|
 | Inicio / Dashboard | Score + tarjetas | Gauges + gráficos + sidebar | v0.1 / v0.2 |
 | Espacio en disco | Resumen + top 5 | Treemap/lista completa, top archivos | v0.1 |
-| Limpieza | Tarjetas por categoría + preview | Rutas, categorías, log | v0.1 |
+| Limpieza | Tarjetas por categoría + preview | Rutas, categorías (el log pasa a Historial, C-12) | v0.1 |
+| Historial | Limpiezas en frase llana, sin rutas | Conteos con códigos y tabla de ítems con rutas completas | v0.1 |
 | Duplicados | Grupos con elección guiada (sin preselección ni recomendación) | Carpetas y tamaño mínimo, hashes, rutas completas, casillas "Conservar", filtros por carpeta y tamaño mínimo | v0.1 |
 | Inicio de Windows | Lista con impacto | Detalle de entradas | v0.2 |
 | Mejoras | Cartas con riesgo/impacto + undo | Snapshots, historial | v0.2 |
@@ -56,6 +57,12 @@ Gobernanza: **LOW** (UI, catálogos, tipos).
 - Componentes compartidos con variantes `simple`/`advanced` en vez de pantallas duplicadas (**Suposición**).
 - Gráficos: componentes SVG propios, sin librería (PA-01 resuelta en C-06): render eficiente de series en vivo y tema oscuro por tokens.
 - Drag & drop desde el Explorador no funciona hacia ventanas elevadas (UIPI): ofrecer selector de carpeta.
+
+## Nota C-12: Inicio e Historial
+
+- Inicio simple: "Limpiar ahora" (única acción primaria, con su ayuda) y tres tarjetas (Espacio, Basura, Memoria) con "Ver detalle". Sin gráficos ni score (llega con C-20).
+- Inicio avanzado: medidores de C-06 y un gráfico de CPU y memoria de 5 min, tabla de basura por categoría, resumen del último análisis de disco y las 3 últimas limpiezas; misma acción primaria.
+- Historial: entrada de navegación entre Duplicados y Monitor, en ambos modos. El log de limpieza ya no vive en Limpieza.
 
 ## Nota C-07: pantalla Espacio en disco
 

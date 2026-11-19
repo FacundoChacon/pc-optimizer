@@ -60,6 +60,73 @@ pub trait ScanStore {
     fn list_scans(&self) -> Result<Vec<Scan>, StoreError>;
 }
 
+/// Clave de una limpieza del historial (C-12, D-09): las filas con el mismo `scan_id` forman una
+/// limpieza; cada fila sin `scan_id` (p. ej. el vaciado de la Papelera) es una limpieza propia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupRunKey {
+    Scan(ScanId),
+    Entry(i64),
+}
+
+impl CleanupRunKey {
+    /// Posicion de la clave en el orden total (tipo y luego identificador): el desempate del
+    /// orden descendente y del cursor.
+    fn rank(self) -> (u8, i64) {
+        match self {
+            Self::Entry(id) => (0, id),
+            Self::Scan(id) => (1, id.0),
+        }
+    }
+}
+
+impl PartialOrd for CleanupRunKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CleanupRunKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+/// Cursor de paginacion: la ultima limpieza vista (fecha de su ultima fila y clave).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunCursor {
+    pub finished_at: EpochMillis,
+    pub key: CleanupRunKey,
+}
+
+/// Cantidad de filas por resultado de una limpieza.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutcomeCounts {
+    pub moved_to_trash: u64,
+    pub skipped_locked: u64,
+    pub skipped_protected: u64,
+    pub skipped_cloud: u64,
+    pub error: u64,
+    pub recycle_bin_emptied: u64,
+}
+
+/// Una limpieza agrupada del log, sin rutas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupRunRow {
+    pub key: CleanupRunKey,
+    pub started_at: EpochMillis,
+    pub finished_at: EpochMillis,
+    pub entry_count: u64,
+    pub outcomes: OutcomeCounts,
+    /// Suma de `size_bytes` de las filas `moved_to_trash`.
+    pub moved_bytes: u64,
+    /// Suma de `size_bytes` de las filas `recycle_bin_emptied`.
+    pub emptied_bytes: u64,
+    /// Codigo `error_detail` de la fila `recycle_bin_emptied` (`partial`, `unverified`), si hay.
+    pub empty_detail: Option<String>,
+    /// Categorias presentes, sin repetir y ordenadas.
+    pub categories: Vec<String>,
+}
+
 /// Bitacora de limpieza append-only: no hay metodos de modificacion ni borrado.
 pub trait CleanupLogStore {
     /// Atomico: si una entrada es invalida no se guarda ninguna.
@@ -74,6 +141,22 @@ pub trait CleanupLogStore {
         scan_id: ScanId,
         since: EpochMillis,
     ) -> Result<Option<EpochMillis>, StoreError>;
+    /// Limpiezas agrupadas, la mas reciente primero (fecha de su ultima fila y luego clave
+    /// descendentes), con `limit` como maximo y solo las anteriores a `before` (cursor
+    /// exclusivo). Solo lee (C-12, D-09).
+    fn cleanup_runs(
+        &self,
+        before: Option<RunCursor>,
+        limit: u32,
+    ) -> Result<Vec<CleanupRunRow>, StoreError>;
+    /// Filas de una limpieza en orden de insercion (`id` ascendente) con su total. Una clave
+    /// sin filas da `(0, [])`. Solo lee (C-12, D-09).
+    fn cleanup_run_entries(
+        &self,
+        key: CleanupRunKey,
+        offset: u64,
+        limit: u32,
+    ) -> Result<(u64, Vec<CleanupLogEntry>), StoreError>;
 }
 
 /// Hallazgos de basura (C-08). Solo registros de la base: ninguna operacion actua sobre archivos.

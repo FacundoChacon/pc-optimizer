@@ -1056,6 +1056,23 @@ impl CleanupLogStore for FailingLog {
     ) -> Result<Option<EpochMillis>, StoreError> {
         self.inner.scan_cleaned_at(scan_id, since)
     }
+
+    fn cleanup_runs(
+        &self,
+        before: Option<crate::domain::ports::RunCursor>,
+        limit: u32,
+    ) -> Result<Vec<crate::domain::ports::CleanupRunRow>, StoreError> {
+        self.inner.cleanup_runs(before, limit)
+    }
+
+    fn cleanup_run_entries(
+        &self,
+        key: crate::domain::ports::CleanupRunKey,
+        offset: u64,
+        limit: u32,
+    ) -> Result<(u64, Vec<crate::domain::model::CleanupLogEntry>), StoreError> {
+        self.inner.cleanup_run_entries(key, offset, limit)
+    }
 }
 
 #[test]

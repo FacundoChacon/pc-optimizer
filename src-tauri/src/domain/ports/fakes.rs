@@ -20,17 +20,18 @@ use crate::domain::junk::model::{
     StoredFinding,
 };
 use crate::domain::model::{
-    CleanupLogEntry, DEFAULT_SETTINGS, EpochMillis, NewCleanupLogEntry, NewScan, SCAN_RETENTION,
-    Scan, ScanId, ScanKind, ScanStatus, scans_to_prune,
+    CleanupLogEntry, CleanupOutcome, DEFAULT_SETTINGS, EpochMillis, NewCleanupLogEntry, NewScan,
+    SCAN_RETENTION, Scan, ScanId, ScanKind, ScanStatus, scans_to_prune,
 };
 use crate::domain::monitor::runner::Ticker;
 use crate::domain::ports::recycle_bin_empty::EmptyError;
 use crate::domain::ports::{
-    AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, DiskIoCounters, DuplicateStore,
-    EntryKind, FileIdentity, FileMeta, FileSystem, FolderStore, JunkFindingStore, MemoryReading,
-    MonotonicClock, PortError, Reading, RecycleBinEmptier, RecycleBinInfo, RecycleBinPolicy,
-    RecycleBinUsage, ScanStore, SensorReading, Sensors, SessionIdentity, SettingsStore, StoreError,
-    Trash, TrashError, Unavailable, VolumeReading,
+    AncestorPin, BinAvailability, CleanupLogStore, CleanupRunKey, CleanupRunRow, Clock, DirEntry,
+    DiskIoCounters, DuplicateStore, EntryKind, FileIdentity, FileMeta, FileSystem, FolderStore,
+    JunkFindingStore, MemoryReading, MonotonicClock, OutcomeCounts, PortError, Reading,
+    RecycleBinEmptier, RecycleBinInfo, RecycleBinPolicy, RecycleBinUsage, RunCursor, ScanStore,
+    SensorReading, Sensors, SessionIdentity, SettingsStore, StoreError, Trash, TrashError,
+    Unavailable, VolumeReading,
 };
 use crate::domain::privileges::UserSid;
 use crate::domain::protection::context::ContentFolder;
@@ -1049,6 +1050,91 @@ impl CleanupLogStore for InMemoryStore {
             .filter(|entry| entry.scan_id == Some(scan_id) && entry.ts >= since)
             .map(|entry| entry.ts)
             .max())
+    }
+
+    fn cleanup_runs(
+        &self,
+        before: Option<RunCursor>,
+        limit: u32,
+    ) -> Result<Vec<CleanupRunRow>, StoreError> {
+        let log = self.lock()?.log.clone();
+        let mut runs: BTreeMap<CleanupRunKey, CleanupRunRow> = BTreeMap::new();
+        for entry in &log {
+            let key = entry
+                .scan_id
+                .map_or(CleanupRunKey::Entry(entry.id), CleanupRunKey::Scan);
+            let run = runs.entry(key).or_insert_with(|| CleanupRunRow {
+                key,
+                started_at: entry.ts,
+                finished_at: entry.ts,
+                entry_count: 0,
+                outcomes: OutcomeCounts::default(),
+                moved_bytes: 0,
+                emptied_bytes: 0,
+                empty_detail: None,
+                categories: Vec::new(),
+            });
+            run.started_at = run.started_at.min(entry.ts);
+            run.finished_at = run.finished_at.max(entry.ts);
+            run.entry_count += 1;
+            match entry.outcome {
+                CleanupOutcome::MovedToTrash => {
+                    run.outcomes.moved_to_trash += 1;
+                    run.moved_bytes += entry.size_bytes;
+                }
+                CleanupOutcome::SkippedLocked => run.outcomes.skipped_locked += 1,
+                CleanupOutcome::SkippedProtected => run.outcomes.skipped_protected += 1,
+                CleanupOutcome::SkippedCloud => run.outcomes.skipped_cloud += 1,
+                CleanupOutcome::Error => run.outcomes.error += 1,
+                CleanupOutcome::RecycleBinEmptied => {
+                    run.outcomes.recycle_bin_emptied += 1;
+                    run.emptied_bytes += entry.size_bytes;
+                    if run.empty_detail.is_none() {
+                        run.empty_detail.clone_from(&entry.error_detail);
+                    }
+                }
+            }
+            if !run.categories.contains(&entry.category) {
+                run.categories.push(entry.category.clone());
+            }
+        }
+        let mut runs: Vec<CleanupRunRow> = runs.into_values().collect();
+        for run in &mut runs {
+            run.categories.sort();
+        }
+        runs.retain(|run| {
+            before
+                .is_none_or(|cursor| (run.finished_at, run.key) < (cursor.finished_at, cursor.key))
+        });
+        runs.sort_by_key(|run| std::cmp::Reverse((run.finished_at, run.key)));
+        runs.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(runs)
+    }
+
+    fn cleanup_run_entries(
+        &self,
+        key: CleanupRunKey,
+        offset: u64,
+        limit: u32,
+    ) -> Result<(u64, Vec<CleanupLogEntry>), StoreError> {
+        let mut rows: Vec<CleanupLogEntry> = self
+            .lock()?
+            .log
+            .iter()
+            .filter(|entry| match key {
+                CleanupRunKey::Scan(id) => entry.scan_id == Some(id),
+                CleanupRunKey::Entry(id) => entry.scan_id.is_none() && entry.id == id,
+            })
+            .cloned()
+            .collect();
+        rows.sort_by_key(|entry| entry.id);
+        let total = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+        let page = rows
+            .into_iter()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .collect();
+        Ok((total, page))
     }
 }
 
@@ -2505,6 +2591,28 @@ mod tests {
     fn in_memory_store_should_satisfy_log_contracts() {
         contract::contract_log(InMemoryStore::new);
         contract::contract_log_batch_is_atomic(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_cleanup_runs() {
+        contract::contract_cleanup_runs_group_rows_of_one_scan(InMemoryStore::new);
+        contract::contract_cleanup_runs_split_entries_without_scan(InMemoryStore::new);
+        contract::contract_cleanup_runs_empty_log_is_an_empty_list(InMemoryStore::new);
+        contract::contract_cleanup_runs_list_distinct_categories_and_keep_detail(
+            InMemoryStore::new,
+        );
+        contract::contract_cleanup_runs_page_by_cursor_without_repeats(InMemoryStore::new);
+        contract::contract_cleanup_runs_same_timestamp_has_a_stable_order(InMemoryStore::new);
+        contract::contract_cleanup_runs_zero_limit_is_empty(InMemoryStore::new);
+        contract::contract_cleanup_runs_new_rows_move_a_run_to_the_top(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_cleanup_run_entries() {
+        contract::contract_cleanup_run_entries_page_in_insertion_order(InMemoryStore::new);
+        contract::contract_cleanup_run_entries_entry_key_returns_only_that_row(InMemoryStore::new);
+        contract::contract_cleanup_run_entries_unknown_key_is_an_empty_page(InMemoryStore::new);
+        contract::contract_cleanup_run_entries_never_mix_other_scans(InMemoryStore::new);
     }
 
     #[test]

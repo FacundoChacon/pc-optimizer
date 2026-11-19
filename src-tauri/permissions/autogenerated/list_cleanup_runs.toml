@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-cleanup-runs"
+description = "Enables the list_cleanup_runs command without any pre-configured scope."
+commands.allow = ["list_cleanup_runs"]
+
+[[permission]]
+identifier = "deny-list-cleanup-runs"
+description = "Denies the list_cleanup_runs command without any pre-configured scope."
+commands.deny = ["list_cleanup_runs"]

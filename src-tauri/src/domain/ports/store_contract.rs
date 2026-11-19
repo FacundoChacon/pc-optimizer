@@ -13,7 +13,7 @@ use crate::domain::model::{
     SCAN_RETENTION, ScanId, ScanKind, ScanStatus, ScanTrigger,
 };
 use crate::domain::ports::FileIdentity;
-use crate::domain::ports::store::{Store, StoreError};
+use crate::domain::ports::store::{CleanupRunKey, RunCursor, Store, StoreError};
 
 fn new_scan(started: i64) -> NewScan {
     NewScan {
@@ -816,4 +816,428 @@ pub(crate) fn contract_empty_bin_entry_does_not_mark_the_scan_as_cleaned<S: Stor
         store.scan_cleaned_at(scan, since).unwrap(),
         Some(EpochMillis(1_600))
     );
+}
+
+// ---- C-12: lectura agrupada del log ----
+
+fn run_row(
+    ts: i64,
+    category: &str,
+    outcome: CleanupOutcome,
+    size_bytes: u64,
+    scan_id: Option<ScanId>,
+) -> NewCleanupLogEntry {
+    NewCleanupLogEntry {
+        ts: EpochMillis(ts),
+        category: category.into(),
+        path: format!(r"C:\x\{ts}-{size_bytes}"),
+        size_bytes,
+        outcome,
+        scan_id,
+        error_detail: None,
+    }
+}
+
+pub(crate) fn contract_cleanup_runs_group_rows_of_one_scan<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    let scan = Some(ScanId(7));
+    store
+        .append_cleanup_log(&[
+            run_row(1_000, "temp_user", CleanupOutcome::MovedToTrash, 100, scan),
+            run_row(1_010, "temp_user", CleanupOutcome::MovedToTrash, 200, scan),
+            run_row(1_020, "temp_user", CleanupOutcome::SkippedLocked, 50, scan),
+        ])
+        .unwrap();
+
+    let runs = store.cleanup_runs(None, 10).unwrap();
+
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    assert_eq!(run.key, CleanupRunKey::Scan(ScanId(7)));
+    assert_eq!(run.entry_count, 3);
+    assert_eq!(run.outcomes.moved_to_trash, 2);
+    assert_eq!(run.outcomes.skipped_locked, 1);
+    assert_eq!(run.moved_bytes, 300);
+    assert_eq!(run.started_at, EpochMillis(1_000));
+    assert_eq!(run.finished_at, EpochMillis(1_020));
+}
+
+pub(crate) fn contract_cleanup_runs_split_entries_without_scan<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    store
+        .append_cleanup_log(&[
+            run_row(
+                2_000,
+                "recycle_bin",
+                CleanupOutcome::RecycleBinEmptied,
+                1_000,
+                None,
+            ),
+            run_row(
+                3_000,
+                "recycle_bin",
+                CleanupOutcome::RecycleBinEmptied,
+                2_000,
+                None,
+            ),
+        ])
+        .unwrap();
+
+    let runs = store.cleanup_runs(None, 10).unwrap();
+
+    assert_eq!(runs.len(), 2);
+    // Mas reciente primero: la fila de ts 3 000 se inserto segunda (id 2).
+    assert_eq!(runs[0].key, CleanupRunKey::Entry(2));
+    assert_eq!(runs[0].emptied_bytes, 2_000);
+    assert_eq!(runs[0].outcomes.recycle_bin_emptied, 1);
+    assert_eq!(runs[0].moved_bytes, 0);
+    assert_eq!(runs[1].key, CleanupRunKey::Entry(1));
+    assert_eq!(runs[1].emptied_bytes, 1_000);
+}
+
+pub(crate) fn contract_cleanup_runs_empty_log_is_an_empty_list<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    assert!(store.cleanup_runs(None, 10).unwrap().is_empty());
+}
+
+pub(crate) fn contract_cleanup_runs_list_distinct_categories_and_keep_detail<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    let scan = Some(ScanId(3));
+    let emptied = NewCleanupLogEntry {
+        error_detail: Some("partial".into()),
+        ..run_row(
+            5_000,
+            "recycle_bin",
+            CleanupOutcome::RecycleBinEmptied,
+            700,
+            None,
+        )
+    };
+    store
+        .append_cleanup_log(&[
+            run_row(4_000, "temp_user", CleanupOutcome::MovedToTrash, 10, scan),
+            run_row(
+                4_001,
+                "browser_cache_edge",
+                CleanupOutcome::MovedToTrash,
+                20,
+                scan,
+            ),
+            run_row(4_002, "temp_user", CleanupOutcome::SkippedCloud, 30, scan),
+            run_row(
+                4_003,
+                "temp_user",
+                CleanupOutcome::SkippedProtected,
+                40,
+                scan,
+            ),
+            run_row(4_004, "temp_user", CleanupOutcome::Error, 50, scan),
+            emptied,
+        ])
+        .unwrap();
+
+    let runs = store.cleanup_runs(None, 10).unwrap();
+
+    assert_eq!(runs.len(), 2);
+    let scan_run = runs
+        .iter()
+        .find(|run| run.key == CleanupRunKey::Scan(ScanId(3)))
+        .unwrap();
+    assert_eq!(scan_run.categories, ["browser_cache_edge", "temp_user"]);
+    assert_eq!(scan_run.outcomes.skipped_cloud, 1);
+    assert_eq!(scan_run.outcomes.skipped_protected, 1);
+    assert_eq!(scan_run.outcomes.error, 1);
+    assert_eq!(scan_run.empty_detail, None);
+    let bin_run = runs
+        .iter()
+        .find(|run| matches!(run.key, CleanupRunKey::Entry(_)))
+        .unwrap();
+    assert_eq!(bin_run.empty_detail.as_deref(), Some("partial"));
+    assert_eq!(bin_run.categories, ["recycle_bin"]);
+}
+
+/// Cursor de la ultima limpieza de una pagina.
+fn cursor_after(run: &crate::domain::ports::store::CleanupRunRow) -> RunCursor {
+    RunCursor {
+        finished_at: run.finished_at,
+        key: run.key,
+    }
+}
+
+fn seed_five_runs<S: Store>(store: &S) {
+    for scan in 1..=5_i64 {
+        store
+            .append_cleanup_log(&[run_row(
+                scan * 1_000,
+                "temp_user",
+                CleanupOutcome::MovedToTrash,
+                10,
+                Some(ScanId(scan)),
+            )])
+            .unwrap();
+    }
+}
+
+pub(crate) fn contract_cleanup_runs_page_by_cursor_without_repeats<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    seed_five_runs(&store);
+
+    let first = store.cleanup_runs(None, 2).unwrap();
+    let second = store
+        .cleanup_runs(Some(cursor_after(&first[1])), 2)
+        .unwrap();
+    let third = store
+        .cleanup_runs(Some(cursor_after(&second[1])), 2)
+        .unwrap();
+
+    let keys = |page: &[crate::domain::ports::store::CleanupRunRow]| {
+        page.iter().map(|run| run.key).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        keys(&first),
+        [
+            CleanupRunKey::Scan(ScanId(5)),
+            CleanupRunKey::Scan(ScanId(4))
+        ]
+    );
+    assert_eq!(
+        keys(&second),
+        [
+            CleanupRunKey::Scan(ScanId(3)),
+            CleanupRunKey::Scan(ScanId(2))
+        ]
+    );
+    assert_eq!(keys(&third), [CleanupRunKey::Scan(ScanId(1))]);
+    assert!(
+        store
+            .cleanup_runs(Some(cursor_after(&third[0])), 2)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+pub(crate) fn contract_cleanup_runs_same_timestamp_has_a_stable_order<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    // Dos limpiezas de escaneo y una fila suelta, todas con la misma fecha maxima.
+    store
+        .append_cleanup_log(&[
+            run_row(
+                9_000,
+                "temp_user",
+                CleanupOutcome::MovedToTrash,
+                1,
+                Some(ScanId(10)),
+            ),
+            run_row(
+                9_000,
+                "temp_user",
+                CleanupOutcome::MovedToTrash,
+                2,
+                Some(ScanId(20)),
+            ),
+            run_row(
+                9_000,
+                "recycle_bin",
+                CleanupOutcome::RecycleBinEmptied,
+                3,
+                None,
+            ),
+        ])
+        .unwrap();
+
+    let all = store.cleanup_runs(None, 10).unwrap();
+    let keys: Vec<_> = all.iter().map(|run| run.key).collect();
+    assert_eq!(
+        keys,
+        [
+            CleanupRunKey::Scan(ScanId(20)),
+            CleanupRunKey::Scan(ScanId(10)),
+            CleanupRunKey::Entry(3),
+        ]
+    );
+
+    // Paginando de a una no se pierde ninguna ni se repite.
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = store.cleanup_runs(cursor, 1).unwrap();
+        let Some(run) = page.first() else { break };
+        seen.push(run.key);
+        cursor = Some(cursor_after(run));
+    }
+    assert_eq!(seen, keys);
+}
+
+pub(crate) fn contract_cleanup_runs_zero_limit_is_empty<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    seed_five_runs(&store);
+    assert!(store.cleanup_runs(None, 0).unwrap().is_empty());
+}
+
+/// Documenta el comportamiento: una limpieza con filas nuevas sube al principio (su fecha
+/// maxima cambia), por lo que ya no queda "despues" del cursor viejo.
+pub(crate) fn contract_cleanup_runs_new_rows_move_a_run_to_the_top<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    seed_five_runs(&store);
+    store
+        .append_cleanup_log(&[run_row(
+            9_999,
+            "duplicates",
+            CleanupOutcome::MovedToTrash,
+            5,
+            Some(ScanId(1)),
+        )])
+        .unwrap();
+
+    let top = store.cleanup_runs(None, 1).unwrap();
+
+    assert_eq!(top[0].key, CleanupRunKey::Scan(ScanId(1)));
+    assert_eq!(top[0].entry_count, 2);
+    assert_eq!(top[0].categories, ["duplicates", "temp_user"]);
+}
+
+pub(crate) fn contract_cleanup_run_entries_page_in_insertion_order<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    let scan = Some(ScanId(7));
+    let rows: Vec<NewCleanupLogEntry> = (0..250)
+        .map(|n| {
+            run_row(
+                1_000 + n,
+                "temp_user",
+                CleanupOutcome::MovedToTrash,
+                10,
+                scan,
+            )
+        })
+        .collect();
+    store.append_cleanup_log(&rows).unwrap();
+
+    let (total, page) = store
+        .cleanup_run_entries(CleanupRunKey::Scan(ScanId(7)), 200, 100)
+        .unwrap();
+
+    assert_eq!(total, 250);
+    assert_eq!(page.len(), 50);
+    assert_eq!(page[0].path, rows[200].path);
+    assert_eq!(page[49].path, rows[249].path);
+    assert!(page.windows(2).all(|pair| pair[0].id < pair[1].id));
+}
+
+pub(crate) fn contract_cleanup_run_entries_entry_key_returns_only_that_row<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    store
+        .append_cleanup_log(&[
+            run_row(
+                1_000,
+                "temp_user",
+                CleanupOutcome::MovedToTrash,
+                5,
+                Some(ScanId(1)),
+            ),
+            run_row(
+                2_000,
+                "recycle_bin",
+                CleanupOutcome::RecycleBinEmptied,
+                900,
+                None,
+            ),
+            run_row(
+                3_000,
+                "recycle_bin",
+                CleanupOutcome::RecycleBinEmptied,
+                800,
+                None,
+            ),
+        ])
+        .unwrap();
+
+    let (total, page) = store
+        .cleanup_run_entries(CleanupRunKey::Entry(3), 0, 100)
+        .unwrap();
+
+    assert_eq!(total, 1);
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].id, 3);
+    assert_eq!(page[0].size_bytes, 800);
+    // Un identificador de fila que pertenece a un escaneo no es una limpieza `Entry`.
+    let (total, page) = store
+        .cleanup_run_entries(CleanupRunKey::Entry(1), 0, 100)
+        .unwrap();
+    assert_eq!((total, page.len()), (0, 0));
+}
+
+pub(crate) fn contract_cleanup_run_entries_unknown_key_is_an_empty_page<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    store
+        .append_cleanup_log(&[run_row(
+            1_000,
+            "temp_user",
+            CleanupOutcome::MovedToTrash,
+            5,
+            Some(ScanId(1)),
+        )])
+        .unwrap();
+
+    for key in [CleanupRunKey::Scan(ScanId(999)), CleanupRunKey::Entry(999)] {
+        let (total, page) = store.cleanup_run_entries(key, 0, 100).unwrap();
+        assert_eq!(total, 0, "{key:?}");
+        assert!(page.is_empty(), "{key:?}");
+    }
+}
+
+pub(crate) fn contract_cleanup_run_entries_never_mix_other_scans<S: Store>(make: impl Fn() -> S) {
+    let store = make();
+    store
+        .append_cleanup_log(&[
+            run_row(
+                1_000,
+                "temp_user",
+                CleanupOutcome::MovedToTrash,
+                1,
+                Some(ScanId(1)),
+            ),
+            run_row(
+                1_001,
+                "temp_user",
+                CleanupOutcome::MovedToTrash,
+                2,
+                Some(ScanId(2)),
+            ),
+            run_row(
+                1_002,
+                "temp_user",
+                CleanupOutcome::SkippedLocked,
+                3,
+                Some(ScanId(1)),
+            ),
+            run_row(
+                1_003,
+                "recycle_bin",
+                CleanupOutcome::RecycleBinEmptied,
+                4,
+                None,
+            ),
+        ])
+        .unwrap();
+
+    let (total, page) = store
+        .cleanup_run_entries(CleanupRunKey::Scan(ScanId(1)), 0, 100)
+        .unwrap();
+
+    assert_eq!(total, 2);
+    let sizes: Vec<u64> = page.iter().map(|entry| entry.size_bytes).collect();
+    assert_eq!(sizes, [1, 3]);
+    let (_, limited) = store
+        .cleanup_run_entries(CleanupRunKey::Scan(ScanId(1)), 1, 1)
+        .unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].size_bytes, 3);
 }

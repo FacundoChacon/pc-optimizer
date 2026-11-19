@@ -33,6 +33,8 @@
     "allow-pick-folder-root",
     "allow-reveal-in-explorer",
     "allow-start-monitor-stream",
-    "allow-stop-monitor-stream"
+    "allow-stop-monitor-stream",
+    "allow-list-cleanup-runs",
+    "allow-list-cleanup-entries"
   ]
 }

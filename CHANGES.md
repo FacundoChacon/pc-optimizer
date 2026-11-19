@@ -358,12 +358,14 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/06_funcionalidades.md` §US-011
 
 ### [C-12] `dashboard-simple-advanced`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[~]` en curso (rama `feat/dashboard-simple-advanced`; propuesta y decisiones aprobadas 2026-11-19)
 - **Scope**:
   - Dashboard v0.1 modo simple: tarjetas (Espacio, Basura, Memoria) con una acción primaria ("Limpiar ahora") y textos llanos desde el catálogo.
   - Dashboard modo avanzado: sidebar, gauges y métricas crudas de C-06, rutas y detalle; el score completo llega en C-20.
   - Pantalla de log de limpieza (rutas completas en avanzado).
   - Tests Vitest: una acción primaria por pantalla, alternancia de modo, estado "no disponible" explícito.
+  - Decisiones aprobadas (2026-11-19, todas con la opción A recomendada): D-01 Inicio simple con tres tarjetas y una sola acción "Limpiar ahora"; D-02 "Limpiar ahora" va a Limpieza (preview directo si el escaneo limpiable tiene < 60 min; si no, busca y abre el preview) y nunca ejecuta; D-05 Espacio y Memoria del monitor en vivo (respaldo: último análisis de disco), Basura del último escaneo; D-07 Inicio avanzado con medidores, 1 gráfico CPU/memoria, tabla de basura, resumen de disco y 3 últimas limpiezas; D-08 pantalla propia "Historial" entre Duplicados y Monitor; D-09 limpieza = mismo `scan_id` (o fila sin `scan_id`), 2 comandos de solo lectura (`list_cleanup_runs`, `list_cleanup_entries`; 31 permisos); D-10 sin migración ni índice, con benchmark `#[ignore]`; D-11 rutas ocultas en el backend en `mismatch`; D-17 smoke guiado con base temporal.
+  - Desvíos: la sidebar de avanzado ya existe desde C-04; "gauges" son los medidores lineales de C-06; el log sale de Limpieza y vive en Historial (ambos modos, rutas solo en avanzado); sin health score (C-20).
 - **Dependencias**: `C-06, C-07, C-08`
 - **Governance**: BAJO (LOW)
 - **Leer antes**:
