@@ -3,7 +3,7 @@ import type { JunkScanSummary } from "../../lib/ipc";
 import { es } from "../../shared/i18n/es";
 import { format, formatBytes, formatDateTime } from "../../shared/i18n/format";
 import { Card } from "../../shared/ui/Card";
-import { categoryName } from "../cleanup/categoryText";
+import { categoryName, categoryStatusText } from "../cleanup/categoryText";
 import type { JunkCardState } from "./cardState";
 import { Loading, Unavailable } from "./HomeCard";
 
@@ -51,7 +51,7 @@ export function JunkTable({ state, last }: { state: JunkCardState; last: JunkSca
                   <th scope="row" className="pr-3 py-1 font-normal">
                     {withCode(categoryName(category.category), category.category)}
                   </th>
-                  <td className="pr-3">{withCode(es.cleanup.status[category.status], category.status)}</td>
+                  <td className="pr-3">{withCode(categoryStatusText(category).label, category.status)}</td>
                   <td className="pr-3 text-right">{category.itemCount}</td>
                   <td className="pr-3 text-right">{formatBytes(category.sizeBytes)}</td>
                   <td className="pr-3 text-right">{category.skippedCount}</td>

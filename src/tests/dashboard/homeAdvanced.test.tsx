@@ -112,6 +112,28 @@ describe("Inicio avanzado: Basura y Disco", () => {
     expect(within(junk).getByText(format(adv.junkScanDate, { date: formatDateTime(1_800_000_005_000) }))).toBeInTheDocument();
   });
 
+  it("Registros antiguos no disponible usa el mismo texto que Limpieza, con su codigo", async () => {
+    await openAdvancedHome({
+      lastScan: junkSummary({ old_logs: { scope: "per_user", status: "unavailable" } }, { finishedAt: 1_800_000_005_000 }),
+    });
+    const junk = await screen.findByRole("region", { name: adv.junkTitle });
+    const row = within(await within(junk).findByRole("table")).getByRole("row", {
+      name: new RegExp(es.cleanup.categoryNames.old_logs),
+    });
+    expect(within(row).getByText(`${es.cleanup.status.notInThisVersion} (unavailable)`)).toBeInTheDocument();
+  });
+
+  it("otra categoria que no se pudo revisar conserva 'No se pudo revisar' con su codigo", async () => {
+    await openAdvancedHome({
+      lastScan: junkSummary({ temp_user: { scope: "per_user", status: "unavailable" } }, { finishedAt: 1_800_000_005_000 }),
+    });
+    const junk = await screen.findByRole("region", { name: adv.junkTitle });
+    const row = within(await within(junk).findByRole("table")).getByRole("row", {
+      name: new RegExp(es.cleanup.categoryNames.temp_user),
+    });
+    expect(within(row).getByText(`${es.cleanup.status.unavailable} (unavailable)`)).toBeInTheDocument();
+  });
+
   it("escaneo ya limpiado muestra la fecha de limpieza", async () => {
     await openAdvancedHome({ lastScan: { ...SCAN, cleanedAt: 1_800_000_900_000 } });
     const junk = await screen.findByRole("region", { name: adv.junkTitle });
