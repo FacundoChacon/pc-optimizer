@@ -209,7 +209,7 @@ describe("Vaciar Papelera: segundo paso", () => {
       await openCleanup();
       return openStep2();
     })();
-    expect(screen.queryByRole("alertdialog", { name: es.recycleBin.step1Title })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: es.recycleBin.step1Title })).toBeNull());
     expect(within(second).getByText(format(es.recycleBin.step2Body, {
       items: "12 elementos",
       size: formatBytes(340_000_000),
@@ -414,7 +414,7 @@ describe("Vaciar Papelera: errores", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.recycle_bin_already_empty);
     expect(within(binCard()).getByText(format(es.cleanup.recycleBinItems, { count: "0" }))).toBeInTheDocument();
     expect(anyEmptyButtons()).toHaveLength(0);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
   it("un error del backend al preparar se muestra con el texto del catalogo y no abre ningun dialogo", async () => {
@@ -423,7 +423,7 @@ describe("Vaciar Papelera: errores", () => {
     });
     fireEvent.click(emptyButton());
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.recycle_bin_unavailable);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.queryByRole("button", { name: es.recycleBin.reviewAgain })).toBeNull();
   });
 

@@ -585,7 +585,7 @@ describe("Duplicados: revision, ejecucion y resumen", () => {
     await chooseBoth(backend);
     fireEvent.click(reviewButton(3));
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.duplicate_keep_required);
-    expect(screen.queryByRole("alertdialog", { name: t.reviewTitle })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: t.reviewTitle })).toBeNull());
   });
 
   it("no hay ninguna accion que borre de forma permanente", async () => {

@@ -197,7 +197,7 @@ describe("CleanupScreen: Limpiar y el preview", () => {
     await openCleanup({ failures: { preview_cleanup: { kind: "scan_already_cleaned", message: "x" } } });
     fireEvent.click(cleanButton());
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.scan_already_cleaned);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 });
 
