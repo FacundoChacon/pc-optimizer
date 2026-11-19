@@ -119,7 +119,7 @@ describe("Limpiar ahora: busca y luego abre el preview (plan scan_then_preview)"
     const { gate, release } = gateOf();
     const backend = await request("scan_then_preview", { scanResult: RESULT, gates: { start_scan: gate } });
     expect(await screen.findByText(es.cleanup.progressTitle)).toBeInTheDocument();
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     await act(async () => release());
     const dialog = await screen.findByRole("alertdialog", { name: es.cleanup.previewTitle });
     expect(within(dialog).getByRole("button", { name: es.cleanup.cancel })).toHaveFocus();
@@ -144,7 +144,7 @@ describe("Limpiar ahora: busca y luego abre el preview (plan scan_then_preview)"
     await screen.findByText(es.cleanup.progressTitle);
     await act(async () => release());
     await waitFor(() => expect(screen.queryByText(es.cleanup.progressTitle)).toBeNull());
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.getByRole("status")).toHaveTextContent(es.cleanup.cleanNowNothing);
   });
 
@@ -155,14 +155,14 @@ describe("Limpiar ahora: busca y luego abre el preview (plan scan_then_preview)"
     await screen.findByText(es.cleanup.progressTitle);
     await act(async () => release());
     await waitFor(() => expect(screen.queryByText(es.cleanup.progressTitle)).toBeNull());
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.getByRole("status")).not.toHaveTextContent(es.cleanup.cleanNowNothing);
   });
 
   it("una busqueda con error no abre el dialogo y muestra el error del catalogo", async () => {
     await request("scan_then_preview", { failures: { start_scan: { kind: "scan_in_progress", message: "x" } } });
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.scan_in_progress);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
   it("salir de Limpieza antes de que termine descarta el pedido: sin dialogo al volver y con Limpiar disponible", async () => {
@@ -172,11 +172,11 @@ describe("Limpiar ahora: busca y luego abre el preview (plan scan_then_preview)"
     fireEvent.click(screen.getByRole("button", { name: "salir a Monitor" }));
     await screen.findByRole("heading", { level: 1, name: es.monitor.title });
     await act(async () => release());
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "volver a Limpieza" }));
     await screen.findByRole("heading", { level: 1, name: es.cleanup.title });
     expect(await screen.findByRole("button", { name: es.cleanup.clean })).toBeEnabled();
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 });
 
@@ -207,7 +207,7 @@ describe("Limpiar ahora: robustez de la espera (revision independiente)", () => 
     fireEvent.click(screen.getByRole("button", { name: "volver a Limpieza" }));
     await screen.findByRole("heading", { level: 1, name: es.cleanup.title });
     expect(await screen.findByRole("button", { name: es.cleanup.clean })).toBeEnabled();
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
   it("si el inicio falla de inmediato, una busqueda manual posterior con elegibles NO abre el preview", async () => {
@@ -218,7 +218,7 @@ describe("Limpiar ahora: robustez de la espera (revision independiente)", () => 
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.scan_in_progress);
     fireEvent.click(screen.getByRole("button", { name: es.cleanup.scan }));
     expect(await screen.findByRole("button", { name: es.cleanup.clean })).toBeEnabled();
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 });
 

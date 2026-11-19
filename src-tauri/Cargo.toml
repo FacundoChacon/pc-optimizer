@@ -5,6 +5,7 @@ description = "PC Optimizer: analisis y limpieza segura de Windows"
 edition = "2024"
 rust-version = "1.95"
 publish = false
+license = "MIT"
 
 [lib]
 name = "pc_optimizer_lib"

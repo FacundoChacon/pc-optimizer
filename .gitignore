@@ -27,3 +27,6 @@ Thumbs.db
 # Test / TS build artifacts
 coverage/
 *.tsbuildinfo
+
+# Salida local del ensayo del job bundle (C-13)
+release-assets/

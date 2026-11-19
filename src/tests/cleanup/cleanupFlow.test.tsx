@@ -197,7 +197,7 @@ describe("CleanupScreen: Limpiar y el preview", () => {
     await openCleanup({ failures: { preview_cleanup: { kind: "scan_already_cleaned", message: "x" } } });
     fireEvent.click(cleanButton());
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.scan_already_cleaned);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 });
 
@@ -216,7 +216,7 @@ describe("CleanupScreen: confirmar, progreso y resumen", () => {
     expect(live).toHaveAttribute("aria-live", "polite");
     expect(callsOf(backend, "confirm_cleanup")[0]?.args).toMatchObject({ previewId: 1 });
     expect(JSON.stringify(Object.keys(callsOf(backend, "confirm_cleanup")[0]?.args as object))).not.toMatch(/path|ruta/i);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(scanButton()).toBeDisabled();
     expect(screen.queryByRole("button", { name: es.cleanup.clean })).toBeNull();
     await act(async () => {
@@ -375,7 +375,7 @@ describe("CleanupScreen: confirmar, progreso y resumen", () => {
     await openPreview();
     fireEvent.click(screen.getByRole("button", { name: confirmName(5) }));
     expect(await screen.findByRole("alert")).toHaveTextContent(text);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.queryByText("tecnico")).toBeNull();
   });
 
