@@ -109,15 +109,23 @@ El puerto de Papelera SHALL ofrecer únicamente mover a la Papelera un elemento 
 - **THEN** el puerto devuelve el error "mecanismo inutilizable" y el proceso sigue funcionando
 
 ### Requirement: Muestra de sensores
-El puerto de sensores SHALL devolver una muestra instantánea con uso de CPU (porcentaje 0–100), memoria usada y total en bytes y actividad de disco (porcentaje 0–100) cuando esté disponible; una métrica no disponible MUST informarse como ausente y no como cero.
+El puerto de sensores SHALL devolver una lectura instantánea con uso de CPU (porcentaje 0–100), memoria usada y total en bytes, espacio total y libre del volumen del sistema en bytes, contadores acumulados de bytes leídos y escritos de ese volumen y tiempo activo del disco (porcentaje 0–100); cada métrica MUST poder faltar por separado con un motivo (en calentamiento, falla de la fuente o no soportada) y una métrica no disponible MUST informarse como ausente y no como cero.
 
 #### Scenario: Actividad de disco no disponible
 - **WHEN** la fuente de datos no puede medir la actividad de disco
-- **THEN** la muestra informa la actividad de disco como ausente y el resto de métricas con su valor
+- **THEN** la lectura informa la actividad de disco como ausente con motivo de falla o no soportada y el resto de métricas con su valor
 
 #### Scenario: Muestra completa
 - **WHEN** todas las fuentes responden
-- **THEN** la muestra contiene CPU, memoria usada, memoria total y actividad de disco dentro de sus rangos
+- **THEN** la lectura contiene CPU, memoria usada, memoria total, espacio del volumen, contadores de disco y actividad de disco dentro de sus rangos
+
+#### Scenario: Primera lectura en calentamiento
+- **WHEN** la fuente necesita dos lecturas para calcular la CPU y es la primera
+- **THEN** la CPU se informa ausente con motivo "en calentamiento" y nunca como 0
+
+#### Scenario: Doble guionado
+- **WHEN** un test guiona dos lecturas con valores conocidos para el doble
+- **THEN** el doble las devuelve en orden sin tocar el sistema
 
 ### Requirement: Reloj en UTC epoch milisegundos
 El tiempo que usan el dominio y la persistencia SHALL obtenerse de un puerto de reloj que devuelve el instante actual en milisegundos UTC desde la época Unix, de modo que los tests puedan fijarlo.
@@ -375,3 +383,14 @@ El dominio SHALL pedir mostrar un elemento en el Explorador mediante un contrato
 #### Scenario: Sin operaciones de apertura
 - **WHEN** se revisan las operaciones del contrato del Explorador
 - **THEN** solo existe la de mostrar el elemento seleccionado
+
+### Requirement: Reloj monotónico para intervalos
+El dominio SHALL medir intervalos con un puerto de reloj monotónico en milisegundos que nunca retrocede, separado del reloj de pared, con un doble que avanza solo cuando el test lo pide.
+
+#### Scenario: Reloj monotónico real
+- **WHEN** se consulta dos veces el reloj monotónico real
+- **THEN** el segundo valor no es menor que el primero
+
+#### Scenario: Doble controlado
+- **WHEN** un test avanza el doble 1 500 ms
+- **THEN** la siguiente consulta devuelve exactamente 1 500 ms más que la anterior
