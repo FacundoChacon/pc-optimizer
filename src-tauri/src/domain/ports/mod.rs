@@ -11,8 +11,10 @@ pub mod recycle_bin_empty;
 pub mod recycle_bin_policy;
 pub mod sensors;
 pub mod session;
+pub mod shell;
 pub mod store;
 pub mod trash;
+pub mod volume;
 
 #[cfg(test)]
 pub(crate) mod content_contract;
@@ -22,6 +24,10 @@ pub(crate) mod duplicates_store_contract;
 pub(crate) mod fakes;
 #[cfg(test)]
 pub(crate) mod fakes_content;
+#[cfg(test)]
+pub(crate) mod fakes_shell;
+#[cfg(test)]
+pub(crate) mod folders_store_contract;
 #[cfg(test)]
 pub(crate) mod fs_contract;
 #[cfg(test)]
@@ -39,7 +45,13 @@ pub use recycle_bin_policy::{
 };
 pub use sensors::{SensorSample, Sensors};
 pub use session::SessionIdentity;
+pub use shell::{Explorer, FolderPicker};
 pub use store::{
-    CleanupLogStore, DuplicateStore, JunkFindingStore, ScanStore, SettingsStore, Store, StoreError,
+    CleanupLogStore, DuplicateStore, FolderStore, JunkFindingStore, ScanStore, SettingsStore,
+    Store, StoreError,
 };
 pub use trash::{Trash, TrashError};
+pub use volume::{VolumeSpace, VolumeSpaceInfo};
+
+#[cfg(test)]
+mod shell_ports_tests;

@@ -71,7 +71,7 @@ describe("Duplicados: navegacion y estado inicial", () => {
     const nav = screen.getByRole("navigation", { name: es.nav.label });
     expect(within(nav).getByRole("button", { name: es.nav.duplicates })).toHaveAttribute("aria-current", "page");
     const labels = within(nav).getAllByRole("button").map((button) => button.textContent);
-    expect(labels).toEqual([es.nav.home, es.nav.cleanup, es.nav.duplicates, es.nav.settings]);
+    expect(labels).toEqual([es.nav.home, es.nav.disk, es.nav.cleanup, es.nav.duplicates, es.nav.settings]);
   });
 
   it("sin resultados 'Buscar duplicados' es la unica accion primaria y explica que no se mueve nada", async () => {

@@ -126,6 +126,26 @@ fn sqlite_store_should_satisfy_the_duplicates_contract() {
     });
 }
 
+// --- C-07: carpetas ---
+#[test]
+fn sqlite_store_should_satisfy_the_folders_contract() {
+    use crate::domain::ports::folders_store_contract as folders;
+    with_temp_stores(|make| {
+        folders::contract_round_trip(make);
+        folders::contract_opaque_folders_keep_their_flags_and_have_no_children(make);
+        folders::contract_failed_save_is_atomic(make);
+        folders::contract_complete_requires_a_running_folders_scan(make);
+        folders::contract_second_scan_purges_the_previous_tree_keeping_its_result(make);
+        folders::contract_other_scan_kinds_are_untouched(make);
+        folders::contract_last_done_ignores_unfinished_and_other_kinds(make);
+        folders::contract_children_sort_page_and_breadcrumb(make);
+        folders::contract_equal_sizes_and_names_tie_break_by_id(make);
+        folders::contract_a_folder_of_another_scan_is_not_found(make);
+        folders::contract_large_files_sort_page_and_lookup(make);
+        folders::contract_rows_follow_scan_retention(make);
+    });
+}
+
 // --- C-09: candidatos de limpieza y fecha de limpieza ---
 #[test]
 fn sqlite_store_should_satisfy_contract_cleanup_candidates() {
@@ -168,7 +188,7 @@ fn recycle_bin_emptied_rows_should_stay_append_only_on_the_current_schema() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3, "la 003 es de C-11; C-10 no agrega migraciones");
+    assert_eq!(version, 4, "la 004 es de C-07; C-10 no agrega migraciones");
     assert!(
         conn.execute(
             "UPDATE cleanup_log SET outcome = 'error' WHERE category = 'recycle_bin'",
@@ -210,7 +230,7 @@ fn cleanup_queries_should_keep_the_current_schema_and_the_log_append_only() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3, "la 003 es de C-11; C-09 no agrega migraciones");
+    assert_eq!(version, 4, "la 004 es de C-07; C-09 no agrega migraciones");
     assert!(
         conn.execute("UPDATE cleanup_log SET size_bytes = 0", [])
             .is_err()
@@ -237,7 +257,7 @@ fn sqlite_store_should_persist_changes_across_reopen_without_reseeding() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 }
 
 #[test]

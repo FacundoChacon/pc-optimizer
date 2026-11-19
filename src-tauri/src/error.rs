@@ -4,6 +4,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
 use crate::adapters::sqlite::state::RecoveryError;
+use crate::domain::disk_usage::model::RevealReason;
 use crate::domain::ports::StoreError;
 use crate::domain::privileges::MismatchReason;
 use crate::domain::settings::{SettingsError, SettingsServiceError};
@@ -104,6 +105,24 @@ pub enum AppError {
     /// La decision no conserva ninguna copia (eliminaria todas).
     #[error("at least one copy of each group must be kept")]
     DuplicateKeepRequired,
+    /// La carpeta elegida no sirve como raiz de analisis; lleva el codigo del motivo (C-07).
+    #[error("folder root rejected: {0}")]
+    FolderRootRejected(&'static str),
+    /// El identificador de seleccion es desconocido o fue reemplazado por otra seleccion.
+    #[error("folder pick not found")]
+    FolderPickNotFound,
+    /// Ya hay un selector de carpeta abierto.
+    #[error("a folder picker is already open")]
+    FolderPickerBusy,
+    /// No se pudo abrir el selector de carpeta del sistema.
+    #[error("the folder picker is unavailable")]
+    FolderPickerUnavailable,
+    /// La carpeta (o el archivo) no pertenece al ultimo analisis.
+    #[error("folder not found")]
+    FolderNotFound,
+    /// No se puede mostrar el elemento en el Explorador; lleva el motivo.
+    #[error("reveal unavailable: {}", .0.as_str())]
+    RevealUnavailable(RevealReason),
 }
 
 impl From<SettingsServiceError> for AppError {
@@ -181,6 +200,12 @@ impl AppError {
             Self::DuplicateGroupNotFound => "duplicate_group_not_found",
             Self::DuplicateGroupResolved => "duplicate_group_resolved",
             Self::DuplicateKeepRequired => "duplicate_keep_required",
+            Self::FolderRootRejected(_) => "folder_root_rejected",
+            Self::FolderPickNotFound => "folder_pick_not_found",
+            Self::FolderPickerBusy => "folder_picker_busy",
+            Self::FolderPickerUnavailable => "folder_picker_unavailable",
+            Self::FolderNotFound => "folder_not_found",
+            Self::RevealUnavailable(_) => "reveal_unavailable",
         }
     }
 }
@@ -412,6 +437,64 @@ mod tests {
             (MismatchReason::Undetermined, "undetermined"),
         ] {
             let value = serde_json::to_value(AppError::DuplicatesBlocked(reason)).unwrap();
+            assert!(value["message"].as_str().unwrap().ends_with(code));
+        }
+    }
+
+    #[test]
+    fn disk_usage_errors_should_serialize_with_stable_kinds_and_a_message_without_paths() {
+        use crate::domain::disk_usage::model::RevealReason;
+        let cases = [
+            (
+                AppError::FolderRootRejected("reparse_point"),
+                "folder_root_rejected",
+            ),
+            (
+                AppError::FolderRootRejected("unsupported_volume"),
+                "folder_root_rejected",
+            ),
+            (AppError::FolderPickNotFound, "folder_pick_not_found"),
+            (AppError::FolderPickerBusy, "folder_picker_busy"),
+            (
+                AppError::FolderPickerUnavailable,
+                "folder_picker_unavailable",
+            ),
+            (AppError::FolderNotFound, "folder_not_found"),
+            (
+                AppError::RevealUnavailable(RevealReason::TargetMissing),
+                "reveal_unavailable",
+            ),
+            (
+                AppError::RevealUnavailable(RevealReason::Opaque),
+                "reveal_unavailable",
+            ),
+        ];
+        for (error, kind) in cases {
+            let value = serde_json::to_value(&error).unwrap();
+            assert_eq!(value["kind"], kind);
+            let message = value["message"].as_str().unwrap();
+            assert!(!message.is_empty(), "{kind}");
+            assert!(!message.contains(char::from(0x5c)), "{kind}: {message}");
+            assert!(!message.contains('/'), "{kind}: {message}");
+        }
+    }
+
+    #[test]
+    fn folder_root_rejected_and_reveal_unavailable_should_carry_their_reason_in_the_message() {
+        use crate::domain::disk_usage::model::RevealReason;
+        for code in ["reparse_point", "other_user_profile", "unsupported_volume"] {
+            let value = serde_json::to_value(AppError::FolderRootRejected(code)).unwrap();
+            assert!(value["message"].as_str().unwrap().ends_with(code));
+        }
+        for (reason, code) in [
+            (RevealReason::TargetMissing, "target_missing"),
+            (RevealReason::Opaque, "opaque"),
+            (RevealReason::DifferentUser, "different_user"),
+            (RevealReason::Undetermined, "undetermined"),
+            (RevealReason::ShellError, "shell_error"),
+        ] {
+            assert_eq!(reason.as_str(), code);
+            let value = serde_json::to_value(AppError::RevealUnavailable(reason)).unwrap();
             assert!(value["message"].as_str().unwrap().ends_with(code));
         }
     }

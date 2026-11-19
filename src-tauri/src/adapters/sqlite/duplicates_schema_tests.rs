@@ -363,7 +363,7 @@ fn open_should_migrate_a_version_2_database_keeping_findings_and_log() {
         .unwrap();
     }
     let conn = open_connection(&path).unwrap();
-    assert_eq!(read_user_version(&conn).unwrap(), 3);
+    assert_eq!(read_user_version(&conn).unwrap(), 4);
     assert_eq!(count(&conn, "scan"), 1);
     assert_eq!(count(&conn, "junk_finding"), 1);
     assert_eq!(count(&conn, "cleanup_log"), 1);

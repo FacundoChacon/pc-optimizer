@@ -25,4 +25,10 @@ pub const APP_COMMANDS: &[&str] = &[
     "list_duplicate_groups",
     "preview_duplicate_cleanup",
     "confirm_duplicate_cleanup",
+    "start_folder_scan",
+    "get_last_folder_scan",
+    "list_folder_children",
+    "list_large_files",
+    "pick_folder_root",
+    "reveal_in_explorer",
 ];

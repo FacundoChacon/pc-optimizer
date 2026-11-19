@@ -129,3 +129,7 @@ erDiagram
 - `alert_rule`: tres reglas default (disco, temperatura, RAM) con valores **Suposición** de arriba.
 - `schedule`: ninguno habilitado hasta que el usuario active el asistente (v0.3).
 - Catálogo de `improvement` y categorías de basura: definidos en código, no en seed SQL.
+
+## Nota C-07 (disk-usage-scanner): tablas reales de carpetas
+
+Migración `004_folders.sql`: `folder_scan_result` (uno por análisis: raíz, volumen, contadores, `folders_truncated`), `folder_snapshot` (`id`, `scan_id`, `parent_id`, `path`, `depth`, `size_bytes`, `direct_bytes`, `file_count`, `dir_count`, `access`, `opaque_reason`, `system`, `junk_hint`; `UNIQUE(scan_id, path)`; índices `(path, scan_id)` y `(scan_id, parent_id, size_bytes DESC)`), `large_file` (500 más grandes) y `folder_scan_issue` (hasta 50 carpetas sin acceso). Hasta 20 000 carpetas por análisis (las más grandes, cerradas por ancestros). Retención: solo el último análisis `done` conserva carpetas, archivos e incidencias (el `~90 días` de tendencias queda para C-25).

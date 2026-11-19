@@ -119,3 +119,7 @@ Las copias de un grupo se mueven por `run_cleanup` con un gancho adicional que, 
 | Papelera respondió éxito pero el archivo sigue | `error` | `not_moved` |
 | Mecanismo de Papelera inutilizable (aborta) | `error` | `trash_unavailable` |
 | Otro fallo | `error` | `io` o `io_0x<HRESULT>` |
+
+## Nota C-07: selector de carpeta y Explorador en el proceso elevado
+
+`pick_folder_root` (`IFileOpenDialog` con `FOS_PICKFOLDERS`) y `reveal_in_explorer` (`SHOpenFolderAndSelectItems`, nunca `ShellExecute`) corren en hilos COM STA propios del backend, sin plugins `dialog`/`shell` ni capabilities nuevas. Riesgo conocido: el diálogo del shell carga extensiones de terceros dentro del proceso elevado (mitigado con `FOS_PICKFOLDERS`). En over-the-shoulder el Explorador está bloqueado.

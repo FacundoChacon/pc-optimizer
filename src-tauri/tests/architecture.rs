@@ -587,3 +587,133 @@ mod tests { const A: &str = \"SET kept = 1\"; }"
     );
     assert_eq!(kept_assignments("struct F { kept: bool }"), 0);
 }
+
+// ---------------------------------------------------------------------------------------------
+// C-07: "Mostrar en el Explorador" nunca ejecuta y `unsafe` solo vive en los adaptadores de
+// Windows declarados (design D-13, D-22).
+// ---------------------------------------------------------------------------------------------
+
+/// Llamadas del shell que ejecutan o abren un elemento: prohibidas en produccion. El Explorador
+/// solo usa `SHOpenFolderAndSelectItems`, que selecciona sin ejecutar.
+const FORBIDDEN_EXECUTION_TOKENS: [&str; 1] = ["ShellExecute"];
+
+/// Tokens de ejecucion presentes en una fuente de produccion (comentarios y bloques
+/// `#[cfg(test)]` no cuentan).
+fn shell_execute_calls(source: &str) -> Vec<&'static str> {
+    let production = strip_cfg_test_items(&compact_code(source));
+    FORBIDDEN_EXECUTION_TOKENS
+        .into_iter()
+        .filter(|token| production.contains(token))
+        .collect()
+}
+
+#[test]
+fn production_code_should_never_execute_or_open_an_item_through_the_shell() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = rust_files_under(&src_dir).unwrap();
+    let mut violations = Vec::new();
+    for file in files.iter().filter(|f| !is_test_only_file(f)) {
+        let source = std::fs::read_to_string(file).unwrap();
+        for token in shell_execute_calls(&source) {
+            violations.push(format!("{}: {token}", file.display()));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "ShellExecute en produccion: {violations:#?}"
+    );
+}
+
+#[test]
+fn shell_execute_calls_should_detect_every_variant_and_ignore_comments_and_tests() {
+    assert_eq!(
+        shell_execute_calls("let r = ShellExecuteW(h, a, b);"),
+        ["ShellExecute"]
+    );
+    assert_eq!(
+        shell_execute_calls("ShellExecuteExW(&mut info)"),
+        ["ShellExecute"]
+    );
+    assert!(shell_execute_calls("// nunca ShellExecuteW").is_empty());
+    assert!(shell_execute_calls("/* ShellExecuteW */ fn ok() {}").is_empty());
+    assert!(
+        shell_execute_calls("#[cfg(test)]\nmod tests { fn t() { ShellExecuteW(); } }").is_empty()
+    );
+    assert!(shell_execute_calls("SHOpenFolderAndSelectItems(pidl, None, 0)").is_empty());
+}
+
+/// Archivos de produccion con `unsafe` (adaptadores de Windows): cada bloque es minimo y lleva su
+/// `// SAFETY:`. Un archivo nuevo con `unsafe` exige declararlo aca (y justificarlo en su change).
+const UNSAFE_ALLOWED_FILES: [&str; 9] = [
+    "src/adapters/windows/explorer.rs",
+    "src/adapters/windows/folder_picker.rs",
+    "src/adapters/windows/fs.rs",
+    "src/adapters/windows/known_folders.rs",
+    "src/adapters/windows/privileges.rs",
+    "src/adapters/windows/recycle_bin.rs",
+    "src/adapters/windows/recycle_bin_empty.rs",
+    "src/adapters/windows/recycle_bin_policy.rs",
+    "src/adapters/windows/volume.rs",
+];
+
+/// Ocurrencias de `unsafe` en una fuente de produccion (comentarios y bloques `#[cfg(test)]` no
+/// cuentan).
+fn unsafe_uses(source: &str) -> usize {
+    let production = strip_cfg_test_items(&compact_code(source));
+    contains_path_count(&production, "unsafe")
+}
+
+/// Cuenta `needle` como palabra completa (sin continuar un identificador).
+fn contains_path_count(haystack: &str, needle: &str) -> usize {
+    haystack
+        .match_indices(needle)
+        .filter(|(start, _)| {
+            let before = haystack[..*start].chars().next_back();
+            let after = haystack[start + needle.len()..].chars().next();
+            !before.is_some_and(is_ident_char) && !after.is_some_and(is_ident_char)
+        })
+        .count()
+}
+
+#[test]
+fn unsafe_should_only_appear_in_the_declared_windows_adapters() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = rust_files_under(&src_dir).unwrap();
+    let mut violations = Vec::new();
+    for file in files.iter().filter(|f| !is_test_only_file(f)) {
+        let source = std::fs::read_to_string(file).unwrap();
+        let rel = relative_to_crate(file);
+        let count = unsafe_uses(&source);
+        if count > 0 && !UNSAFE_ALLOWED_FILES.contains(&rel.as_str()) {
+            violations.push(format!("{rel}: {count} uso(s) de `unsafe`"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "`unsafe` fuera de los adaptadores declarados: {violations:#?}"
+    );
+}
+
+#[test]
+fn unsafe_uses_should_count_words_and_ignore_comments_tests_and_look_alikes() {
+    assert_eq!(unsafe_uses("let a = unsafe { f() }; unsafe fn g() {}"), 2);
+    assert_eq!(unsafe_uses("// unsafe { f() }"), 0);
+    assert_eq!(
+        unsafe_uses("#[cfg(test)]\nmod t { fn x() { unsafe { f() } } }"),
+        0
+    );
+    assert_eq!(unsafe_uses("let unsafety = 1; let not_unsafe_here = 2;"), 0);
+    assert_eq!(unsafe_uses("forbid(unsafe_code)"), 0);
+}
+
+#[test]
+fn every_allowed_unsafe_file_should_exist_and_really_use_unsafe() {
+    for rel in UNSAFE_ALLOWED_FILES {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+        let source = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            unsafe_uses(&source) > 0,
+            "{rel} no usa `unsafe`: sacarlo de la lista"
+        );
+    }
+}

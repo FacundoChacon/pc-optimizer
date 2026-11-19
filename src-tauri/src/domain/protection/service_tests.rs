@@ -894,3 +894,128 @@ fn prepare_delete_should_report_the_handle_date_when_the_listing_is_stale() {
     assert_eq!(target.checked().modified, Some(EpochMillis(1000)));
     assert_eq!(target.checked().size_bytes, 4);
 }
+
+// --- C-07 2.2 check_analysis_root (design D-03): solo lectura, sin habilitar borrados ---
+
+fn analysis_fs() -> FakeFileSystem {
+    rule_fs()
+        .with_dir(r"C:\")
+        .with_dir(r"C:\$Recycle.Bin")
+        .with_dir(r"C:\System Volume Information")
+        .with_dir(r"C:\Users\bob\Documents")
+        .with_dir(r"C:\ProgramData")
+        .with_file(r"C:\Games\leeme.txt", 1, None)
+}
+
+fn analysis_root(raw: &str) -> Result<NormalizedPath, ProtectedReason> {
+    let fs = analysis_fs();
+    service(&fs).check_analysis_root(Path::new(raw))
+}
+
+#[test]
+fn check_analysis_root_should_accept_system_programs_and_own_profile_folders() {
+    let cases = [
+        r"C:\",
+        r"C:\Windows",
+        r"C:\Program Files",
+        r"C:\ProgramData",
+        r"C:\Users",
+        r"C:\Users\ana",
+        r"C:\Users\ana\Downloads",
+        r"C:\Users\ana\AppData\Local",
+        r"C:\Games",
+    ];
+    for raw in cases {
+        assert_eq!(analysis_root(raw), Ok(np(raw)), "caso {raw:?}");
+    }
+}
+
+#[test]
+fn check_analysis_root_should_accept_a_cloud_folder() {
+    let fs = analysis_fs().with_cloud_reparse_point(r"C:\Users\ana\OneDrive");
+    let raw = r"C:\Users\ana\OneDrive";
+    assert_eq!(
+        service(&fs).check_analysis_root(Path::new(raw)),
+        Ok(np(raw))
+    );
+}
+
+#[test]
+fn check_analysis_root_should_reject_other_profiles_volumes_and_system_entries() {
+    let cases = [
+        (r"C:\Users\bob", R::OtherUserProfile),
+        (r"C:\Users\bob\Documents", R::OtherUserProfile),
+        (r"D:\Datos", R::UnsupportedVolume),
+        (r"C:\$Recycle.Bin", R::VolumeSystemEntry),
+        (r"C:\System Volume Information", R::VolumeSystemEntry),
+    ];
+    for (raw, reason) in cases {
+        assert_eq!(analysis_root(raw), Err(reason), "caso {raw:?}");
+    }
+}
+
+#[test]
+fn check_analysis_root_should_reject_unc_paths() {
+    assert!(matches!(analysis_root(r"\\srv\x"), Err(R::Unparseable(_))));
+    assert!(matches!(
+        analysis_root(r"\\?\UNC\srv\x"),
+        Err(R::Unparseable(_))
+    ));
+}
+
+#[test]
+fn check_analysis_root_should_reject_reparse_files_and_missing_roots() {
+    assert_eq!(analysis_root(r"C:\Games\junction"), Err(R::ReparsePoint));
+    assert_eq!(
+        analysis_root(r"C:\Games\junction\x"),
+        Err(R::ReparsePointInPath)
+    );
+    assert_eq!(
+        analysis_root(r"C:\Games\leeme.txt"),
+        Err(R::Unresolvable(ResolveFailure::NotADirectory))
+    );
+    assert_eq!(
+        analysis_root(r"C:\Games\no-existe"),
+        Err(R::Unresolvable(ResolveFailure::NotFound))
+    );
+}
+
+#[test]
+fn check_analysis_root_should_fail_closed_without_context() {
+    let fs = analysis_fs();
+    let service = PathProtection::new(&fs, Err(ContextError::MissingRequired("windows_dir")));
+    assert_eq!(
+        service.check_analysis_root(Path::new(r"C:\Games")),
+        Err(R::ContextUnavailable)
+    );
+}
+
+#[test]
+fn check_analysis_root_should_treat_every_profile_as_foreign_in_a_restricted_context() {
+    let fs = analysis_fs();
+    let service = PathProtection::new(
+        &fs,
+        Ok(crate::domain::protection::test_support::ctx_c_no_user()),
+    );
+    assert_eq!(
+        service.check_analysis_root(Path::new(r"C:\Users\ana\Downloads")),
+        Err(R::OtherUserProfile)
+    );
+    assert_eq!(
+        service.check_analysis_root(Path::new(r"C:\Windows")),
+        Ok(np(r"C:\Windows"))
+    );
+}
+
+#[test]
+fn check_analysis_root_should_not_change_what_check_decides_for_deletion() {
+    let fs = analysis_fs().with_file(r"C:\Windows\x.log", 1, None);
+    assert_eq!(
+        service(&fs).check(Path::new(r"C:\Windows\x.log")),
+        protected(R::WindowsDir)
+    );
+    assert_eq!(
+        service(&fs).check_rule_root(Path::new(r"C:\Windows")),
+        Err(R::Anchor(AnchorKind::WindowsDir))
+    );
+}

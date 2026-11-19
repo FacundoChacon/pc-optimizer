@@ -2,6 +2,7 @@
 
 pub mod app_info;
 pub mod cleanup;
+pub mod disk_usage;
 pub mod duplicates;
 pub mod names;
 pub mod privileges;

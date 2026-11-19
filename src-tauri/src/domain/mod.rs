@@ -1,6 +1,7 @@
 //! Dominio: logica pura, sin I/O. No importa `std::fs`, `windows`, `rusqlite` ni `tauri`.
 
 pub mod cleanup;
+pub mod disk_usage;
 pub mod duplicates;
 pub mod junk;
 pub mod model;

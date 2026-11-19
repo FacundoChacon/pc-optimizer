@@ -62,6 +62,10 @@ enum Mode {
     /// La raiz de una regla de limpieza: las anclas de contenido son validas y no se exigen
     /// hard links.
     RuleRoot,
+    /// La raiz de un analisis de espacio en disco (C-07): solo lectura, nada se habilita para
+    /// borrar. Rutas del sistema, de programas y las anclas son validas; se rechaza lo privado
+    /// (perfiles ajenos), otros volumenes, entradas de sistema de la raiz y todo reparse.
+    AnalysisRoot,
 }
 
 type Memo = RefCell<HashSet<NormalizedPath>>;
@@ -193,6 +197,19 @@ impl<'a, F: FileSystem> PathProtection<'a, F> {
         }
     }
 
+    /// Valida la raiz de un analisis de espacio en disco (C-07, D-03). Misma resolucion que
+    /// `check_rule_root` (lexico, ruta real, sin reparse, existe y es carpeta) con otra tabla de
+    /// veredictos, porque NO habilita ningun borrado. Acepta `C:\`, Windows, Program Files,
+    /// ProgramData, anclas del perfil propio y carpetas de nube; rechaza otros volumenes, perfiles
+    /// ajenos y las entradas de sistema de la raiz del volumen.
+    pub fn check_analysis_root(&self, raw: &Path) -> Result<NormalizedPath, ProtectedReason> {
+        match self.resolve(raw, None, Mode::AnalysisRoot) {
+            Ok(checked) => Ok(checked.path),
+            Err(Stop::Cloud(path)) => Ok(path),
+            Err(Stop::Protected(reason)) => Err(reason),
+        }
+    }
+
     fn metadata(&self, path: &NormalizedPath) -> Result<FileMeta, Stop> {
         self.fs
             .metadata(&path.to_path_buf())
@@ -211,6 +228,16 @@ impl<'a, F: FileSystem> PathProtection<'a, F> {
             {
                 Ok(RuleVerdict::Allowed(AllowRule::Default))
             }
+            // Un analisis de solo lectura puede recorrer lo protegido para borrado.
+            RuleVerdict::Protected(
+                ProtectedReason::VolumeRoot
+                | ProtectedReason::Anchor(_)
+                | ProtectedReason::WindowsDir
+                | ProtectedReason::ProgramFiles
+                | ProtectedReason::ProgramData
+                | ProtectedReason::BrowserProfile(_)
+                | ProtectedReason::AppDir,
+            ) if mode == Mode::AnalysisRoot => Ok(RuleVerdict::Allowed(AllowRule::Default)),
             RuleVerdict::Protected(reason) => Err(reason),
             allowed @ RuleVerdict::Allowed(_) => Ok(allowed),
         }
@@ -253,6 +280,11 @@ impl<'a, F: FileSystem> PathProtection<'a, F> {
         }
         if target.kind == EntryKind::ReparsePoint {
             return Err(deny(ProtectedReason::ReparsePoint));
+        }
+        if mode == Mode::AnalysisRoot && target.kind != EntryKind::Directory {
+            return Err(deny(ProtectedReason::Unresolvable(
+                ResolveFailure::NotADirectory,
+            )));
         }
         if mode == Mode::Item && target.kind == EntryKind::File {
             match target.hard_links {
