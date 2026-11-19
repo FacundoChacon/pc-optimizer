@@ -482,7 +482,7 @@ Lo que ya funciona: nivel siempre con icono y texto, foco visible y cursor por t
 | `openspec validate live-monitor --strict` | válido |
 | `package-lock.json` y `Cargo.lock` | sin cambios |
 
-Cada tarea de comportamiento de los grupos 1 a 7 tiene su salida RED anotada (partes 1 a 4). Pendientes: 8.3 (smoke con el dueño) y 8.4 (cierre).
+Cada tarea de comportamiento de los grupos 1 a 7 tiene su salida RED anotada (partes 1 a 4). 8.3 y 8.4 cerradas (ver abajo).
 
 ### Fix H-2 (smoke): anuncios simultáneos de nivel
 
@@ -491,3 +491,26 @@ Cada tarea de comportamiento de los grupos 1 a 7 tiene su salida RED anotada (pa
 - **RED** (`vitest run src/tests/monitor/simple.test.tsx`, código viejo): `2 failed | 9 passed`; `AssertionError: expected -1 to be greater than or equal to 0` (el primer mensaje, "Procesador", ya no estaba en la región) y `toHaveTextContent` del mensaje unido sin coincidir.
 - **Tests nuevos** (`src/tests/monitor/simple.test.tsx`): "dos cambios de nivel en la misma muestra se anuncian juntos en un solo mensaje", "tres cambios simultaneos salen en el orden de la pantalla y sin cambios no se anuncia nada nuevo", "solo la metrica que cambia entra en el anuncio".
 - **Conteos**: `src/tests/monitor` 47/47 (base 44); suite completa `--maxWorkers=2` **680 passed en 39 archivos** (base 677); `typecheck` y `build` verdes.
+
+### Smoke guiado (8.3), 2026-11-18 y 2026-11-19
+
+Lo condujo el orquestador por CDP (driver propio con `Runtime.evaluate`), con base temporal en `%TEMP%\pcopt-smoke-c06\data` y autorización del dueño para las cargas, la suspensión y el release elevado.
+
+| # | Resultado |
+|---|---|
+| 1 | La app abre en desarrollo sin errores. |
+| 2 | Simple: tres tarjetas, valores plausibles y sin "0 %" falso. "Midiendo…" se ve solo durante el primer segundo, porque el muestreo arranca con la app (`lib.rs`). |
+| 3-4 | Avanzado: 4 medidores, 4 gráficos que avanzan cada segundo y panel de detalles. El teclado y "Ver tabla" funcionan. |
+| 5 | Carga de CPU: "Alto" con `avg60` ≥ 70, "Muy alto" cerca de 90 y vuelta a "Normal"; el anunciador avisa. Aquí apareció **H-2**: si dos niveles cambian en la misma muestra, el anuncio de "Procesador: muy alto" se pierde. Corregido (ver "Fix H-2"). |
+| 6 | Carga de disco: se muestran unos 297 MB/s de escritura y 258 MB/s de lectura, y sube el tiempo activo. |
+| 7 | Con un análisis completo de `C:` (C-07) en paralelo, el monitor no tiene huecos. |
+| 8 | Al salir y volver a Monitor no hay filas duplicadas y queda una sola suscripción. |
+| 9 | Suspensión de 212 s: un solo hueco (línea cortada, 2 subtrazos), sin ceros; la primera muestra tras reanudar es "No disponible". En desarrollo, Vite recarga la página al reanudar y el hub completa el historial. Hipótesis H-1 (100 % en la primera muestra de PDH) refutada: esa primera muestra es `WarmingUp`, y el 100 % de los +7 s era E/S real del arranque. |
+| 10 | D-18 se cumple: la app usa 0,004 % de la CPU total con Monitor cerrado y 0,014 % con avanzado visible, y el renderer 0,059 %. `avgReadMicros` es de 0,4 ms (28 ms solo con una carga del 100 % en todos los núcleos; 0,8 ms después). |
+| 11 | Release elevado (`tauri build --no-bundle`, con el fix de H-2): el dueño confirma a ojo que se ven los 4 medidores y los 4 gráficos, avanzando y con estilos normales. La verificación por CDP no fue posible porque WebView2 ignora `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` en release elevado (mismo hallazgo que C-07). Revisión estática: la CSP de producción tiene `style-src 'self'`, sin `unsafe-inline`, y `src/shared/charts` no usa atributos `style=`. |
+| 12 | Cierre: sin procesos residuales. |
+
+**Desvíos y notas**
+- El release ignora `PCOPT_DATA_DIR` (conocido desde C-07), así que el paso 11 usó la base real del dueño. El monitor no escribe en la base; si el modo avanzado quedó activado, es un ajuste de interfaz y no afecta datos.
+- Tras reanudar una suspensión, WebView2 crea un `shared_worker` blob y `connectOverCDP` de playwright-core falla; por eso se usó un driver CDP propio por WebSocket.
+- No hubo máquina con Windows 10 disponible para PA-08.

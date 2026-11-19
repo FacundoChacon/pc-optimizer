@@ -234,7 +234,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
 ## FASE 2 — Análisis, limpieza y monitoreo (v0.1)
 
 ### [C-06] `live-monitor`
-- **Estado**: `[~]` en curso (apply; rama `feat/live-monitor`)
+- **Estado**: `[x]` completado (smoke guiado con el dueño 2026-11-18/19; rama `feat/live-monitor`)
 - **Scope**:
   - Muestreo en hilo propio cada 1-2 s de CPU, RAM y disco (`sysinfo`/PDH tras trait `Sensors`); ring buffer en memoria (~5 min).
   - Eventos Tauri (event stream, sin polling desde la UI); impacto de rendimiento acotado; huecos tras suspensión = ausencia de datos.
@@ -242,6 +242,7 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - Tests: ring buffer, agregación en dominio, fake de sensores, render de gauges.
   - Decisiones aprobadas (2026-11-16, todas según la recomendación de design.md): muestreo siempre activo desde el arranque, 1 s y 300 muestras (D-01, D-02); flujo por `Channel` de la invocación con `start_monitor_stream`/`stop_monitor_stream`, único suscriptor, sin `emit`/`listen` ni `core:*` (D-04, D-14: 29 permisos); `sysinfo` + PDH `% Idle Time` solo para el tiempo activo del disco, con `unsafe` mínimo en `adapters/windows/pdh.rs` y la feature `Win32_System_Performance`, sin crates nuevos (D-06); procesos fuera de C-06 (D-08); niveles CPU 70/90, memoria 80/90, disco activo 60/90, espacio 90 sobre promedio de 60 s (D-09); PA-01 = SVG propio sin librería (D-12); medidores lineales en vez de gauges circulares (D-13); presupuesto < 1 % CPU y <= 5 ms por lectura (D-18).  -
   - Desvíos: `Channel` de la invocación en vez de eventos de la app (D-04); PDH solo para el tiempo activo (D-06); lista de medidores en vez de gauges (D-13); procesos diferidos (D-08).  -
+  - Smoke (2026-11-18/19): los 12 pasos pasan. D-18 se cumple con margen (0,004 % de CPU con la pantalla cerrada, 0,014 % visible, 0,4 ms por lectura). Suspensión: hueco sin ceros. Hallazgo H-2 (a11y: se perdían anuncios de nivel simultáneos) corregido con TDD en `9498223` (un solo mensaje por muestra). El paso 11 (release elevado) se verificó a ojo por el dueño: WebView2 ignora los argumentos de CDP en release elevado, y la CSP `style-src 'self'` se revisó estáticamente. El release ignora `PCOPT_DATA_DIR` (conocido desde C-07). Detalle en `design.md` §Apply notes.
   - Notas para otros changes: C-07 (treemap ya no bloqueado por PA-01; SVG propio), C-12 (consume `useMonitor` y `Meter`), C-14 (sensores lentos en hilo propio, campos aditivos), C-15 (segundo consumidor del bucle; huecos marcados), C-22 (intervalo parametrizable), C-24 (`avg60` y espacio casi lleno disponibles).
 - **Dependencias**: `C-02, C-04`
 - **Governance**: MEDIO (MEDIUM)
