@@ -62,7 +62,9 @@ pub fn app_builder<R: tauri::Runtime>(
             commands::disk_usage::pick_folder_root,
             commands::disk_usage::reveal_in_explorer,
             commands::monitor::start_monitor_stream,
-            commands::monitor::stop_monitor_stream
+            commands::monitor::stop_monitor_stream,
+            commands::history::list_cleanup_runs,
+            commands::history::list_cleanup_entries
         ])
 }
 
@@ -355,6 +357,40 @@ mod tests {
             serde_json::json!({"scanId": 1, "category": "temp_user", "offset": 0, "limit": 10}),
         );
         assert_eq!(unknown_scan["kind"], "scan_not_found");
+    }
+
+    #[test]
+    fn history_commands_should_answer_over_ipc_with_an_empty_log_and_their_error_cases() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let window = window_for_scans(dir.path());
+
+        let runs = invoke(
+            &window,
+            "list_cleanup_runs",
+            serde_json::json!({"before": null, "limit": 10}),
+        );
+        assert_eq!(runs, serde_json::json!({"items": [], "nextCursor": null}));
+        let entries = invoke(
+            &window,
+            "list_cleanup_entries",
+            serde_json::json!({"key": {"kind": "scan", "scanId": 1}, "offset": 0, "limit": 10}),
+        );
+        assert_eq!(
+            entries,
+            serde_json::json!({"total": 0, "pathsHidden": false, "items": []})
+        );
+        let invalid_limit = invoke_error(
+            &window,
+            "list_cleanup_runs",
+            serde_json::json!({"before": null, "limit": 0}),
+        );
+        assert_eq!(invalid_limit["kind"], "invalid_argument");
+        let invalid_key = invoke_error(
+            &window,
+            "list_cleanup_entries",
+            serde_json::json!({"key": {"kind": "folder"}, "offset": 0, "limit": 10}),
+        );
+        assert_eq!(invalid_key["kind"], "invalid_argument");
     }
 
     #[test]

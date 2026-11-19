@@ -7,6 +7,7 @@
 **Documento B dice** (problema/objetivos): la app debe servir a usuarios comunes que no entienden términos técnicos.
 **Impacto**: si ambos públicos usan la misma UI, uno de los dos queda mal servido.
 **Resolución propuesta**: resuelto por modos (simple por defecto, avanzado opt-in; ver 12). Verificar en una revisión de usabilidad (skill `ux-ui-revisor`) tras v0.1.
+**Revisión parcial (C-12, 2026-11-19)**: Inicio e Historial en ambos modos revisados con `ux-ui-revisor` (auditoría de código y tests, sin ejecutar la app); 2 hallazgos corregidos (foco tras "Limpiar ahora" con búsqueda previa; "Ver archivos" repetido sin contexto) y 4 diferidos, ver `openspec/changes/dashboard-simple-advanced/design.md` §Apply notes. IN-01 sigue abierta hasta la revisión completa tras v0.1.
 
 ### IN-02 — "Nunca borrado permanente" vs. vaciar la Papelera
 **Documento A dice**: todo borrado va a la Papelera, nunca permanente.

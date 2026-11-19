@@ -2,8 +2,12 @@ import type { Channel } from "@tauri-apps/api/core";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type {
   AppError,
+  CleanupEntry,
   CleanupEvent,
   CleanupPreview,
+  CleanupRun,
+  CleanupRunCursor,
+  CleanupRunKey,
   CleanupSummary,
   DuplicateCleanupPreview,
   DuplicateCleanupSummary,
@@ -61,7 +65,9 @@ export type BackendCommand =
   | "pick_folder_root"
   | "reveal_in_explorer"
   | "start_monitor_stream"
-  | "stop_monitor_stream";
+  | "stop_monitor_stream"
+  | "list_cleanup_runs"
+  | "list_cleanup_entries";
 
 /** Una carpeta del analisis simulado con sus hijas y sus migas de pan. */
 export interface DiskPageFixture {
@@ -69,6 +75,12 @@ export interface DiskPageFixture {
   breadcrumb: FolderCrumb[];
   children: FolderEntry[];
   remainderBytes: number;
+}
+
+/** Una limpieza del historial simulado con sus items (las rutas se ocultan con otra cuenta). */
+export interface HistoryFixture {
+  run: CleanupRun;
+  entries: CleanupEntry[];
 }
 
 export interface BackendCall {
@@ -134,6 +146,8 @@ export interface BackendState {
   diskFiles: LargeFileEntry[];
   /** Respuestas sucesivas de pick_folder_root (un `AppError` hace fallar la llamada); sin mas, cancela. */
   pickQueue: Array<PickResult | AppError>;
+  /** Limpiezas del historial para list_cleanup_runs y list_cleanup_entries (en cualquier orden). */
+  history: HistoryFixture[];
   /** Comandos que deben fallar con este error. */
   failures: Partial<Record<BackendCommand, AppError>>;
   /** Errores de una sola vez por comando: cada llamada consume el primero de la cola. */
@@ -171,6 +185,18 @@ export const OTHER_USER: PrivilegeContext = {
 };
 
 export const DEFAULT_SETTINGS: Settings = { uiMode: "simple", autostartTray: false, language: "es" };
+
+function sameRunKey(a: CleanupRunKey, b: CleanupRunKey): boolean {
+  if (a.kind === "scan") return b.kind === "scan" && a.scanId === b.scanId;
+  return b.kind === "entry" && a.entryId === b.entryId;
+}
+
+/** Orden total de las limpiezas: fecha y luego tipo de clave (fila suelta antes que escaneo) e id. */
+function compareRuns(aAt: number, aKey: CleanupRunKey, bAt: number, bKey: CleanupRunKey): number {
+  const rank = (key: CleanupRunKey): number => (key.kind === "scan" ? 1 : 0);
+  const id = (key: CleanupRunKey): number => (key.kind === "scan" ? key.scanId : key.entryId);
+  return aAt - bAt || rank(aKey) - rank(bKey) || id(aKey) - id(bKey);
+}
 
 /** Simula los comandos IPC con estado en memoria y registra las llamadas. */
 export function installBackend(overrides: Partial<BackendState> = {}): MockBackend {
@@ -211,6 +237,7 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
     diskPages: {},
     diskFiles: [],
     pickQueue: [],
+    history: [],
     failures: {},
     failureQueue: {},
     gates: {},
@@ -552,6 +579,34 @@ export function installBackend(overrides: Partial<BackendState> = {}): MockBacke
           finishedAt: 1_800_000_001_000,
         };
         return finished;
+      }
+      case "list_cleanup_runs": {
+        const { before, limit } = args as { before: CleanupRunCursor | null; limit: number };
+        const ordered = [...state.history]
+          .map((item) => item.run)
+          .sort((a, b) => compareRuns(b.finishedAt, b.key, a.finishedAt, a.key));
+        const rest =
+          before === null
+            ? ordered
+            : ordered.filter((run) => compareRuns(run.finishedAt, run.key, before.finishedAt, before.key) < 0);
+        const items = rest.slice(0, limit);
+        const last = items[items.length - 1];
+        const nextCursor =
+          rest.length > limit && last !== undefined ? { finishedAt: last.finishedAt, key: last.key } : null;
+        return { items, nextCursor };
+      }
+      case "list_cleanup_entries": {
+        const { key, offset, limit } = args as { key: CleanupRunKey; offset: number; limit: number };
+        const found = state.history.find((item) => sameRunKey(item.run.key, key));
+        const entries = found?.entries ?? [];
+        const hidden = (state.privilege as { status?: unknown }).status === "mismatch";
+        return {
+          total: entries.length,
+          pathsHidden: hidden,
+          items: entries
+            .slice(offset, offset + limit)
+            .map((entry) => (hidden ? { ...entry, path: null } : entry)),
+        };
       }
       case "start_monitor_stream":
         return state.monitorSnapshot;

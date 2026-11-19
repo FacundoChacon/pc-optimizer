@@ -4,6 +4,7 @@ pub mod connection;
 mod duplicates;
 pub mod errors;
 mod folders;
+mod history;
 mod junk;
 pub mod migrations;
 pub mod recovery;
@@ -21,7 +22,9 @@ use crate::domain::model::{
     CleanupLogEntry, EpochMillis, NewCleanupLogEntry, NewScan, SCAN_RETENTION, Scan, ScanId,
     ScanStatus,
 };
-use crate::domain::ports::{CleanupLogStore, ScanStore, SettingsStore, StoreError};
+use crate::domain::ports::{
+    CleanupLogStore, CleanupRunKey, CleanupRunRow, RunCursor, ScanStore, SettingsStore, StoreError,
+};
 use errors::map_sqlite_error;
 use rows::{RawLogRow, log_entry_from_parts, scan_from_parts};
 
@@ -295,6 +298,25 @@ impl CleanupLogStore for SqliteStore {
             })
             .map_err(map_sqlite_error)?;
         Ok(latest.map(EpochMillis))
+    }
+
+    fn cleanup_runs(
+        &self,
+        before: Option<RunCursor>,
+        limit: u32,
+    ) -> Result<Vec<CleanupRunRow>, StoreError> {
+        let conn = self.conn()?;
+        history::cleanup_runs(&conn, before, limit)
+    }
+
+    fn cleanup_run_entries(
+        &self,
+        key: CleanupRunKey,
+        offset: u64,
+        limit: u32,
+    ) -> Result<(u64, Vec<CleanupLogEntry>), StoreError> {
+        let conn = self.conn()?;
+        history::cleanup_run_entries(&conn, key, offset, limit)
     }
 }
 

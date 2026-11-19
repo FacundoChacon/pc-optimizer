@@ -33,4 +33,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "reveal_in_explorer",
     "start_monitor_stream",
     "stop_monitor_stream",
+    "list_cleanup_runs",
+    "list_cleanup_entries",
 ];

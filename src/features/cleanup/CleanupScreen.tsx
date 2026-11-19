@@ -8,13 +8,14 @@ import { format, formatBytes, formatDateTime } from "../../shared/i18n/format";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { CategoryCard } from "./CategoryCard";
-import { useCleanup, useEmptyRecycleBin } from "./CleanupProvider";
+import { useAnnounce } from "../../app/providers/Announcer";
+import { hasEligibleItems } from "../dashboard/cleanNowPlan";
+import { useCleanNow, useCleanup, useEmptyRecycleBin } from "./CleanupProvider";
 import { CleanupPreviewDialog } from "./CleanupPreviewDialog";
 import { CleanupProgress } from "./CleanupProgress";
 import { CleanupSummaryCard } from "./CleanupSummary";
 import { EmptyRecycleBinDialog } from "./EmptyRecycleBinDialog";
 import { EmptyRecycleBinResult } from "./EmptyRecycleBinResult";
-import { isCleanable } from "./cleanupText";
 import { useJunkScan } from "./JunkScanProvider";
 import { ScanProgress } from "./ScanProgress";
 
@@ -26,6 +27,8 @@ export function CleanupScreen() {
   const { settings } = useSettings();
   const { loaded, last, progress, error, notice, start, cancel } = useJunkScan();
   const cleaning = useCleanup();
+  const cleanNow = useCleanNow();
+  const announce = useAnnounce();
   const emptying = useEmptyRecycleBin();
   const privilege = usePrivilege();
   const advanced = settings.uiMode === "advanced";
@@ -34,7 +37,14 @@ export function CleanupScreen() {
   // Medir o vaciar la Papelera ocupa la pantalla: nada mas puede arrancar hasta que termine.
   const binBusy = emptying.phase === "preparing" || emptying.phase === "emptying";
   const scanButton = useRef<HTMLButtonElement>(null);
+  const cleanButton = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const wasScanning = useRef(scanning);
+  // El preview lo abrio el pedido "Limpiar ahora": al cerrarlo el foco va a Limpiar (o al encabezado), no al
+  // elemento que casualmente lo tenia (<main>, Buscar basura). Se apaga al cerrar y al abrir a mano.
+  const openedByCleanNow = useRef(false);
+  // "Limpiar ahora" (D-02/D-03): busqueda iniciada por el pedido y el escaneo previo, para saber si es nuevo.
+  const awaitingScan = useRef<{ previousScanId: number | null; seenRunning: boolean } | null>(null);
 
   // Al terminar, el boton Cancelar desaparece: el foco pasa a Buscar basura para no perderse.
   useEffect(() => {
@@ -42,15 +52,7 @@ export function CleanupScreen() {
     wasScanning.current = scanning;
   }, [scanning]);
 
-  const hasEligible =
-    last !== null &&
-    last.categories.some(
-      (category) =>
-        isCleanable(category.category) &&
-        category.status !== "blocked" &&
-        category.status !== "unavailable" &&
-        category.itemCount > 0,
-    );
+  const hasEligible = hasEligibleItems(last);
   const canClean =
     last !== null && hasEligible && last.cleanedAt === null && !scanning && !cleanRunning && !binBusy;
   const alreadyCleaned = last !== null && last.cleanedAt !== null && cleaning.summary === null;
@@ -62,6 +64,53 @@ export function CleanupScreen() {
     emptying.dismiss();
     start();
   };
+
+  // Pedido "Limpiar ahora" de Inicio: se consume al montar. Nunca ejecuta una limpieza: solo abre el preview.
+  useEffect(() => {
+    const plan = cleanNow.consume();
+    if (plan === "preview") {
+      openedByCleanNow.current = true;
+      cleaning.open();
+    } else if (plan === "scan_then_preview") {
+      awaitingScan.current = { previousScanId: last?.scanId ?? null, seenRunning: false };
+      cleaning.reset();
+      emptying.dismiss();
+      start();
+      // El boton de Inicio ya no existe y la navegacion no movio el foco: queda en el encabezado.
+      titleRef.current?.focus();
+    }
+    // Al salir de Limpieza el pedido pendiente se descarta. La espera del escaneo vive en un ref de esta
+    // instancia: se pierde sola al desmontar y NO se limpia aca, porque StrictMode ejecuta el efecto dos veces
+    // y la segunda pasada ya no recupera el pedido (consume() devuelve null).
+    return () => {
+      cleanNow.drop();
+    };
+    // Solo al montar: el pedido se consume una vez.
+  }, []);
+
+  // Un error del inicio descarta la espera aunque la busqueda nunca haya llegado a verse en curso:
+  // una busqueda manual posterior no debe abrir un preview que nadie pidio.
+  useEffect(() => {
+    if (error !== null) awaitingScan.current = null;
+  }, [error]);
+
+  // Fin de la busqueda pedida: con un escaneo nuevo `done` y elegibles se abre el preview; si no, solo se anuncia.
+  useEffect(() => {
+    const waiting = awaitingScan.current;
+    if (waiting === null) return;
+    if (scanning) {
+      waiting.seenRunning = true;
+      return;
+    }
+    if (!waiting.seenRunning) return;
+    awaitingScan.current = null;
+    const fresh = last !== null && last.scanId !== waiting.previousScanId && last.status === "done";
+    if (!fresh) return;
+    if (hasEligibleItems(last)) {
+      openedByCleanNow.current = true;
+      cleaning.open();
+    } else announce(es.cleanup.cleanNowNothing);
+  }, [scanning, last, cleaning, announce]);
 
   // "Vaciar Papelera…" (C-10): solo sin trabajos en curso y fuera de mismatch (la Papelera es por-usuario).
   const privilegeReady = privilege.phase === "ready";
@@ -76,10 +125,19 @@ export function CleanupScreen() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">{es.cleanup.title}</h1>
+      <h1 ref={titleRef} tabIndex={-1} className="text-2xl font-semibold">
+        {es.cleanup.title}
+      </h1>
       <div className="flex flex-wrap items-center gap-3">
         {canClean && (
-          <Button variant="primary" onClick={cleaning.open}>
+          <Button
+            ref={cleanButton}
+            variant="primary"
+            onClick={() => {
+              openedByCleanNow.current = false;
+              cleaning.open();
+            }}
+          >
             {es.cleanup.clean}
           </Button>
         )}
@@ -178,6 +236,12 @@ export function CleanupScreen() {
         onToggle={cleaning.toggle}
         onConfirm={cleaning.confirm}
         onCancel={cleaning.closeDialog}
+        fallbackFocus={() => cleanButton.current ?? titleRef.current}
+        preferFallbackFocus={() => {
+          const prefer = openedByCleanNow.current;
+          openedByCleanNow.current = false;
+          return prefer;
+        }}
       />
       <EmptyRecycleBinDialog
         phase={emptying.phase}

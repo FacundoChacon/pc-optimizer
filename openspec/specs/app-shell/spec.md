@@ -73,10 +73,10 @@ Cada comando IPC propio SHALL quedar sujeto al control de acceso del runtime y e
 
 #### Scenario: Lista exacta de comandos habilitados
 - **WHEN** la suite de tests compara los comandos propios declarados en el backend con los permisos de comandos de las capabilities
-- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan`, `list_junk_findings`, `preview_cleanup`, `confirm_cleanup`, `cancel_cleanup`, `prepare_empty_recycle_bin`, `acknowledge_empty_recycle_bin`, `empty_recycle_bin`, `start_duplicate_scan`, `get_last_duplicate_scan`, `list_duplicate_groups`, `preview_duplicate_cleanup`, `confirm_duplicate_cleanup`, `start_folder_scan`, `get_last_folder_scan`, `list_folder_children`, `list_large_files`, `pick_folder_root`, `reveal_in_explorer`, `start_monitor_stream` y `stop_monitor_stream`)
+- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan`, `list_junk_findings`, `preview_cleanup`, `confirm_cleanup`, `cancel_cleanup`, `prepare_empty_recycle_bin`, `acknowledge_empty_recycle_bin`, `empty_recycle_bin`, `start_duplicate_scan`, `get_last_duplicate_scan`, `list_duplicate_groups`, `preview_duplicate_cleanup`, `confirm_duplicate_cleanup`, `start_folder_scan`, `get_last_folder_scan`, `list_folder_children`, `list_large_files`, `pick_folder_root`, `reveal_in_explorer`, `start_monitor_stream`, `stop_monitor_stream`, `list_cleanup_runs` y `list_cleanup_entries`)
 
 #### Scenario: Progreso sin permisos de eventos
-- **WHEN** se revisan las capabilities tras agregar el escaneo de basura, la limpieza, el vaciado de la Papelera, la búsqueda de duplicados, el análisis de uso del disco y el monitor en vivo
+- **WHEN** se revisan las capabilities tras agregar el escaneo de basura, la limpieza, el vaciado de la Papelera, la búsqueda de duplicados, el análisis de uso del disco, el monitor en vivo y el historial de limpieza
 - **THEN** no contienen permisos `core:*` (de eventos ni de otro tipo) ni de plugins; el progreso y el flujo de muestras viajan por el canal de la propia invocación
 
 #### Scenario: Selector y Explorador sin plugins
@@ -84,7 +84,7 @@ Cada comando IPC propio SHALL quedar sujeto al control de acceso del runtime y e
 - **THEN** no contienen permisos de los plugins `dialog`, `shell`, `opener` ni `fs`; ambas acciones son comandos propios del backend
 
 ### Requirement: Navegación entre pantallas del shell
-La interfaz SHALL ofrecer un shell común con navegación entre las pantallas registradas (hoy: Inicio, Espacio en disco, Limpieza, Duplicados, Monitor y Configuración, en ese orden), que muestra una sola pantalla a la vez, arranca en Inicio y marca la pantalla activa de forma accesible.
+La interfaz SHALL ofrecer un shell común con navegación entre las pantallas registradas (hoy: Inicio, Espacio en disco, Limpieza, Duplicados, Historial, Monitor y Configuración, en ese orden), que muestra una sola pantalla a la vez, arranca en Inicio y marca la pantalla activa de forma accesible.
 
 #### Scenario: Arranque en Inicio
 - **WHEN** la app termina de cargar la configuración
@@ -109,6 +109,10 @@ La interfaz SHALL ofrecer un shell común con navegación entre las pantallas re
 #### Scenario: Ir a Monitor
 - **WHEN** el usuario activa la entrada "Monitor" de la navegación
 - **THEN** se muestra la pantalla Monitor con su encabezado principal y la entrada queda marcada como actual
+
+#### Scenario: Ir a Historial
+- **WHEN** el usuario activa la entrada "Historial" de la navegación
+- **THEN** se muestra la pantalla Historial con su encabezado principal y la entrada queda marcada como actual
 
 #### Scenario: Solo pantallas implementadas
 - **WHEN** se renderiza la navegación
@@ -202,3 +206,14 @@ Mientras el contexto de privilegios sea `mismatch`, el shell SHALL mostrar en to
 #### Scenario: Aviso sin cierre
 - **WHEN** el aviso de privilegios está visible
 - **THEN** no ofrece acción para ocultarlo y sigue visible al navegar entre pantallas y al cambiar de modo
+
+### Requirement: Navegación sin mover el foco a pedido de la pantalla destino
+La navegación SHALL mover el foco al contenido principal tras cambiar de pantalla, salvo cuando quien navega pide que la pantalla destino maneje el foco (por ejemplo, para abrir un diálogo al llegar); en ese caso MUST NOT mover el foco al contenido principal.
+
+#### Scenario: Navegación por la barra
+- **WHEN** el usuario activa una entrada de la navegación
+- **THEN** el foco pasa al contenido principal de la pantalla nueva
+
+#### Scenario: Navegación que abre un diálogo
+- **WHEN** Inicio navega a Limpieza pidiendo abrir el preview de la limpieza
+- **THEN** el foco queda en "Cancelar" del diálogo y no en el contenido principal

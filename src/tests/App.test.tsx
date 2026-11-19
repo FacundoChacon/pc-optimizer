@@ -18,12 +18,12 @@ describe("App", () => {
     expect(screen.getByText(es.app.title)).toBeInTheDocument();
   });
 
-  it("Inicio es un estado vacio sin accion primaria", async () => {
+  it("Inicio tiene una unica accion primaria: Limpiar ahora", async () => {
     installBackend();
     const { container } = render(<App />);
-    expect(await screen.findByText(es.home.emptyTitle)).toBeInTheDocument();
-    expect(screen.getByText(es.home.emptyBody)).toBeInTheDocument();
-    expect(container.querySelector('[data-variant="primary"]')).toBeNull();
+    const button = await screen.findByRole("button", { name: es.home.cleanNow });
+    expect(container.querySelectorAll('[data-variant="primary"]')).toHaveLength(1);
+    expect(button).toHaveAttribute("data-variant", "primary");
   });
 
   it.each(["0.1.0", "9.9.9"])("muestra la version %s devuelta por el backend", async (version) => {

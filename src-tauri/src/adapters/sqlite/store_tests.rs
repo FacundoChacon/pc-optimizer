@@ -62,6 +62,30 @@ fn sqlite_store_should_satisfy_log_contracts() {
     });
 }
 
+#[test]
+fn sqlite_store_should_satisfy_contract_cleanup_runs() {
+    with_temp_stores(|make| {
+        contract::contract_cleanup_runs_group_rows_of_one_scan(make);
+        contract::contract_cleanup_runs_split_entries_without_scan(make);
+        contract::contract_cleanup_runs_empty_log_is_an_empty_list(make);
+        contract::contract_cleanup_runs_list_distinct_categories_and_keep_detail(make);
+        contract::contract_cleanup_runs_page_by_cursor_without_repeats(make);
+        contract::contract_cleanup_runs_same_timestamp_has_a_stable_order(make);
+        contract::contract_cleanup_runs_zero_limit_is_empty(make);
+        contract::contract_cleanup_runs_new_rows_move_a_run_to_the_top(make);
+    });
+}
+
+#[test]
+fn sqlite_store_should_satisfy_contract_cleanup_run_entries() {
+    with_temp_stores(|make| {
+        contract::contract_cleanup_run_entries_page_in_insertion_order(make);
+        contract::contract_cleanup_run_entries_entry_key_returns_only_that_row(make);
+        contract::contract_cleanup_run_entries_unknown_key_is_an_empty_page(make);
+        contract::contract_cleanup_run_entries_never_mix_other_scans(make);
+    });
+}
+
 // --- C-08: hallazgos de basura ---
 #[test]
 fn sqlite_store_should_satisfy_contract_junk_scan_round_trip() {
@@ -653,5 +677,186 @@ mod orphan_scans {
                 .unwrap();
             assert_eq!(rows, 0, "{table}");
         }
+    }
+}
+
+/// Benchmark de C-12 D-10: sin indice nuevo, la primera pagina de limpiezas y una pagina de
+/// items deben seguir siendo rapidas con 100 000 filas. Se corre a mano:
+/// `cargo test --locked --ignored --nocapture cleanup_runs_benchmark`.
+#[test]
+#[ignore = "mide rendimiento sobre 100 000 filas en un tempdir"]
+fn cleanup_runs_benchmark_should_page_100_000_rows_quickly() {
+    let dir = TempDir::new().unwrap();
+    let store = SqliteStore::open(&dir.path().join("data.db")).unwrap();
+    let rows: Vec<NewCleanupLogEntry> = (0..100_000_i64)
+        .map(|n| NewCleanupLogEntry {
+            ts: EpochMillis(1_000 + n),
+            category: "temp_user".into(),
+            path: format!(r"C:\Users\x\AppData\Local\Temp\file-{n}.tmp"),
+            size_bytes: 1_024,
+            outcome: CleanupOutcome::MovedToTrash,
+            scan_id: Some(ScanId(1 + n / 500)),
+            error_detail: None,
+        })
+        .collect();
+    store.append_cleanup_log(&rows).unwrap();
+
+    let started = std::time::Instant::now();
+    let runs = store.cleanup_runs(None, 50).unwrap();
+    let runs_ms = started.elapsed().as_millis();
+    let cursor = runs.last().map(|run| crate::domain::ports::RunCursor {
+        finished_at: run.finished_at,
+        key: run.key,
+    });
+    let started = std::time::Instant::now();
+    let second = store.cleanup_runs(cursor, 50).unwrap();
+    let second_ms = started.elapsed().as_millis();
+    let started = std::time::Instant::now();
+    let (total, page) = store
+        .cleanup_run_entries(
+            crate::domain::ports::CleanupRunKey::Scan(ScanId(100)),
+            200,
+            200,
+        )
+        .unwrap();
+    let entries_ms = started.elapsed().as_millis();
+
+    println!(
+        "BENCH first runs page ({} runs): {runs_ms} ms; second page ({}): {second_ms} ms; entries page ({} of {total}): {entries_ms} ms",
+        runs.len(),
+        second.len(),
+        page.len()
+    );
+    assert_eq!(runs.len(), 50);
+    assert_eq!(page.len(), 200);
+    // El limite de 100 ms (D-10) aplica al binario optimizado: en debug SQLite se compila sin
+    // optimizar y tarda ~1,7 veces mas.
+    if !cfg!(debug_assertions) {
+        assert!(runs_ms < 100, "la pagina de limpiezas tardo {runs_ms} ms");
+    }
+}
+
+/// Siembra del smoke guiado de C-12 (design D-17): historial sintetico en la base temporal.
+mod smoke_seed {
+    use std::path::{Component, Path, PathBuf};
+
+    use super::{CleanupOutcome, EpochMillis, NewCleanupLogEntry, ScanId, SqliteStore};
+    use crate::domain::ports::CleanupLogStore;
+
+    /// Carpeta de datos del smoke: `PCOPT_DATA_DIR` debe existir, ser absoluta, sin `..` y colgar de
+    /// la carpeta temporal del sistema. Cualquier otra cosa se rechaza (nunca se toca la base real).
+    fn smoke_data_dir(raw: Option<&str>, temp: &Path) -> Result<PathBuf, String> {
+        let raw = raw
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("PCOPT_DATA_DIR no esta definida")?;
+        let dir = PathBuf::from(raw);
+        if !dir.is_absolute() || dir.components().any(|part| part == Component::ParentDir) {
+            return Err("PCOPT_DATA_DIR debe ser absoluta y sin '..'".into());
+        }
+        let lower = |path: &Path| path.to_string_lossy().to_lowercase().replace('/', "\\");
+        let (dir_text, temp_text) = (lower(&dir), lower(temp));
+        let inside = dir_text
+            .strip_prefix(temp_text.trim_end_matches('\\'))
+            .is_some_and(|rest| rest.starts_with('\\'));
+        if !inside {
+            return Err("PCOPT_DATA_DIR debe estar dentro de la carpeta temporal".into());
+        }
+        Ok(dir)
+    }
+
+    /// 130 + 24 + 1 limpiezas: una de 130 items (pagina de 100 + 30), 23 de un item y un vaciado.
+    fn seed_rows(now_ms: i64) -> Vec<NewCleanupLogEntry> {
+        const HOUR: i64 = 3_600_000;
+        let row =
+            |n: i64, ts: i64, scan: Option<i64>, outcome, category: &str| NewCleanupLogEntry {
+                ts: EpochMillis(ts),
+                category: category.into(),
+                path: format!(
+                    r"C:\Users\smoke\AppData\Local\Temp\pcopt-smoke-c12\sintetico-{n}.tmp"
+                ),
+                size_bytes: 1_048_576 + n.unsigned_abs(),
+                outcome,
+                scan_id: scan.map(ScanId),
+                error_detail: None,
+            };
+        let mut rows = Vec::new();
+        for n in 0..130 {
+            let outcome = match n % 40 {
+                7 => CleanupOutcome::SkippedLocked,
+                23 => CleanupOutcome::SkippedProtected,
+                _ => CleanupOutcome::MovedToTrash,
+            };
+            rows.push(row(n, now_ms - 2 * HOUR + n, Some(1), outcome, "temp_user"));
+        }
+        for scan in 2..=24 {
+            let ts = now_ms - (scan + 2) * HOUR;
+            rows.push(row(
+                1_000 + scan,
+                ts,
+                Some(scan),
+                CleanupOutcome::MovedToTrash,
+                "temp_windows",
+            ));
+        }
+        let mut bin = row(
+            2_000,
+            now_ms - HOUR,
+            None,
+            CleanupOutcome::RecycleBinEmptied,
+            "recycle_bin",
+        );
+        bin.size_bytes = 52_428_800;
+        rows.push(bin);
+        rows
+    }
+
+    #[test]
+    fn smoke_data_dir_should_accept_only_an_absolute_path_inside_the_temp_folder() {
+        let temp = Path::new(r"C:\Users\x\AppData\Local\Temp");
+        let ok = r"C:\Users\x\AppData\Local\Temp\pcopt-smoke-c12\data";
+        assert_eq!(smoke_data_dir(Some(ok), temp), Ok(PathBuf::from(ok)));
+        assert!(smoke_data_dir(Some(&ok.to_lowercase()), temp).is_ok());
+        assert!(smoke_data_dir(None, temp).is_err());
+        assert!(smoke_data_dir(Some("  "), temp).is_err());
+        assert!(smoke_data_dir(Some(r"C:\Users\x\AppData\Roaming\pcopt"), temp).is_err());
+        assert!(smoke_data_dir(Some(r"C:\Users\x\AppData\Local\TempOther\data"), temp).is_err());
+        assert!(smoke_data_dir(Some(r"C:\Users\x\AppData\Local\Temp"), temp).is_err());
+        assert!(
+            smoke_data_dir(Some(r"C:\Users\x\AppData\Local\Temp\a\..\..\Roaming"), temp).is_err()
+        );
+        assert!(smoke_data_dir(Some(r"relativa\data"), temp).is_err());
+    }
+
+    #[test]
+    fn seed_rows_should_build_25_runs_with_a_130_item_run_and_a_bin_emptying() {
+        let rows = seed_rows(1_800_000_000_000);
+        assert_eq!(rows.len(), 130 + 23 + 1);
+        assert_eq!(
+            rows.iter().filter(|r| r.scan_id == Some(ScanId(1))).count(),
+            130
+        );
+        assert_eq!(rows.iter().filter(|r| r.scan_id.is_none()).count(), 1);
+        assert!(rows.iter().all(|r| r.path.contains("pcopt-smoke-c12")));
+    }
+
+    /// Siembra la base temporal del smoke. Solo escribe en `PCOPT_DATA_DIR\data.db` y se niega si la
+    /// variable falta o apunta fuera de la carpeta temporal.
+    #[test]
+    #[ignore = "siembra la base temporal del smoke de C-12"]
+    fn seed_smoke_database() {
+        let raw = std::env::var("PCOPT_DATA_DIR").ok();
+        let dir =
+            smoke_data_dir(raw.as_deref(), &std::env::temp_dir()).expect("PCOPT_DATA_DIR invalida");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = SqliteStore::open(&crate::config::db_path(&dir)).unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        store
+            .append_cleanup_log(&seed_rows(i64::try_from(now).unwrap()))
+            .unwrap();
+        println!("SEED escrito en {}", dir.display());
     }
 }

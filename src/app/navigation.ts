@@ -3,12 +3,13 @@ import { CleanupScreen } from "../features/cleanup/CleanupScreen";
 import { HomeScreen } from "../features/dashboard/HomeScreen";
 import { DiskScreen } from "../features/disk/DiskScreen";
 import { DuplicatesScreen } from "../features/duplicates/DuplicatesScreen";
+import { HistoryScreen } from "../features/history/HistoryScreen";
 import { MonitorScreen } from "../features/monitor/MonitorScreen";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { es } from "../shared/i18n/es";
 import type { IconName } from "../shared/ui/Icon";
 
-export type ScreenId = "home" | "disk" | "cleanup" | "duplicates" | "monitor" | "settings";
+export type ScreenId = "home" | "disk" | "cleanup" | "duplicates" | "history" | "monitor" | "settings";
 
 export interface ScreenDef {
   id: ScreenId;
@@ -23,6 +24,7 @@ export const SCREENS: readonly ScreenDef[] = [
   { id: "disk", label: es.nav.disk, icon: "disk", Component: DiskScreen },
   { id: "cleanup", label: es.nav.cleanup, icon: "cleanup", Component: CleanupScreen },
   { id: "duplicates", label: es.nav.duplicates, icon: "duplicates", Component: DuplicatesScreen },
+  { id: "history", label: es.nav.history, icon: "history", Component: HistoryScreen },
   { id: "monitor", label: es.nav.monitor, icon: "monitor", Component: MonitorScreen },
   { id: "settings", label: es.nav.settings, icon: "settings", Component: SettingsScreen },
 ];

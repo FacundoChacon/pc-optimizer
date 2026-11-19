@@ -1856,3 +1856,206 @@ export async function startMonitorStream(
 export async function stopMonitorStream(subscriptionId: number): Promise<void> {
   await call<unknown>("stop_monitor_stream", { subscriptionId });
 }
+
+// ---------------------------------------------------------------------------------------------
+// Historial de limpieza (C-12)
+// ---------------------------------------------------------------------------------------------
+
+/** Clave de una limpieza (espejo de `commands::history::RunKeyDto`): un escaneo o una fila suelta. */
+export type CleanupRunKey = { kind: "scan"; scanId: number } | { kind: "entry"; entryId: number };
+
+/** Tipo de limpieza segun sus categorias (espejo de `domain::cleanup::history::RunKind`). */
+export type CleanupRunKind = "junk" | "duplicates" | "recycle_bin_empty" | "other";
+
+/** Resultado de un item del log (espejo de `domain::model::CleanupOutcome`). */
+export type CleanupOutcome =
+  | "moved_to_trash"
+  | "skipped_locked"
+  | "skipped_protected"
+  | "skipped_cloud"
+  | "error"
+  | "recycle_bin_emptied";
+
+/** Cantidad de items por resultado de una limpieza. */
+export interface CleanupRunOutcomes {
+  movedToTrash: number;
+  skippedLocked: number;
+  skippedProtected: number;
+  skippedCloud: number;
+  error: number;
+  recycleBinEmptied: number;
+}
+
+/** Una limpieza del historial, sin rutas (espejo de `commands::history::CleanupRunDto`). */
+export interface CleanupRun {
+  key: CleanupRunKey;
+  kind: CleanupRunKind;
+  startedAt: number;
+  finishedAt: number;
+  entryCount: number;
+  outcomes: CleanupRunOutcomes;
+  movedBytes: number;
+  emptiedBytes: number;
+  emptyDetail: "partial" | "unverified" | null;
+  categories: string[];
+}
+
+/** Cursor de paginacion: la ultima limpieza vista. */
+export interface CleanupRunCursor {
+  finishedAt: number;
+  key: CleanupRunKey;
+}
+
+export interface CleanupRunPage {
+  items: CleanupRun[];
+  nextCursor: CleanupRunCursor | null;
+}
+
+/** Un item de una limpieza; `path` es `null` cuando el backend lo oculta. */
+export interface CleanupEntry {
+  id: number;
+  ts: number;
+  category: string;
+  path: string | null;
+  sizeBytes: number;
+  outcome: CleanupOutcome;
+  errorDetail: string | null;
+}
+
+export interface CleanupEntryPage {
+  total: number;
+  pathsHidden: boolean;
+  items: CleanupEntry[];
+}
+
+const CLEANUP_RUN_KINDS: readonly unknown[] = ["junk", "duplicates", "recycle_bin_empty", "other"];
+const CLEANUP_OUTCOMES: readonly unknown[] = [
+  "moved_to_trash",
+  "skipped_locked",
+  "skipped_protected",
+  "skipped_cloud",
+  "error",
+  "recycle_bin_emptied",
+];
+
+function decodeRunKey(raw: unknown): CleanupRunKey | null {
+  if (!isRecord(raw)) return null;
+  if (raw["kind"] === "scan" && isCount(raw["scanId"])) return { kind: "scan", scanId: raw["scanId"] };
+  if (raw["kind"] === "entry" && isCount(raw["entryId"])) return { kind: "entry", entryId: raw["entryId"] };
+  return null;
+}
+
+function decodeRunOutcomes(raw: unknown): CleanupRunOutcomes | null {
+  if (!isRecord(raw)) return null;
+  const { movedToTrash, skippedLocked, skippedProtected, skippedCloud, error, recycleBinEmptied } = raw;
+  if (
+    isCount(movedToTrash) &&
+    isCount(skippedLocked) &&
+    isCount(skippedProtected) &&
+    isCount(skippedCloud) &&
+    isCount(error) &&
+    isCount(recycleBinEmptied)
+  ) {
+    return { movedToTrash, skippedLocked, skippedProtected, skippedCloud, error, recycleBinEmptied };
+  }
+  return null;
+}
+
+function decodeCleanupRun(raw: unknown): CleanupRun | null {
+  if (!isRecord(raw)) return null;
+  const key = decodeRunKey(raw["key"]);
+  const outcomes = decodeRunOutcomes(raw["outcomes"]);
+  const { kind, startedAt, finishedAt, entryCount, movedBytes, emptiedBytes, emptyDetail, categories } = raw;
+  if (
+    key !== null &&
+    outcomes !== null &&
+    CLEANUP_RUN_KINDS.includes(kind) &&
+    isCount(startedAt) &&
+    isCount(finishedAt) &&
+    isCount(entryCount) &&
+    isCount(movedBytes) &&
+    isCount(emptiedBytes) &&
+    (emptyDetail === null || emptyDetail === "partial" || emptyDetail === "unverified") &&
+    Array.isArray(categories) &&
+    categories.every((category): category is string => typeof category === "string")
+  ) {
+    return {
+      key,
+      kind: kind as CleanupRunKind,
+      startedAt,
+      finishedAt,
+      entryCount,
+      outcomes,
+      movedBytes,
+      emptiedBytes,
+      emptyDetail,
+      categories,
+    };
+  }
+  return null;
+}
+
+function decodeCleanupRunPage(raw: unknown, command: string): CleanupRunPage {
+  if (isRecord(raw) && Array.isArray(raw["items"])) {
+    const items = raw["items"].map(decodeCleanupRun);
+    const cursorRaw = raw["nextCursor"];
+    const key = isRecord(cursorRaw) ? decodeRunKey(cursorRaw["key"]) : null;
+    const finishedAt = isRecord(cursorRaw) ? cursorRaw["finishedAt"] : null;
+    if (items.every((item) => item !== null) && (cursorRaw === null || (key !== null && isCount(finishedAt)))) {
+      return {
+        items: items.filter((item): item is CleanupRun => item !== null),
+        nextCursor: key !== null && isCount(finishedAt) ? { finishedAt, key } : null,
+      };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+function decodeCleanupEntry(raw: unknown): CleanupEntry | null {
+  if (!isRecord(raw)) return null;
+  const { id, ts, category, path, sizeBytes, outcome, errorDetail } = raw;
+  if (
+    isCount(id) &&
+    isCount(ts) &&
+    typeof category === "string" &&
+    category.length > 0 &&
+    (path === null || typeof path === "string") &&
+    isCount(sizeBytes) &&
+    CLEANUP_OUTCOMES.includes(outcome) &&
+    (errorDetail === null || typeof errorDetail === "string")
+  ) {
+    return { id, ts, category, path, sizeBytes, outcome: outcome as CleanupOutcome, errorDetail };
+  }
+  return null;
+}
+
+function decodeCleanupEntryPage(raw: unknown, command: string): CleanupEntryPage {
+  if (isRecord(raw) && Array.isArray(raw["items"])) {
+    const items = raw["items"].map(decodeCleanupEntry);
+    const { total, pathsHidden } = raw;
+    if (isCount(total) && typeof pathsHidden === "boolean" && items.every((item) => item !== null)) {
+      return { total, pathsHidden, items: items.filter((item): item is CleanupEntry => item !== null) };
+    }
+  }
+  throw invalidResponse(command);
+}
+
+/** Una pagina de limpiezas, de la mas reciente a la mas antigua (1 a 50); el cursor viene de la anterior. */
+export async function listCleanupRuns(before: CleanupRunCursor | null, limit: number): Promise<CleanupRunPage> {
+  return decodeCleanupRunPage(
+    await call<unknown>("list_cleanup_runs", { before, limit }),
+    "list_cleanup_runs",
+  );
+}
+
+/** Una pagina de items de una limpieza (1 a 200); con rutas ocultas `path` llega `null`. */
+export async function listCleanupEntries(
+  key: CleanupRunKey,
+  offset: number,
+  limit: number,
+): Promise<CleanupEntryPage> {
+  return decodeCleanupEntryPage(
+    await call<unknown>("list_cleanup_entries", { key, offset, limit }),
+    "list_cleanup_entries",
+  );
+}

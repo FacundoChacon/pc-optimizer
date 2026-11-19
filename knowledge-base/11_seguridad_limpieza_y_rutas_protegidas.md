@@ -98,7 +98,7 @@ Las copias de un grupo se mueven por `run_cleanup` con un gancho adicional que, 
 
 ## Registro (auditoría)
 
-`cleanup_log` es append-only: `ts`, `category`, `path`, `size_bytes`, `outcome`, `scan_id`, `error_detail`. Visible en la UI (modo avanzado: rutas completas) y en reportes (rutas ofuscadas por defecto).
+`cleanup_log` es append-only: `ts`, `category`, `path`, `size_bytes`, `outcome`, `scan_id`, `error_detail`. Visible en la UI (C-12: pantalla Historial; modo simple sin rutas ni códigos, modo avanzado con rutas completas; con contexto `mismatch` el backend devuelve las rutas ocultas) y en reportes (rutas ofuscadas por defecto, regla distinta que define C-27).
 
 `error_detail` es un **código estable** (ASCII `snake_case`, sin rutas ni texto localizado) para todo outcome distinto de `moved_to_trash`. Tabla de C-09 (design D-06; sin outcomes nuevos):
 

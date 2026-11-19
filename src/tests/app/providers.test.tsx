@@ -20,8 +20,8 @@ afterEach(() => {
 const unavailable: AppError = { kind: "store_unavailable", message: "x" };
 
 describe("navegacion (7.1)", () => {
-  it("SCREENS contiene exactamente home, disk, cleanup, duplicates, monitor y settings con sus componentes", () => {
-    expect(SCREENS.map((screen) => screen.id)).toEqual(["home", "disk", "cleanup", "duplicates", "monitor", "settings"]);
+  it("SCREENS contiene exactamente home, disk, cleanup, duplicates, history, monitor y settings con sus componentes", () => {
+    expect(SCREENS.map((screen) => screen.id)).toEqual(["home", "disk", "cleanup", "duplicates", "history", "monitor", "settings"]);
     expect(DEFAULT_SCREEN).toBe("home");
     for (const def of SCREENS) expect(typeof def.Component).toBe("function");
   });

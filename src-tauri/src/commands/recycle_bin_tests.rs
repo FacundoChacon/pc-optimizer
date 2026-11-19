@@ -522,6 +522,23 @@ impl CleanupLogStore for FailingLog {
     ) -> Result<Option<EpochMillis>, StoreError> {
         Ok(None)
     }
+
+    fn cleanup_runs(
+        &self,
+        _before: Option<crate::domain::ports::RunCursor>,
+        _limit: u32,
+    ) -> Result<Vec<crate::domain::ports::CleanupRunRow>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    fn cleanup_run_entries(
+        &self,
+        _key: crate::domain::ports::CleanupRunKey,
+        _offset: u64,
+        _limit: u32,
+    ) -> Result<(u64, Vec<CleanupLogEntry>), StoreError> {
+        Ok((0, Vec::new()))
+    }
 }
 
 #[test]

@@ -10,8 +10,11 @@ Organizadas por épica y luego por historia (US-NNN). Cada historia lleva **hito
 
 **Criterios de aceptación**:
 - [ ] La app arranca en modo simple.
-- [ ] Una acción primaria por pantalla.
+- [ ] Una acción primaria por pantalla (C-12: Inicio tiene exactamente una, "Limpiar ahora"; ninguna otra pantalla tiene más de una).
 - [ ] Textos en lenguaje llano, desde el catálogo de strings.
+- [ ] Inicio muestra tres tarjetas (Espacio, Basura, Memoria) con cifra, frase llana y "Ver detalle", y estados explícitos "No disponible" / "Midiendo…" / "Todavía no buscaste basura" en lugar de ceros.
+- [ ] "Limpiar ahora" lleva a Limpieza y abre el preview (busca antes si el último escaneo tiene 60 min o más); nunca borra por sí sola. Se deshabilita con motivo visible si hay otro trabajo en curso.
+- [ ] Pantalla Historial: limpiezas en frase llana, sin rutas ni códigos.
 
 **Reglas relacionadas**: RN-GLB-03
 
@@ -21,6 +24,8 @@ Organizadas por épica y luego por historia (US-NNN). Cada historia lleva **hito
 
 - [ ] Toggle en Configuración, persistido en `settings`.
 - [ ] Mismo tema oscuro en ambos modos.
+- [ ] Inicio avanzado (C-12): medidores y un gráfico de CPU/memoria de 5 min, tabla de basura por categoría con códigos, resumen del último análisis de disco con su ruta y las 3 últimas limpiezas.
+- [ ] Historial avanzado: conteos por resultado con código y tabla paginada de ítems con ruta completa (rutas ocultas si la app corre con otra cuenta).
 
 **Reglas relacionadas**: RN-GLB-03
 
