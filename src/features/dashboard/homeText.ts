@@ -1,3 +1,4 @@
+import { errorMessage } from "../../shared/i18n/errors";
 import { es } from "../../shared/i18n/es";
 import { format, formatBytes } from "../../shared/i18n/format";
 
@@ -17,4 +18,10 @@ export function binNoteText(binBytes: number): string {
 /** Codigo crudo de un estado no disponible (solo en modo avanzado). */
 export function codeText(code: string): string {
   return format(es.home.codeLabel, { code });
+}
+
+/** Explicacion breve de un estado no disponible: motivo del monitor o mensaje del catalogo por `kind`. */
+export function unavailableNote(code: string): string {
+  const notes: Readonly<Record<string, string>> = es.monitor.availabilityNotes;
+  return Object.hasOwn(notes, code) ? (notes[code] ?? "") : errorMessage({ kind: code, message: "" });
 }
