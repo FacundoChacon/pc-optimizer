@@ -376,3 +376,25 @@ Comando: `npx vitest run src/tests/dashboard/cleanNowRequest.test.tsx src/tests/
 | `openspec validate dashboard-simple-advanced --strict` | - | válido |
 
 Cada tarea de comportamiento de los grupos 1 a 9 tiene su salida RED anotada (Partes 1 y 2 y fixes de la revisión independiente; 9.1 es regresión sin RED propio, ver arriba). Excepción declarada: el hallazgo 2 de la revisión independiente no tiene RED (el test pasaba ya con el código anterior). La siembra del smoke (`smoke_seed`, solo `#[cfg(test)]`) se escribió junto a su guardia de ruta (2 tests no ignorados) y no toca código de producción.
+
+### Fix H-1 (smoke C-12)
+
+Hallazgo del smoke (2026-11-19): al cerrar con Escape un preview abierto desde "Limpiar ahora", el foco iba a "Buscar basura" (plan `scan_then_preview`) o a `<main id="main">` (plan `preview`), no a "Limpiar" como exige el escenario "Cerrar el preview".
+
+Causa: `CleanupPreviewDialog` guarda `document.activeElement` al abrir y solo usa `fallbackFocus` si ese elemento esta desconectado. Al llegar desde Inicio el foco real esta en `<main>` (o en Buscar basura al terminar el escaneo): sigue conectado, asi que el respaldo nunca se aplicaba. Los tests previos usaban como disparador el boton de Inicio (desmontado), por eso no lo detectaban.
+
+Fix: `CleanupScreen` marca (ref `openedByCleanNow`) los previews abiertos por el pedido (ambos planes) y pasa `preferFallbackFocus` al dialogo; con la marca, el cierre (Escape o Cancelar) enfoca `fallbackFocus` (Limpiar, o el encabezado si no existe). La marca se apaga al cerrar y al abrir a mano con "Limpiar": el comportamiento C-09 (volver al elemento que abrio) no cambia.
+
+RED (tests con el foco real en `<main>`, 8 de 9 nuevos fallaban antes del fix; los otros 1 es la apertura manual, que ya pasaba y queda como guardia):
+
+```
+ x plan preview: Escape devuelve el foco a Limpiar aunque estuviera en <main> (y con StrictMode)
+ x plan preview: Cancelar devuelve el foco a Limpiar (y con StrictMode)
+ x scan_then_preview: Escape devuelve el foco a Limpiar y no a Buscar basura (y con StrictMode)
+ x scan_then_preview: Cancelar devuelve el foco a Limpiar
+ x plan preview sin boton Limpiar: el foco de respaldo es el encabezado aunque el foco estuviera en <main>
+Expected element with focus: <button ...>Limpiar</button>
+Received element with focus: <main id="main" tabindex="-1">
+```
+
+GREEN: 22/22 en `cleanNowRequest.test.tsx` (13 previos + 9 nuevos, con y sin StrictMode); suite completa 836/836, `npm run typecheck` y `npm run build` limpios.

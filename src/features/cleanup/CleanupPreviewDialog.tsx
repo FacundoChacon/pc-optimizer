@@ -27,6 +27,11 @@ interface CleanupPreviewDialogProps {
    * el dialogo se abrio al llegar desde Inicio). Si falta o devuelve `null`, no se mueve el foco.
    */
   fallbackFocus?: () => HTMLElement | null;
+  /**
+   * Si devuelve `true` al cerrar, el foco va SIEMPRE a `fallbackFocus`, aunque el elemento que lo tenia al
+   * abrir siga conectado (por ejemplo `<main>` o Buscar basura al llegar desde Inicio con "Limpiar ahora").
+   */
+  preferFallbackFocus?: () => boolean;
 }
 
 /** Se muestra una categoria si esta bloqueada o tiene algo que mover o que se omitio por reciente. */
@@ -50,6 +55,7 @@ export function CleanupPreviewDialog({
   onConfirm,
   onCancel,
   fallbackFocus,
+  preferFallbackFocus,
 }: CleanupPreviewDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -69,7 +75,8 @@ export function CleanupPreviewDialog({
     } else if (!open && dialog.open) {
       dialog.close();
       const trigger = triggerRef.current;
-      const usable = trigger !== null && trigger.isConnected && trigger !== document.body;
+      const usable =
+        preferFallbackFocus?.() !== true && trigger !== null && trigger.isConnected && trigger !== document.body;
       (usable ? trigger : (fallbackFocus?.() ?? null))?.focus();
       triggerRef.current = null;
     }

@@ -21,7 +21,7 @@ const withItems = { temp_user: { scope: "per_user" as const, itemCount: 3, sizeB
 const RESULT = summary({ ...withItems, temp_windows: { itemCount: 2, sizeBytes: 2048 } });
 
 /** Hace de Inicio: un boton que pide "Limpiar ahora" con el plan dado y navega sin mover el foco. */
-function Harness({ plan }: { plan: CleanNowPlan }) {
+function Harness({ plan, focusMain }: { plan: CleanNowPlan; focusMain: boolean }) {
   const { current, navigate } = useNavigation();
   const cleanNow = useCleanNow();
   const Screen = SCREENS.find((screen) => screen.id === current)?.Component;
@@ -33,12 +33,15 @@ function Harness({ plan }: { plan: CleanNowPlan }) {
       <button type="button" onClick={() => navigate("cleanup")}>
         volver a Limpieza
       </button>
+      <main id="main" tabIndex={-1}>
       {current === "home" ? (
         <button
           type="button"
           onClick={() => {
             cleanNow.request(plan);
             navigate("cleanup", { focus: "none" });
+            // Como NavigationProvider al cambiar de pantalla: el foco queda en <main>, que sigue conectado.
+            if (focusMain) document.getElementById("main")?.focus();
           }}
         >
           pedir
@@ -46,6 +49,7 @@ function Harness({ plan }: { plan: CleanNowPlan }) {
       ) : (
         Screen !== undefined && <Screen />
       )}
+      </main>
     </>
   );
 }
@@ -61,12 +65,12 @@ function gateOf(): { gate: Promise<void>; release: () => void } {
 async function request(
   plan: CleanNowPlan,
   overrides: Partial<BackendState> = {},
-  options: { strict?: boolean } = {},
+  options: { strict?: boolean; focusMain?: boolean } = {},
 ): Promise<MockBackend> {
   const backend = installBackend(overrides);
   const tree = (
     <AppProviders>
-      <Harness plan={plan} />
+      <Harness plan={plan} focusMain={options.focusMain === true} />
     </AppProviders>
   );
   render(options.strict === true ? <StrictMode>{tree}</StrictMode> : tree);
@@ -215,5 +219,122 @@ describe("Limpiar ahora: robustez de la espera (revision independiente)", () => 
     fireEvent.click(screen.getByRole("button", { name: es.cleanup.scan }));
     expect(await screen.findByRole("button", { name: es.cleanup.clean })).toBeEnabled();
     expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+});
+
+describe("Limpiar ahora: foco al cerrar el preview con el foco real en <main> (smoke H-1)", () => {
+  const closeByEscape = (dialog: HTMLElement) =>
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+
+  for (const strict of [false, true]) {
+    const suffix = strict ? " (StrictMode)" : "";
+
+    it(`plan preview: Escape devuelve el foco a Limpiar aunque estuviera en <main>${suffix}`, async () => {
+      await request(
+        "preview",
+        { lastScan: RESULT },
+        { focusMain: true, strict },
+      );
+      const dialog = await screen.findByRole("alertdialog", {
+        name: es.cleanup.previewTitle,
+      });
+      closeByEscape(dialog);
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(
+        screen.getByRole("button", { name: es.cleanup.clean }),
+      ).toHaveFocus();
+    });
+
+    it(`plan preview: Cancelar devuelve el foco a Limpiar${suffix}`, async () => {
+      await request(
+        "preview",
+        { lastScan: RESULT },
+        { focusMain: true, strict },
+      );
+      const dialog = await screen.findByRole("alertdialog", {
+        name: es.cleanup.previewTitle,
+      });
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: es.cleanup.cancel }),
+      );
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(
+        screen.getByRole("button", { name: es.cleanup.clean }),
+      ).toHaveFocus();
+    });
+
+    it(`scan_then_preview: Escape devuelve el foco a Limpiar y no a Buscar basura${suffix}`, async () => {
+      const { gate, release } = gateOf();
+      await request(
+        "scan_then_preview",
+        { scanResult: RESULT, gates: { start_scan: gate } },
+        { focusMain: true, strict },
+      );
+      await screen.findByText(es.cleanup.progressTitle);
+      await act(async () => release());
+      const dialog = await screen.findByRole("alertdialog", {
+        name: es.cleanup.previewTitle,
+      });
+      closeByEscape(dialog);
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(
+        screen.getByRole("button", { name: es.cleanup.clean }),
+      ).toHaveFocus();
+    });
+  }
+
+  it("scan_then_preview: Cancelar devuelve el foco a Limpiar", async () => {
+    const { gate, release } = gateOf();
+    await request(
+      "scan_then_preview",
+      { scanResult: RESULT, gates: { start_scan: gate } },
+      { focusMain: true },
+    );
+    await screen.findByText(es.cleanup.progressTitle);
+    await act(async () => release());
+    const dialog = await screen.findByRole("alertdialog", {
+      name: es.cleanup.previewTitle,
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: es.cleanup.cancel }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(
+      screen.getByRole("button", { name: es.cleanup.clean }),
+    ).toHaveFocus();
+  });
+
+  it("plan preview sin boton Limpiar: el foco de respaldo es el encabezado aunque el foco estuviera en <main>", async () => {
+    await request(
+      "preview",
+      { lastScan: { ...RESULT, cleanedAt: 1_800_000_100_000 } },
+      { focusMain: true },
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: es.cleanup.previewTitle,
+    });
+    closeByEscape(dialog);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(
+      screen.getByRole("heading", { level: 1, name: es.cleanup.title }),
+    ).toHaveFocus();
+  });
+
+  it("apertura manual con Limpiar en Limpieza: Escape devuelve el foco a Limpiar (el elemento que abrio)", async () => {
+    await request("preview", { lastScan: RESULT }, { focusMain: true });
+    let dialog = await screen.findByRole("alertdialog", {
+      name: es.cleanup.previewTitle,
+    });
+    closeByEscape(dialog);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    const clean = screen.getByRole("button", { name: es.cleanup.clean });
+    screen.getByRole("button", { name: es.cleanup.scan }).focus();
+    fireEvent.click(clean);
+    dialog = await screen.findByRole("alertdialog", {
+      name: es.cleanup.previewTitle,
+    });
+    closeByEscape(dialog);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByRole("button", { name: es.cleanup.scan })).toHaveFocus();
   });
 });

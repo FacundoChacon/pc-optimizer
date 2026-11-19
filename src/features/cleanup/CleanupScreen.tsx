@@ -40,6 +40,9 @@ export function CleanupScreen() {
   const cleanButton = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const wasScanning = useRef(scanning);
+  // El preview lo abrio el pedido "Limpiar ahora": al cerrarlo el foco va a Limpiar (o al encabezado), no al
+  // elemento que casualmente lo tenia (<main>, Buscar basura). Se apaga al cerrar y al abrir a mano.
+  const openedByCleanNow = useRef(false);
   // "Limpiar ahora" (D-02/D-03): busqueda iniciada por el pedido y el escaneo previo, para saber si es nuevo.
   const awaitingScan = useRef<{ previousScanId: number | null; seenRunning: boolean } | null>(null);
 
@@ -66,6 +69,7 @@ export function CleanupScreen() {
   useEffect(() => {
     const plan = cleanNow.consume();
     if (plan === "preview") {
+      openedByCleanNow.current = true;
       cleaning.open();
     } else if (plan === "scan_then_preview") {
       awaitingScan.current = { previousScanId: last?.scanId ?? null, seenRunning: false };
@@ -102,8 +106,10 @@ export function CleanupScreen() {
     awaitingScan.current = null;
     const fresh = last !== null && last.scanId !== waiting.previousScanId && last.status === "done";
     if (!fresh) return;
-    if (hasEligibleItems(last)) cleaning.open();
-    else announce(es.cleanup.cleanNowNothing);
+    if (hasEligibleItems(last)) {
+      openedByCleanNow.current = true;
+      cleaning.open();
+    } else announce(es.cleanup.cleanNowNothing);
   }, [scanning, last, cleaning, announce]);
 
   // "Vaciar Papelera…" (C-10): solo sin trabajos en curso y fuera de mismatch (la Papelera es por-usuario).
@@ -124,7 +130,14 @@ export function CleanupScreen() {
       </h1>
       <div className="flex flex-wrap items-center gap-3">
         {canClean && (
-          <Button ref={cleanButton} variant="primary" onClick={cleaning.open}>
+          <Button
+            ref={cleanButton}
+            variant="primary"
+            onClick={() => {
+              openedByCleanNow.current = false;
+              cleaning.open();
+            }}
+          >
             {es.cleanup.clean}
           </Button>
         )}
@@ -224,6 +237,11 @@ export function CleanupScreen() {
         onConfirm={cleaning.confirm}
         onCancel={cleaning.closeDialog}
         fallbackFocus={() => cleanButton.current ?? titleRef.current}
+        preferFallbackFocus={() => {
+          const prefer = openedByCleanNow.current;
+          openedByCleanNow.current = false;
+          return prefer;
+        }}
       />
       <EmptyRecycleBinDialog
         phase={emptying.phase}
