@@ -398,3 +398,46 @@ Received element with focus: <main id="main" tabindex="-1">
 ```
 
 GREEN: 22/22 en `cleanNowRequest.test.tsx` (13 previos + 9 nuevos, con y sin StrictMode); suite completa 836/836, `npm run typecheck` y `npm run build` limpios.
+
+### Fix H-2 (smoke C-12)
+
+Hallazgo del smoke (2026-11-19): en Inicio avanzado la tabla de basura mostraba "Registros antiguos" (`old_logs`, estado `unavailable`) como "No se pudo revisar (unavailable)", mientras Limpieza muestra "No disponible en esta versión" para la misma categoría.
+
+Causa: `JunkTable` tomaba el texto de `es.cleanup.status[category.status]` directamente; Limpieza lo deriva con `categoryStatusText(summary)` (`features/cleanup/categoryText.ts`), que para `old_logs` + `unavailable` usa `es.cleanup.status.notInThisVersion`. El modelo distingue por categoría (no por un código de estado distinto): `old_logs` es "no disponible en esta versión"; cualquier otra categoría en `unavailable` es una falla real de revisión.
+
+Fix: `JunkTable` usa `categoryStatusText(category).label` (misma regla y mismo catálogo que Limpieza) y conserva el código entre paréntesis. Sin cambios en otros estados ni en Limpieza (para `done`/`partial`/`blocked` el rótulo es idéntico al anterior).
+
+RED (`npx vitest run src/tests/dashboard/homeAdvanced.test.tsx --maxWorkers=2`):
+
+```
+ × Registros antiguos no disponible usa el mismo texto que Limpieza, con su codigo
+TestingLibraryElementError: Unable to find an element with the text: No disponible en esta versión (unavailable).
+  ... <td class="pr-3"> No se pudo revisar (unavailable) </td>
+```
+
+GREEN: 21/21 en `homeAdvanced.test.tsx`. TRIANGULATE: segundo test, `temp_user` en `unavailable` conserva "No se pudo revisar (unavailable)". REFACTOR: sin cambios adicionales (una línea). Verificación: `npx vitest run --maxWorkers=2` 838 passed, `npm run typecheck` y `npm run build` limpios.
+
+### Smoke guiado (10.3), 2026-11-19
+
+Build de desarrollo `npm run tauri dev` **sin elevar**, StrictMode activo, base temporal `%TEMP%\pcopt-smoke-c12\data` y luego `data2` (sembrada con `seed_smoke_database`); conducido por el orquestador vía CDP; el dueño revisó lo visual.
+
+| # | Resultado |
+|---|---|
+| 1 | La app abre sin errores; 7 entradas de navegación con Historial. |
+| 2 | Inicio simple: tres tarjetas; Espacio "108 GB libres de 446,2 GB" y Memoria "59 % (8,2 de 13,9 GB)" idénticos a Windows (Get-PSDrive / Win32_OperatingSystem); Basura "Todavía no buscaste basura"; una sola acción primaria; ningún 0 % falso. |
+| 3 | Historial vacío: "Todavía no limpiaste nada con la app."; sin lista, sin botones. |
+| 4 | "Limpiar ahora" sin escaneo: Limpieza con foco en el h1, búsqueda (~6 s) y preview abierto con foco en "Cancelar" bajo StrictMode (valida el fix de la revisión); 8 categorías marcadas, 16 325 archivos (2,7 GB); nada movido. |
+| 5 | Esc: el diálogo se cierra y no se movió nada, pero el foco quedó en "Buscar basura" en vez de "Limpiar" -> **H-1**. |
+| 6 | Escaneo de menos de 60 min: preview directo sin nueva búsqueda, foco en "Cancelar"; Esc dejaba el foco en `<main>` (H-1 también en este camino). **H-1 corregido en `250bae7`** (`preferFallbackFocus` cuando el preview lo abrió "Limpiar ahora") y reverificado en la app real: Esc y "Cancelar" -> foco en "Limpiar". |
+| 7 | (con base nueva `data2`, sin escaneo) "Limpiar ahora", salir a Monitor durante la búsqueda y volver: sin diálogo, resultados con "Limpiar" disponible. |
+| 8 | Búsqueda de duplicados en curso: "Limpiar ahora" deshabilitado con el motivo "Esperá a que termine la búsqueda de duplicados para limpiar." asociado por `aria-describedby`; se rehabilitó a los 6 s al terminar. |
+| 9 | Limpieza real NO ejecutada por decisión del dueño: la categoría "Temporales del usuario" contenía 4 530 archivos reales (1,2 GB), no solo los de prueba (la guía suponía lo contrario); el historial se cubrió con la siembra sintética. |
+| 10 | Siembra de 154 filas / 25 limpiezas en `data2` y relanzamiento: OK. |
+| 11 | Historial simple: 20 limpiezas en frase llana sin rutas ni códigos; "Ver más" agrega 5 (25 únicas) y desaparece; sin primario. |
+| 12 | Historial avanzado: 20 "Ver archivos" con `aria-describedby` propio (fecha y frase) y conteos con código; la de 130: 100 filas con ruta completa, "Cargar más" -> 130 únicas y desaparece; plegar/desplegar vuelve a 100 sin duplicar; el vaciado de la Papelera se despliega. |
+| 13 | Inicio avanzado: 4 medidores con promedio 60 s y pico; gráfico de 2 series (Procesador, Memoria) con leyenda, eje de 5 min y "Ver tabla"; tabla de basura con códigos (a 960 px cabe sin recorte ni scroll horizontal de página); Disco "Todavía no analizaste el disco" con enlace; últimas 3 limpiezas y "Ver historial"; el dueño confirmó a ojo que se ve prolijo. Hallazgo **H-2** (texto): "Registros antiguos" figuraba como "No se pudo revisar" frente a "No disponible en esta versión" en Limpieza -> corregido (ver Fix H-2). |
+| 14 | Alternar modo 4 veces (vía Configuración: no hay alternancia en Inicio; la guía decía "Configuración o alternancia de Inicio"): la pantalla no se pierde, el foco nunca en `<body>`, siempre una acción primaria. |
+| 15 | Teclado real (CDP Input): Tab -> "Limpiar ahora" con anillo de foco 2 px; Enter -> preview con foco en "Cancelar"; Esc -> "Limpiar"; Historial: Tab -> "Ver archivos", Espacio despliega ("Ocultar archivos", `aria-expanded=true`), Enter pliega. |
+| 16 | Cierre: sin procesos residuales (pc-optimizer, Vite, WebView2 9222). |
+
+Notas: el build de desarrollo reescribe `src-tauri/permissions/autogenerated/*.toml` con LF (cambio solo de fin de línea; se restauró con `git checkout`). La nota del benchmark de D-10 (64 ms release / 108 ms debug, D-10 A mantenido) sigue vigente. `smoke-guide.md` se corrigió en los pasos 9 y 14.
