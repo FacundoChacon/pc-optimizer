@@ -264,7 +264,7 @@ describe("Vaciar Papelera: ejecucion y resultado", () => {
     await confirmEmptying(await openStep2());
     const live = (await screen.findByText(es.recycleBin.emptying)).closest("[aria-live]");
     expect(live).toHaveAttribute("aria-live", "polite");
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.getByRole("button", { name: es.cleanup.scan })).toBeDisabled();
     expect(screen.queryByRole("button", { name: es.cleanup.clean })).toBeNull();
     expect(anyEmptyButtons()).toHaveLength(0);
@@ -434,7 +434,7 @@ describe("Vaciar Papelera: errores", () => {
     const first = await openStep1();
     fireEvent.click(within(first).getByRole("button", { name: es.recycleBin.continue }));
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.empty_request_expired);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(calls(backend, "empty_recycle_bin")).toHaveLength(0);
   });
 });
