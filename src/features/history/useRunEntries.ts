@@ -23,7 +23,8 @@ export function useRunEntries(runKey: CleanupRunKey): RunEntriesApi {
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
-  const active = useRef(true);
+  // Token de generacion: cada ejecucion del efecto (y el desmontaje) invalida las respuestas en vuelo anteriores.
+  const genRef = useRef(0);
   const inFlight = useRef(false);
   const count = useRef(0);
   count.current = items.length;
@@ -32,21 +33,22 @@ export function useRunEntries(runKey: CleanupRunKey): RunEntriesApi {
     (offset: number) => {
       if (inFlight.current) return;
       inFlight.current = true;
+      const gen = genRef.current;
       setLoading(true);
       setError(null);
       listCleanupEntries(runKey, offset, ENTRIES_PAGE_SIZE)
         .then((page) => {
-          if (!active.current) return;
+          if (gen !== genRef.current) return;
           setTotal(page.total);
           setPathsHidden(page.pathsHidden);
           setItems((current) => (offset === 0 ? page.items : [...current, ...page.items]));
         })
         .catch((failure: unknown) => {
-          if (active.current) setError(toAppError(failure));
+          if (gen === genRef.current) setError(toAppError(failure));
         })
         .finally(() => {
+          if (gen !== genRef.current) return;
           inFlight.current = false;
-          if (!active.current) return;
           setLoading(false);
           setLoaded(true);
         });
@@ -55,10 +57,9 @@ export function useRunEntries(runKey: CleanupRunKey): RunEntriesApi {
   );
 
   useEffect(() => {
-    active.current = true;
     fetchPage(0);
     return () => {
-      active.current = false;
+      genRef.current += 1;
       inFlight.current = false;
     };
   }, [fetchPage]);

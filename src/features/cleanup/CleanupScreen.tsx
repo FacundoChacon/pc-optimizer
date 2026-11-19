@@ -75,13 +75,20 @@ export function CleanupScreen() {
       // El boton de Inicio ya no existe y la navegacion no movio el foco: queda en el encabezado.
       titleRef.current?.focus();
     }
-    // Al salir de Limpieza el pedido pendiente y la espera del escaneo se descartan.
+    // Al salir de Limpieza el pedido pendiente se descarta. La espera del escaneo vive en un ref de esta
+    // instancia: se pierde sola al desmontar y NO se limpia aca, porque StrictMode ejecuta el efecto dos veces
+    // y la segunda pasada ya no recupera el pedido (consume() devuelve null).
     return () => {
       cleanNow.drop();
-      awaitingScan.current = null;
     };
     // Solo al montar: el pedido se consume una vez.
   }, []);
+
+  // Un error del inicio descarta la espera aunque la busqueda nunca haya llegado a verse en curso:
+  // una busqueda manual posterior no debe abrir un preview que nadie pidio.
+  useEffect(() => {
+    if (error !== null) awaitingScan.current = null;
+  }, [error]);
 
   // Fin de la busqueda pedida: con un escaneo nuevo `done` y elegibles se abre el preview; si no, solo se anuncia.
   useEffect(() => {

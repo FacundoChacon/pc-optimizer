@@ -1,5 +1,6 @@
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SCREENS } from "../../app/navigation";
 import { AppProviders } from "../../app/providers/AppProviders";
@@ -57,13 +58,18 @@ function gateOf(): { gate: Promise<void>; release: () => void } {
   return { gate, release };
 }
 
-async function request(plan: CleanNowPlan, overrides: Partial<BackendState> = {}): Promise<MockBackend> {
+async function request(
+  plan: CleanNowPlan,
+  overrides: Partial<BackendState> = {},
+  options: { strict?: boolean } = {},
+): Promise<MockBackend> {
   const backend = installBackend(overrides);
-  render(
+  const tree = (
     <AppProviders>
       <Harness plan={plan} />
-    </AppProviders>,
+    </AppProviders>
   );
+  render(options.strict === true ? <StrictMode>{tree}</StrictMode> : tree);
   const trigger = await screen.findByRole("button", { name: "pedir" });
   trigger.focus();
   fireEvent.click(trigger);
@@ -165,6 +171,48 @@ describe("Limpiar ahora: busca y luego abre el preview (plan scan_then_preview)"
     expect(screen.queryByRole("alertdialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "volver a Limpieza" }));
     await screen.findByRole("heading", { level: 1, name: es.cleanup.title });
+    expect(await screen.findByRole("button", { name: es.cleanup.clean })).toBeEnabled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+});
+
+describe("Limpiar ahora: robustez de la espera (revision independiente)", () => {
+  it("con StrictMode (doble efecto de montaje) la busqueda pedida igual abre el preview al terminar", async () => {
+    const { gate, release } = gateOf();
+    const backend = await request("scan_then_preview", { scanResult: RESULT, gates: { start_scan: gate } }, { strict: true });
+    expect(await screen.findByText(es.cleanup.progressTitle)).toBeInTheDocument();
+    await act(async () => release());
+    const dialog = await screen.findByRole("alertdialog", { name: es.cleanup.previewTitle });
+    expect(within(dialog).getByRole("button", { name: es.cleanup.cancel })).toHaveFocus();
+    expect(callsOf(backend, "start_scan")).toHaveLength(1);
+    expect(callsOf(backend, "confirm_cleanup")).toHaveLength(0);
+  });
+
+  it("con StrictMode y plan preview el dialogo sigue abierto", async () => {
+    await request("preview", { lastScan: RESULT }, { strict: true });
+    expect(await screen.findByRole("alertdialog", { name: es.cleanup.previewTitle })).toBeInTheDocument();
+  });
+
+  it("con StrictMode, salir de Limpieza antes de terminar sigue descartando el pedido", async () => {
+    const { gate, release } = gateOf();
+    await request("scan_then_preview", { scanResult: RESULT, gates: { start_scan: gate } }, { strict: true });
+    await screen.findByText(es.cleanup.progressTitle);
+    fireEvent.click(screen.getByRole("button", { name: "salir a Monitor" }));
+    await screen.findByRole("heading", { level: 1, name: es.monitor.title });
+    await act(async () => release());
+    fireEvent.click(screen.getByRole("button", { name: "volver a Limpieza" }));
+    await screen.findByRole("heading", { level: 1, name: es.cleanup.title });
+    expect(await screen.findByRole("button", { name: es.cleanup.clean })).toBeEnabled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("si el inicio falla de inmediato, una busqueda manual posterior con elegibles NO abre el preview", async () => {
+    await request("scan_then_preview", {
+      scanResult: RESULT,
+      failureQueue: { start_scan: [{ kind: "scan_in_progress", message: "x" }] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.scan_in_progress);
+    fireEvent.click(screen.getByRole("button", { name: es.cleanup.scan }));
     expect(await screen.findByRole("button", { name: es.cleanup.clean })).toBeEnabled();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });

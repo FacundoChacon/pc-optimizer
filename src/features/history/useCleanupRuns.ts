@@ -23,28 +23,30 @@ export function useCleanupRuns(pageSize: number): CleanupRunsApi {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const active = useRef(true);
+  // Token de generacion: cada ejecucion del efecto (y el desmontaje) invalida las respuestas en vuelo anteriores.
+  const genRef = useRef(0);
   const inFlight = useRef(false);
 
   const fetchPage = useCallback(
     (before: CleanupRunCursor | null) => {
       if (inFlight.current) return;
       inFlight.current = true;
+      const gen = genRef.current;
       setLoading(true);
       setError(null);
       listCleanupRuns(before, pageSize)
         .then((page) => {
-          if (!active.current) return;
+          if (gen !== genRef.current) return;
           setItems((current) => (before === null ? page.items : [...current, ...page.items]));
           setCursor(page.nextCursor);
           setHasMore(page.nextCursor !== null);
         })
         .catch((failure: unknown) => {
-          if (active.current) setError(toAppError(failure));
+          if (gen === genRef.current) setError(toAppError(failure));
         })
         .finally(() => {
+          if (gen !== genRef.current) return;
           inFlight.current = false;
-          if (!active.current) return;
           setLoading(false);
           setLoaded(true);
         });
@@ -53,10 +55,9 @@ export function useCleanupRuns(pageSize: number): CleanupRunsApi {
   );
 
   useEffect(() => {
-    active.current = true;
     fetchPage(null);
     return () => {
-      active.current = false;
+      genRef.current += 1;
       inFlight.current = false;
     };
   }, [fetchPage]);
