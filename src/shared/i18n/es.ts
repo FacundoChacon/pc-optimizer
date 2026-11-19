@@ -31,6 +31,7 @@ export const es = {
     announceDone: "Búsqueda terminada. Se puede liberar hasta {size}.",
     announceCancelled: "Búsqueda cancelada. Se conserva el resultado anterior.",
     cancelledNoPrevious: "Búsqueda cancelada.",
+    cleanNowNothing: "No encontramos archivos para limpiar.",
     resultsTitle: "Resultado de la búsqueda",
     totalLabel: "Se puede liberar hasta",
     inUseNotice: "Algunos archivos pueden estar en uso y se omitirán al limpiar.",
@@ -515,14 +516,15 @@ export const es = {
   },
   home: {
     title: "Inicio",
-    // Se retiran con el HomeScreen real (tarea 6.3); hasta entonces los usa el Inicio provisional.
-    emptyTitle: "Todavía no hay nada para mostrar",
-    emptyBody: "Cuando haya análisis disponibles, el resumen de tu equipo aparecerá acá.",
     intro: "Así está tu equipo ahora.",
     cleanNow: "Limpiar ahora",
     cleanNowHelp: "Primero vas a ver qué se mueve a la Papelera. Nada se borra sin tu confirmación.",
     viewDetail: "Ver detalle",
+    viewDetailOf: "Ver detalle de {name}",
     loading: "Cargando…",
+    measuring: "Midiendo…",
+    unavailable: "No disponible",
+    noRecent: "Sin datos recientes",
     codeLabel: "Código: {code}",
     busy: {
       reason: "Esperá a que termine {task} para limpiar.",
@@ -641,6 +643,7 @@ export const es = {
     advanced: {
       outcomesTitle: "Resultados",
       outcomeCount: "{label}: {count}",
+      outcomesLine: "{title}: {counts}",
       codeLabel: "{text} ({code})",
       viewFiles: "Ver archivos",
       hideFiles: "Ocultar archivos",

@@ -12,9 +12,9 @@ afterEach(() => {
 });
 
 describe("navegacion: Monitor", () => {
-  it("Monitor va entre Duplicados y Configuracion con un icono propio", () => {
+  it("Monitor va entre Historial y Configuracion con un icono propio", () => {
     const ids = SCREENS.map((screen) => screen.id);
-    expect(ids.indexOf("monitor")).toBe(ids.indexOf("duplicates") + 1);
+    expect(ids.indexOf("monitor")).toBe(ids.indexOf("history") + 1);
     expect(ids.indexOf("settings")).toBe(ids.indexOf("monitor") + 1);
     const icons = SCREENS.map((screen) => screen.icon);
     expect(new Set(icons).size).toBe(icons.length);
@@ -25,7 +25,7 @@ describe("navegacion: Monitor", () => {
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: es.nav.label });
     const labels = within(nav).getAllByRole("button").map((button) => button.textContent);
-    expect(labels).toEqual([es.nav.home, es.nav.disk, es.nav.cleanup, es.nav.duplicates, es.nav.monitor, es.nav.settings]);
+    expect(labels).toEqual([es.nav.home, es.nav.disk, es.nav.cleanup, es.nav.duplicates, es.nav.history, es.nav.monitor, es.nav.settings]);
     fireEvent.click(within(nav).getByRole("button", { name: es.nav.monitor }));
     expect(await screen.findByRole("heading", { level: 1, name: es.monitor.title })).toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: es.nav.monitor })).toHaveAttribute("aria-current", "page");

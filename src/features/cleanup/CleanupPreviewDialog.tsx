@@ -22,6 +22,11 @@ interface CleanupPreviewDialogProps {
   onToggle: (category: JunkCategory) => void;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * Destino del foco al cerrar cuando el elemento que lo tenia al abrir ya no existe (por ejemplo,
+   * el dialogo se abrio al llegar desde Inicio). Si falta o devuelve `null`, no se mueve el foco.
+   */
+  fallbackFocus?: () => HTMLElement | null;
 }
 
 /** Se muestra una categoria si esta bloqueada o tiene algo que mover o que se omitio por reciente. */
@@ -44,6 +49,7 @@ export function CleanupPreviewDialog({
   onToggle,
   onConfirm,
   onCancel,
+  fallbackFocus,
 }: CleanupPreviewDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -62,7 +68,9 @@ export function CleanupPreviewDialog({
       cancelRef.current?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
-      triggerRef.current?.focus();
+      const trigger = triggerRef.current;
+      const usable = trigger !== null && trigger.isConnected && trigger !== document.body;
+      (usable ? trigger : (fallbackFocus?.() ?? null))?.focus();
       triggerRef.current = null;
     }
   }, [open]);

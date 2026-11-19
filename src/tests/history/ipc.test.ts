@@ -130,7 +130,7 @@ describe("listCleanupEntries", () => {
 
     const page = await listCleanupEntries({ kind: "entry", entryId: 9 }, 200, 100);
 
-    expect(page.items[0]?.path).toBe("C:\Users\ana\AppData\Local\Temp\archivo-1.tmp");
+    expect(page.items[0]?.path).toBe("C:\\Users\\ana\\AppData\\Local\\Temp\\archivo-1.tmp");
     expect(seen).toEqual([
       { cmd: "list_cleanup_entries", args: { key: { kind: "entry", entryId: 9 }, offset: 200, limit: 100 } },
     ]);

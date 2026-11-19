@@ -71,7 +71,7 @@ export function historyEntry(id: number, overrides: Partial<CleanupEntry> = {}):
     id,
     ts: HISTORY_BASE_TS + id,
     category: "temp_user",
-    path: `C:\Users\ana\AppData\Local\Temp\archivo-${id}.tmp`,
+    path: `C:\\Users\\ana\\AppData\\Local\\Temp\\archivo-${id}.tmp`,
     sizeBytes: 1_048_576,
     outcome: "moved_to_trash",
     errorDetail: null,

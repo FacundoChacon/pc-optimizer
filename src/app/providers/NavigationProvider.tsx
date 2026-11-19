@@ -1,9 +1,14 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_SCREEN, type ScreenId } from "../navigation";
 
+/** `focus: "none"`: la pantalla destino maneja el foco (por ejemplo, al abrir un dialogo al llegar). */
+export interface NavigateOptions {
+  focus?: "main" | "none";
+}
+
 interface NavigationValue {
   current: ScreenId;
-  navigate: (id: ScreenId) => void;
+  navigate: (id: ScreenId, options?: NavigateOptions) => void;
 }
 
 const NavigationContext = createContext<NavigationValue | null>(null);
@@ -12,8 +17,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const [current, setCurrent] = useState<ScreenId>(DEFAULT_SCREEN);
   const moveFocus = useRef(false);
 
-  const navigate = useCallback((id: ScreenId) => {
-    moveFocus.current = true;
+  const navigate = useCallback((id: ScreenId, options?: NavigateOptions) => {
+    moveFocus.current = options?.focus !== "none";
     setCurrent(id);
   }, []);
 
