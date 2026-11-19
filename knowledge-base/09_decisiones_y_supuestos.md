@@ -68,7 +68,7 @@
 **Trade-offs aceptados**: sin datos de uso ni crash reports automáticos; sin auto-update en v0.x.
 
 ### DD-11 — Distribución por GitHub Releases, sin firma en v0.x
-**Decisión**: instalador NSIS/MSI sin firma de código; SmartScreen mostrará advertencia (documentada).
+**Decisión**: instalador NSIS sin firma de código (MSI reevaluado más adelante); SmartScreen mostrará advertencia (documentada en README y notas del release). Detalles de C-13 (aprobados por el dueño, 2026-11-19): instalación por máquina en Program Files (la app siempre corre elevada: su ejecutable no puede quedar en una carpeta escribible por el usuario), pantallas en español, WebView2 por `downloadBootstrapper`, datos del usuario conservados al desinstalar (`%LOCALAPPDATA%\pc-optimizer`), release creado como borrador por un workflow manual y publicado por el dueño, licencia MIT.
 **Alternativas consideradas**: firmar con certificado desde v0.1; Microsoft Store.
 **Justificación**: costo y trámite del certificado no justificados en pre-1.0; se revisa más adelante.
 **Trade-offs aceptados**: fricción de instalación y desconfianza inicial.
@@ -131,7 +131,7 @@
 **Cómo validar**: test manual con over-the-shoulder.
 
 ### SU-05 — Windows 10 22H2 como mínimo
-**Supuesto**: soportado; profundidad pendiente (ver 10).
+**Supuesto**: soportado; profundidad pendiente (ver 10). **v0.1 sin verificar en Windows 10 por falta de equipo** (decisión del dueño, 2026-11-19): solo se verifica en Windows 11; las notas del release y el README lo dicen.
 **Origen**: inferido (Win10 llegó a fin de soporte en oct-2025).
 **Riesgo si es falso**: APIs/WMI distintas.
 **Cómo validar**: pruebas en VM Win10.

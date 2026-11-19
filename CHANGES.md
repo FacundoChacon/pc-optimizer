@@ -378,7 +378,8 @@ Camino crítico hasta **v0.1 publicable** (7 changes): `C-01 → C-02 → C-03 �
   - `knowledge-base/10_preguntas_abiertas.md` (IN-01)
 
 ### [C-13] `packaging-and-release-pipeline`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[ ]` en curso (apply local de las partes 1-2 hecho; CI, smoke y release pendientes del dueño)
+- **Decisiones y desvíos (dueño, 2026-11-19)**: D-01 solo NSIS (MSI fuera de v0.1, en lugar de "NSIS/MSI"); D-02 instalación por máquina; D-12 gate de red = test `no_network_crates` como paso con nombre (en lugar de `cargo tree`); D-16 el pipeline crea el tag y un release **borrador** y publica el dueño (en lugar de "release en GitHub"); D-20 Windows 10 NO verificado por falta de equipo (en lugar de "Windows 10 22H2 y 11"); licencia MIT.
 - **Scope**:
   - Nota C-05: el manifest `requireAdministrator` solo existe en release; verificarlo con el test `manifest` en release. Si el instalador NSIS lanza la app al terminar, esa ejecución falla con error 740 si el instalador no está elevado.
   - Bundle NSIS/MSI (`npm run tauri build`) con manifest elevado; sin firma en v0.x; release en GitHub (tag v0.1.0).

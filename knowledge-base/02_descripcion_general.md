@@ -10,7 +10,7 @@
 | Persistencia | SQLite local (vía `rusqlite`) | SQLite 3.x bundled |
 | Gráficos | **TBD** (pregunta abierta, ver 10) | — |
 | Tests | Vitest (frontend), `cargo test` (Rust). Strict TDD | — |
-| Distribución | Instalador NSIS/MSI (Tauri bundler) vía GitHub Releases | — |
+| Distribución | Instalador NSIS (Tauri bundler; MSI reevaluado más adelante) vía GitHub Releases | — |
 | SO objetivo | Windows 10 y 11 (profundidad Win10 abierta, ver 10) | Win10 22H2 (**Suposición**) |
 
 ## Arquitectura general
@@ -77,7 +77,7 @@ No hay API REST. Contrato entre UI y backend = comandos Tauri (allowlist) y even
 
 ## Distribución
 
-- Instalador NSIS/MSI por GitHub Releases, **sin firma** en v0.x (advertencia SmartScreen documentada en README del repo).
+- Instalador **NSIS por máquina** (Program Files, UAC al instalar; MSI reevaluado más adelante) por GitHub Releases, **sin firma** en v0.x. El pipeline crea el tag y un release **borrador**; lo publica el dueño. Advertencia SmartScreen documentada en el README del repo **y** en las notas del release (C-13).
 - Sin auto-update en v0.x.
 
 ## Nota C-12: comandos del historial de limpieza

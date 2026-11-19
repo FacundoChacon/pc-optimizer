@@ -91,6 +91,7 @@ No se requieren secretos. Configuración en `settings` (SQLite) y archivos de Ta
 
 ## CI / Build (referencia)
 
-- Build: `npm run tauri build` (bundle NSIS/MSI).
-- Verificación: `cargo test`, `cargo clippy`, `npm test`, `npm run build`.
-- Releases en GitHub, sin firma en v0.x.
+- Build: `npm run tauri build` (bundle NSIS por máquina; MSI reevaluado más adelante).
+- Verificación local: `cargo test`, `cargo clippy`, `npm test`, `npm run build`.
+- CI (`.github/workflows/ci.yml`, runner `windows-2025`, acciones de GitHub fijadas por SHA, permisos mínimos): jobs paralelos `rust` (fmt, clippy `-D warnings`, auditoría de crates de red como paso con nombre, suite completa `--locked`), `frontend` (`npm ci`, `npm test`, `npm run build`), `audit` (`cargo audit`: toda vulnerabilidad; `npm audit`: alta en todo, moderada en producción; excepciones solo versionadas y aprobadas) y `bundle` (instalador, manifest `requireAdministrator` del `.exe` empaquetado, `SHA256SUMS.txt`). La política de los workflows es un test (`tests/ci_policy.rs`).
+- Release (`.github/workflows/release.yml`): manual desde `main`; mismos gates sin caché; crea el tag `v<versión>` y un release **borrador**; lo publica el dueño. Sin firma en v0.x. Detalle en `openspec/changes/packaging-and-release-pipeline/`.

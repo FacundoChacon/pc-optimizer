@@ -32,7 +32,7 @@
 | PA-05 | Media | Umbrales y cooldown por defecto de las alertas (SU-02) | v0.3 | Dueño del proyecto |
 | PA-06 | Media | ¿Los escaneos programados corren con la app cerrada (Task Scheduler lanzando un modo headless) o solo mientras la bandeja está viva? | v0.3 | Dev / dueño |
 | PA-07 | Media | Generación de PDF: imprimir desde el webview (WebView2 PrintToPdf) vs. crate Rust (ej. `printpdf`/`genpdf`/headless) | v0.3 | Dev |
-| PA-08 | Media | Profundidad de soporte de Windows 10 (¿pruebas en CI/VM? ¿APIs que difieren?) | v0.1 (alcance de pruebas) | Dueño del proyecto |
+| PA-08 | Media | Profundidad de soporte de Windows 10 (¿pruebas en CI/VM? ¿APIs que difieren?). Sigue abierta: v0.1 sin verificar en Windows 10 por falta de equipo (2026-11-19) | v0.1 (alcance de pruebas) | Dueño del proyecto |
 | PA-09 | Baja | Firma de código: ¿cuándo y con qué certificado (Azure Trusted Signing, EV, OV)? | Release 1.0 | Dueño del proyecto |
 | PA-10 | Baja | i18n: ¿se agregará inglés u otros idiomas? ¿librería (i18next) o catálogo propio? | Post v0.3 | Dueño del proyecto |
 | PA-11 | Baja | Auto-update: ¿cuándo y con qué mecanismo sin romper el principio de "sin red"? | Post v0.3 | Dueño del proyecto |
