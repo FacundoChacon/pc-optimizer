@@ -1,5 +1,8 @@
 //! Politica de los workflows de GitHub Actions como test (C-13, D-14): analisis por lineas, sin crates YAML.
 
+#[path = "support/text.rs"]
+mod text;
+
 /// Incumplimiento de una regla, con la linea (desde 1) y su texto.
 #[derive(Debug, PartialEq, Eq)]
 struct Violation {
@@ -490,7 +493,7 @@ fn policy_files(root: &std::path::Path) -> Vec<(String, String)> {
     let mut found: Vec<(String, String)> = paths
         .iter()
         .map(|path| {
-            let text = std::fs::read_to_string(path).expect("leer el archivo");
+            let text = text::read_text(path).expect("leer el archivo");
             let name = path.strip_prefix(&github).map_or_else(
                 |_| String::new(),
                 |rel| rel.to_string_lossy().replace("\\", "/"),
@@ -583,7 +586,7 @@ fn audit_config_should_exist_without_exceptions_and_require_approval_per_entry()
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(".cargo")
         .join("audit.toml");
-    let text = std::fs::read_to_string(&path)
+    let text = text::read_text(&path)
         .unwrap_or_else(|error| panic!("no se pudo leer {}: {error}", path.display()));
     let entries: Vec<(usize, &str)> = code_lines(&text)
         .filter(|(_, code)| code.contains("RUSTSEC-"))
@@ -892,4 +895,56 @@ fn release_publish_should_delete_the_tag_it_created_when_a_later_step_fails() {
         create < cleanup,
         "la limpieza va despues de crear el release"
     );
+}
+
+const LF_WORKFLOW: &str = "permissions:\n  contents: read\njobs:\n  rust:\n    steps:\n      - uses: actions/checkout@v4\n  frontend:\n    steps: []\n  audit:\n    steps: []\n  bundle:\n    steps: []\n";
+
+#[test]
+fn policy_files_should_read_a_crlf_workflow_exactly_like_its_lf_version() {
+    let lf_repo = tempfile::tempdir().expect("tempdir");
+    let crlf_repo = tempfile::tempdir().expect("tempdir");
+    write_repo_file(lf_repo.path(), ".github/workflows/ci.yml", LF_WORKFLOW);
+    write_repo_file(
+        crlf_repo.path(),
+        ".github/workflows/ci.yml",
+        &LF_WORKFLOW.replace('\n', "\r\n"),
+    );
+    let lf = policy_files(lf_repo.path());
+    let crlf = policy_files(crlf_repo.path());
+    assert_eq!(crlf, lf);
+    for job in ["rust", "frontend", "audit", "bundle"] {
+        assert!(crlf[0].1.contains(&format!("\n  {job}:\n")), "{job}");
+    }
+    assert_eq!(
+        all_violations(&crlf[0].1)
+            .into_iter()
+            .map(|(rule, found)| (rule, found.len()))
+            .collect::<Vec<_>>(),
+        all_violations(&lf[0].1)
+            .into_iter()
+            .map(|(rule, found)| (rule, found.len()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn policy_files_should_normalize_mixed_line_endings_and_leave_lf_untouched() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    write_repo_file(
+        repo.path(),
+        ".github/workflows/mixto.yml",
+        "a: 1\r\nb: 2\nc: 3\r\n",
+    );
+    write_repo_file(repo.path(), ".github/workflows/lf.yml", "a: 1\nb: 2\n");
+    let found = policy_files(repo.path());
+    assert_eq!(found[0].1, "a: 1\nb: 2\n");
+    assert_eq!(found[1].1, "a: 1\nb: 2\nc: 3\n");
+}
+
+#[test]
+fn read_text_should_strip_carriage_returns_from_a_file_on_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("notas.md");
+    std::fs::write(&path, "uno\r\ndos\r\n").expect("escribir");
+    assert_eq!(text::read_text(&path).expect("leer"), "uno\ndos\n");
 }

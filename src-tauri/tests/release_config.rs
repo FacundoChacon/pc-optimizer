@@ -1,5 +1,8 @@
 //! Configuracion de release verificada por tests (C-13, D-07, D-23): version unica, bundle y notas.
 
+#[path = "support/text.rs"]
+mod text;
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -108,8 +111,7 @@ fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     let name = path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("no se pudo leer {name}: {error}"))?;
+    let text = text::read_text(path).map_err(|error| format!("no se pudo leer {name}: {error}"))?;
     serde_json::from_str(&text).map_err(|error| format!("{name} no es JSON valido: {error}"))
 }
 
@@ -481,7 +483,7 @@ fn real_release_notes_should_exist_for_the_declared_version_and_cover_every_poin
         .join(".github")
         .join("release-notes")
         .join(format!("v{version}.md"));
-    let text = std::fs::read_to_string(&path)
+    let text = text::read_text(&path)
         .unwrap_or_else(|error| panic!("faltan las notas {}: {error}", path.display()));
     assert_eq!(missing_note_points(&text), Vec::<&str>::new());
 }
