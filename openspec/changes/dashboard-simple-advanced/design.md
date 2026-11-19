@@ -361,3 +361,18 @@ Comando: `npx vitest run src/tests/dashboard/cleanNowRequest.test.tsx src/tests/
 2. **`awaitingScan` podía quedar colgado** si el inicio fallaba sin que se viera la busqueda en curso. Fix: efecto que descarta la espera cuando `useJunkScan` informa un `error`. RED: **no se pudo obtener** (el test "inicio falla de inmediato y una busqueda manual posterior con elegibles no abre el preview" pasa ya con el codigo anterior, porque en el mock React llega a renderizar el estado en curso antes del rechazo y la transicion true->false descartaba la espera). Queda como test de caracterizacion y la regla por `error` como defensa para el camino sin transicion (rechazo antes del primer render); se reporta al orquestador como hallazgo sin RED.
 3. **`active` compartido en `useRunEntries`/`useCleanupRuns`**: una respuesta de una clave/tamano anterior podia aplicarse despues de re-ejecutar el efecto. RED (`staleResponses.test.tsx`): `AssertionError: expected [ 1, 2, 3 ] to deeply equal [ 100, 101 ]` (entradas) y `expected [ { kind: 'scan', scanId: 1 }, …(2) ] to deeply equal [ { kind: 'scan', scanId: 7 } ]` (limpiezas). Fix: token de generacion `genRef` (el efecto y su limpieza lo incrementan; cada fetch captura `gen` y solo aplica/limpia `inFlight` si `gen === genRef.current`). TRIANGULATE: primera pagina y "Cargar mas" sin cambio de clave siguen concatenando. Nota: el segundo test de entradas fallo inicialmente por una clave nueva en cada render (bucle del efecto), problema del test, no del hook; se uso una clave estable.
 - Verificación: `src/tests/{dashboard,history,cleanup}` 208 passed; suite completa `--maxWorkers=2` 827 passed (54 archivos).
+
+### Conteos finales (10.1) frente a la línea base de 1.1
+
+| Comando | Línea base (1.1) | Final |
+|---|---|---|
+| `npx vitest run --maxWorkers=2` | 680 passed (39 archivos) | **827 passed** en 54 archivos (+147); `npm test` con todos los hilos conserva el flaky de carga conocido de `settings.test.tsx` |
+| `npm run typecheck` y `npm run build` | verdes | verdes (JS 406,8 kB, gzip 115,9 kB) |
+| `cargo test --locked` lib | 1169 passed, 23 ignorados | **1198 passed**, 25 ignorados (+29 tests; +2 ignorados: benchmark de D-10 y `seed_smoke_database`) |
+| `architecture` / `manifest` / `no_network_crates` / `security_baseline` | 24 / 5 / 9 / 22 | 24 / 5 / 9 / 22 |
+| `cargo fmt --check` y clippy `--all-targets --all-features --locked -D warnings` | verdes | verdes |
+| Permisos `allow-*` autogenerados | 31 | 31 |
+| `package-lock.json`, `Cargo.lock` | - | sin cambios frente a `main` |
+| `openspec validate dashboard-simple-advanced --strict` | - | válido |
+
+Cada tarea de comportamiento de los grupos 1 a 9 tiene su salida RED anotada (Partes 1 y 2 y fixes de la revisión independiente; 9.1 es regresión sin RED propio, ver arriba). Excepción declarada: el hallazgo 2 de la revisión independiente no tiene RED (el test pasaba ya con el código anterior). La siembra del smoke (`smoke_seed`, solo `#[cfg(test)]`) se escribió junto a su guardia de ruta (2 tests no ignorados) y no toca código de producción.
