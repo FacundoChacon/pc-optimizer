@@ -26,8 +26,9 @@ pub fn app_builder<R: tauri::Runtime>(
 ) -> tauri::Builder<R> {
     builder
         .manage(config)
-        .manage(commands::scan::ActiveScan::default())
+        .manage(commands::scan::ActiveJob::default())
         .manage(commands::scan::ScanEnvironment::default())
+        .manage(commands::cleanup::CleanupPreviews::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
             commands::settings::get_settings,
@@ -38,7 +39,10 @@ pub fn app_builder<R: tauri::Runtime>(
             commands::scan::start_scan,
             commands::scan::cancel_scan,
             commands::scan::get_last_junk_scan,
-            commands::scan::list_junk_findings
+            commands::scan::list_junk_findings,
+            commands::cleanup::preview_cleanup,
+            commands::cleanup::confirm_cleanup,
+            commands::cleanup::cancel_cleanup
         ])
 }
 
@@ -298,6 +302,39 @@ mod tests {
             serde_json::json!({"scanId": 1, "category": "temp_user", "offset": 0, "limit": 10}),
         );
         assert_eq!(unknown_scan["kind"], "scan_not_found");
+    }
+
+    #[test]
+    fn cleanup_commands_should_answer_their_error_cases_over_ipc_without_touching_the_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let window = window_for_scans(dir.path());
+
+        let empty = invoke_error(
+            &window,
+            "preview_cleanup",
+            serde_json::json!({"scanId": 1, "categories": []}),
+        );
+        assert_eq!(empty["kind"], "invalid_argument");
+        let unknown_scan = invoke_error(
+            &window,
+            "preview_cleanup",
+            serde_json::json!({"scanId": 1, "categories": ["temp_user"]}),
+        );
+        assert_eq!(unknown_scan["kind"], "scan_not_found");
+        let unknown_preview = invoke_error(
+            &window,
+            "confirm_cleanup",
+            serde_json::json!({"previewId": 42, "onProgress": "__CHANNEL__:1"}),
+        );
+        assert_eq!(unknown_preview["kind"], "preview_not_found");
+        let not_running = invoke_error(
+            &window,
+            "cancel_cleanup",
+            serde_json::json!({"previewId": 42}),
+        );
+        assert_eq!(not_running["kind"], "preview_not_found");
+        let last = invoke(&window, "get_last_junk_scan", serde_json::json!({}));
+        assert_eq!(last, serde_json::Value::Null);
     }
 
     #[test]

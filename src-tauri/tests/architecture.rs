@@ -215,3 +215,135 @@ fn domain_layer_should_not_import_io_os_database_or_framework() {
     }
     assert!(violations.is_empty(), "dominio impuro: {violations:#?}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// C-09: el codigo de produccion no tiene via de borrado permanente (design D-12, RN-LIM-01).
+// ---------------------------------------------------------------------------------------------
+
+/// Llamadas de borrado que el codigo de produccion no puede contener: todo borrado pasa por
+/// `Trash::move_to_trash`. La unica excepcion declarada (vaciar la Papelera, RN-LIM-06) llegara
+/// con su propio change y su propia excepcion en este test.
+const FORBIDDEN_DELETION_TOKENS: [&str; 7] = [
+    "remove_file",
+    "remove_dir",
+    "DeleteFileW",
+    "SHEmptyRecycleBin",
+    "SHFileOperation",
+    "FOF_",
+    "delete_all",
+];
+
+/// Archivos que son solo de test aunque no esten bajo `#[cfg(test)]` en su propio contenido.
+fn is_test_only_file(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.ends_with("_tests.rs")
+        || name == "fakes.rs"
+        || name == "test_util.rs"
+        || name == "test_support.rs"
+        || name.ends_with("_contract.rs")
+}
+
+/// Quita del texto (ya sin comentarios) cada item marcado con `#[cfg(test)]`: hasta su `;`
+/// (p. ej. `mod x;`) o hasta el cierre de su bloque `{ ... }`, lo que ocurra primero.
+fn strip_cfg_test_items(code: &str) -> String {
+    const MARKER: &str = "#[cfg(test)]";
+    let mut out = String::new();
+    let mut rest = code;
+    while let Some(start) = rest.find(MARKER) {
+        out.push_str(&rest[..start]);
+        let item = &rest[start + MARKER.len()..];
+        let mut depth = 0usize;
+        let mut end = item.len();
+        for (i, c) in item.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = i + 1;
+                        break;
+                    }
+                }
+                ';' if depth == 0 => {
+                    end = i + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        rest = &item[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Tokens de borrado prohibidos presentes en una fuente de produccion (comentarios y bloques
+/// `#[cfg(test)]` no cuentan).
+fn forbidden_deletion_calls(source: &str) -> Vec<&'static str> {
+    let production = strip_cfg_test_items(&compact_code(source));
+    FORBIDDEN_DELETION_TOKENS
+        .into_iter()
+        .filter(|token| production.contains(token))
+        .collect()
+}
+
+#[cfg(test)]
+mod deletion_scanner_tests {
+    use super::*;
+
+    #[test]
+    fn forbidden_deletion_calls_should_detect_each_forbidden_token_in_production_code() {
+        let cases = [
+            "fn f() { std::fs::remove_file(p).ok(); }",
+            "fn f() { let _ = fs::remove_dir_all(p); }",
+            "fn f() { DeleteFileW(p); }",
+            "fn f() { SHEmptyRecycleBinW(h, r, 0); }",
+            "fn f() { SHFileOperationW(&mut op); }",
+            "const F: u32 = FOF_ALLOWUNDO;",
+            "fn f() { trash::delete_all(items) }",
+        ];
+        for source in cases {
+            assert!(
+                !forbidden_deletion_calls(source).is_empty(),
+                "no detecto: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn forbidden_deletion_calls_should_ignore_comments_and_cfg_test_items() {
+        let src = "// std::fs::remove_file(p)\n/* delete_all */\nfn ok() { trash::delete(p) }\n\
+                   #[cfg(test)]\nmod tests { fn t() { std::fs::remove_file(p).unwrap(); } }\n\
+                   #[cfg(test)]\n#[path = \"x_tests.rs\"]\nmod more;\n\
+                   fn after() {}\n";
+        assert_eq!(forbidden_deletion_calls(src), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn forbidden_deletion_calls_should_still_scan_code_after_a_cfg_test_block() {
+        let src = "#[cfg(test)]\nmod tests { fn t() {} }\nfn bad() { std::fs::remove_file(p); }\n";
+        assert_eq!(forbidden_deletion_calls(src), vec!["remove_file"]);
+    }
+}
+
+#[test]
+fn production_code_should_not_contain_permanent_deletion_calls() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = rust_files_under(&src_dir).unwrap();
+    assert!(
+        !files.is_empty(),
+        "no se encontraron fuentes en {}",
+        src_dir.display()
+    );
+    let mut violations = Vec::new();
+    for file in files.iter().filter(|f| !is_test_only_file(f)) {
+        let source = std::fs::read_to_string(file).unwrap();
+        for token in forbidden_deletion_calls(&source) {
+            violations.push(format!("{}: {token}", file.display()));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "borrado permanente en produccion: {violations:#?}"
+    );
+}

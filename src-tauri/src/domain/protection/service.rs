@@ -272,6 +272,7 @@ impl<'a, F: FileSystem> PathProtection<'a, F> {
             path: real,
             kind: target.kind,
             size_bytes: target.size_bytes,
+            modified: target.modified,
             identity,
             rule,
         })

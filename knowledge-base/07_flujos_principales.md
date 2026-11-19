@@ -90,7 +90,10 @@ sequenceDiagram
 - Ruta resultó protegida al re-verificar → `skipped_protected`.
 - Placeholder OneDrive → `skipped_cloud`.
 - Permiso denegado/IO error → `error` con detalle; el resto continúa.
-- Usuario cierra el preview → no se ejecuta nada.
+- Usuario cierra el preview → no se ejecuta nada (el preview es de un solo uso y vence a los 10 minutos; confirmar uno vencido o reemplazado se rechaza).
+- Usuario cancela la limpieza en curso → el ítem en curso termina y se registra; no se procesan más; el resumen informa "cancelada" y los no procesados (sin entradas de log para ellos).
+- Abortos (no se sigue moviendo; lo ya movido queda en la Papelera y registrado): Papelera no disponible en el volumen (`recycle_bin_unavailable`), mecanismo de Papelera inutilizable (`trash_unavailable`) o no se puede escribir el log (`log_unavailable`).
+- Archivo escrito hace menos de 24 h, o distinto de lo escaneado (tamaño o fecha por handle) → `skipped_locked` con detalle (`recently_modified` / `changed_since_scan`).
 
 ## Flujo 3: Aplicar mejora → snapshot → undo
 

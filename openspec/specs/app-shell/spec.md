@@ -73,10 +73,10 @@ Cada comando IPC propio SHALL quedar sujeto al control de acceso del runtime y e
 
 #### Scenario: Lista exacta de comandos habilitados
 - **WHEN** la suite de tests compara los comandos propios declarados en el backend con los permisos de comandos de las capabilities
-- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan` y `list_junk_findings`)
+- **THEN** ambos conjuntos coinciden exactamente (hoy: `get_app_info`, `get_settings`, `set_setting`, `get_store_status`, `recover_store`, `get_privilege_context`, `start_scan`, `cancel_scan`, `get_last_junk_scan`, `list_junk_findings`, `preview_cleanup`, `confirm_cleanup` y `cancel_cleanup`)
 
 #### Scenario: Progreso sin permisos de eventos
-- **WHEN** se revisan las capabilities tras agregar el escaneo de basura
+- **WHEN** se revisan las capabilities tras agregar el escaneo de basura y la limpieza
 - **THEN** no contienen permisos `core:*` (de eventos ni de otro tipo) ni de plugins; el progreso viaja por el canal de la propia invocación
 
 ### Requirement: Navegación entre pantallas del shell

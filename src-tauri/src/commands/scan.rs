@@ -19,6 +19,7 @@ use crate::adapters::sqlite::StoreHandle;
 use crate::adapters::windows::{
     UserFolderSource, WindowsFileSystem, WindowsRecycleBin, resolve_protection_context,
 };
+use crate::domain::cleanup::model::PreviewId;
 use crate::domain::junk::category::JunkCategory;
 use crate::domain::junk::model::{
     CategoryResult, CategoryStatus, FindingState, JunkFindingPage, JunkScanOutcome, JunkScanSummary,
@@ -85,6 +86,9 @@ pub struct JunkScanSummaryDto {
     pub finished_at: Option<i64>,
     pub total_items: u64,
     pub total_bytes: u64,
+    /// Fecha de la ultima limpieza que registro items sobre este escaneo; `null` si nunca se
+    /// limpio (C-09, D-20).
+    pub cleaned_at: Option<i64>,
     pub categories: Vec<CategoryDto>,
 }
 
@@ -97,6 +101,7 @@ impl From<&JunkScanSummary> for JunkScanSummaryDto {
             finished_at: summary.scan.finished_at.map(|at| at.0),
             total_items: summary.total_items(),
             total_bytes: summary.total_bytes(),
+            cleaned_at: None,
             categories: summary.categories.iter().map(CategoryDto::from).collect(),
         }
     }
@@ -182,45 +187,80 @@ impl ScanEnvironment {
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // Un panic de otro hilo no invalida estos datos simples: se sigue con su contenido.
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Que trabajo ocupa el lugar.
+#[derive(Debug)]
+enum JobKind {
+    /// Escaneo; el identificador se conoce recien al crearlo en la base.
+    Scan(Option<ScanId>),
+    /// Limpieza del preview indicado.
+    Cleanup(PreviewId),
+}
+
 #[derive(Debug)]
 struct ActiveEntry {
-    scan_id: Option<ScanId>,
+    kind: JobKind,
     cancel: Arc<AtomicBool>,
 }
 
-/// Escaneo en curso: como maximo uno a la vez.
+/// Trabajo en curso: como maximo un escaneo O una limpieza a la vez (C-09 D-19).
 #[derive(Debug, Clone, Default)]
-pub struct ActiveScan(Arc<Mutex<Option<ActiveEntry>>>);
+pub struct ActiveJob(Arc<Mutex<Option<ActiveEntry>>>);
 
-impl ActiveScan {
-    /// Toma el lugar del escaneo; falla `scan_in_progress` si ya hay uno. El lugar se libera
-    /// al soltar el guard, tambien si la tarea falla.
-    pub fn begin(&self) -> Result<ScanGuard, AppError> {
+impl ActiveJob {
+    /// Error que corresponde a pedir un trabajo nuevo con `entry` ocupando el lugar.
+    fn busy(entry: &ActiveEntry) -> AppError {
+        match entry.kind {
+            JobKind::Scan(_) => AppError::ScanInProgress,
+            JobKind::Cleanup(_) => AppError::CleanupInProgress,
+        }
+    }
+
+    fn begin(&self, kind: JobKind) -> Result<JobGuard, AppError> {
         let mut slot = lock(&self.0);
-        if slot.is_some() {
-            return Err(AppError::ScanInProgress);
+        if let Some(entry) = slot.as_ref() {
+            return Err(Self::busy(entry));
         }
         let cancel = Arc::new(AtomicBool::new(false));
         *slot = Some(ActiveEntry {
-            scan_id: None,
+            kind,
             cancel: Arc::clone(&cancel),
         });
-        Ok(ScanGuard {
+        Ok(JobGuard {
             owner: self.clone(),
             cancel,
         })
     }
 
+    /// Toma el lugar del escaneo; falla `scan_in_progress` si ya hay uno y `cleanup_in_progress`
+    /// si hay una limpieza. El lugar se libera al soltar el guard, tambien si la tarea falla.
+    pub fn begin_scan(&self) -> Result<JobGuard, AppError> {
+        self.begin(JobKind::Scan(None))
+    }
+
+    /// Toma el lugar de la limpieza del preview `id`; falla `scan_in_progress` con un escaneo
+    /// y `cleanup_in_progress` con otra limpieza.
+    pub fn begin_cleanup(&self, id: PreviewId) -> Result<JobGuard, AppError> {
+        self.begin(JobKind::Cleanup(id))
+    }
+
+    /// Consulta sin tomar el lugar (el preview es instantaneo): falla igual que `begin_*`.
+    pub fn ensure_idle(&self) -> Result<(), AppError> {
+        match lock(&self.0).as_ref() {
+            Some(entry) => Err(Self::busy(entry)),
+            None => Ok(()),
+        }
+    }
+
     /// Pide cancelar el escaneo `id`; `scan_not_found` si no es el activo.
-    pub fn cancel(&self, id: ScanId) -> Result<(), AppError> {
+    pub fn cancel_scan(&self, id: ScanId) -> Result<(), AppError> {
         let slot = lock(&self.0);
         match slot.as_ref() {
-            Some(entry) if entry.scan_id == Some(id) => {
+            Some(entry) if matches!(entry.kind, JobKind::Scan(Some(active)) if active == id) => {
                 // Solo es una bandera: no ordena otros accesos a memoria.
                 entry.cancel.store(true, Ordering::Relaxed);
                 Ok(())
@@ -228,20 +268,34 @@ impl ActiveScan {
             _ => Err(AppError::ScanNotFound(id.0.to_string())),
         }
     }
+
+    /// Pide cancelar la limpieza del preview `id`; `preview_not_found` si no esta en curso.
+    pub fn cancel_cleanup(&self, id: PreviewId) -> Result<(), AppError> {
+        let slot = lock(&self.0);
+        match slot.as_ref() {
+            Some(entry) if matches!(entry.kind, JobKind::Cleanup(active) if active == id) => {
+                entry.cancel.store(true, Ordering::Relaxed);
+                Ok(())
+            }
+            _ => Err(AppError::PreviewNotFound),
+        }
+    }
 }
 
-/// Posee el lugar del escaneo activo hasta que se suelta.
+/// Posee el lugar del trabajo activo hasta que se suelta.
 #[derive(Debug)]
-pub struct ScanGuard {
-    owner: ActiveScan,
+pub struct JobGuard {
+    owner: ActiveJob,
     cancel: Arc<AtomicBool>,
 }
 
-impl ScanGuard {
-    /// Asocia el identificador persistido (desde ahi se puede cancelar).
+impl JobGuard {
+    /// Asocia el identificador persistido de un escaneo (desde ahi se puede cancelar).
     pub fn bind(&self, id: ScanId) {
-        if let Some(entry) = lock(&self.owner.0).as_mut() {
-            entry.scan_id = Some(id);
+        if let Some(entry) = lock(&self.owner.0).as_mut()
+            && let JobKind::Scan(bound) = &mut entry.kind
+        {
+            *bound = Some(id);
         }
     }
 
@@ -251,7 +305,7 @@ impl ScanGuard {
     }
 }
 
-impl Drop for ScanGuard {
+impl Drop for JobGuard {
     fn drop(&mut self) {
         *lock(&self.owner.0) = None;
     }
@@ -300,7 +354,7 @@ pub fn run_junk_scan<S, F, R, C>(
     ports: &ScanPorts<'_, S, F, R, C>,
     privileges: &PrivilegeContext,
     raw: RawProtectionContext,
-    guard: &ScanGuard,
+    guard: &JobGuard,
     emit: &mut dyn FnMut(ScanEventDto),
 ) -> Result<JunkScanSummaryDto, AppError>
 where
@@ -356,6 +410,7 @@ where
                 finished_at: Some(finished_at.0),
                 total_items: 0,
                 total_bytes: 0,
+                cleaned_at: None,
                 categories: Vec::new(),
             })
         }
@@ -366,7 +421,15 @@ where
 pub fn last_junk_scan<S: Store + ?Sized>(
     store: &S,
 ) -> Result<Option<JunkScanSummaryDto>, AppError> {
-    Ok(store.last_done_junk_scan()?.as_ref().map(Into::into))
+    let Some(summary) = store.last_done_junk_scan()? else {
+        return Ok(None);
+    };
+    let mut dto = JunkScanSummaryDto::from(&summary);
+    let since = summary.scan.finished_at.unwrap_or(summary.scan.started_at);
+    dto.cleaned_at = store
+        .scan_cleaned_at(summary.scan.id, since)?
+        .map(|at| at.0);
+    Ok(Some(dto))
 }
 
 /// Una pagina de hallazgos del ultimo escaneo terminado (valida todos los argumentos).
@@ -417,14 +480,14 @@ pub async fn start_scan(
     kind: String,
     on_progress: Channel<ScanEventDto>,
     handle: State<'_, StoreHandle>,
-    active: State<'_, ActiveScan>,
+    active: State<'_, ActiveJob>,
     privileges: State<'_, PrivilegeContext>,
     environment: State<'_, ScanEnvironment>,
 ) -> Result<JunkScanSummaryDto, AppError> {
     if kind != "junk" {
         return Err(AppError::ScanKindUnsupported(kind));
     }
-    let guard = active.begin()?;
+    let guard = active.begin_scan()?;
     let handle = handle.inner().clone();
     let privileges = *privileges.inner();
     let data_dir = environment.data_dir();
@@ -451,8 +514,8 @@ pub async fn start_scan(
 
 /// Comando IPC: cancela el escaneo en curso.
 #[tauri::command]
-pub async fn cancel_scan(scan_id: i64, active: State<'_, ActiveScan>) -> Result<(), AppError> {
-    active.cancel(ScanId(scan_id))
+pub async fn cancel_scan(scan_id: i64, active: State<'_, ActiveJob>) -> Result<(), AppError> {
+    active.cancel_scan(ScanId(scan_id))
 }
 
 /// Comando IPC: resumen del ultimo escaneo de basura terminado (`null` si no hay).

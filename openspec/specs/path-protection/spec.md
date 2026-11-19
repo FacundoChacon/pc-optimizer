@@ -297,7 +297,7 @@ Una decisión `allowed` sobre un directorio SHALL certificar solo esa entrada; M
 - **THEN** la consulta de `C:\Users\ana\AppData\Local\Temp\d\j` sigue siendo `protected` con motivo `reparse_point`
 
 ### Requirement: Re-verificación anti-TOCTOU antes de borrar
-Antes de mover un elemento a la Papelera, el sistema SHALL fijar los ancestros de su ruta real contra renombres y borrados, repetir la verificación completa y comparar la identidad de archivo (volumen e id) y el tipo con los del escaneo; cualquier diferencia o falla MUST dar `protected` y la fijación MUST mantenerse hasta terminar el movimiento.
+Antes de mover un elemento a la Papelera, el sistema SHALL fijar los ancestros de su ruta real contra renombres y borrados, repetir la verificación completa y comparar la identidad de archivo (volumen e id) y el tipo con los del escaneo; cualquier diferencia o falla MUST dar `protected` y la fijación MUST mantenerse hasta terminar el movimiento. Una re-verificación `allowed` MUST informar el tamaño y la última escritura leídos del elemento abierto, no de un listado de carpeta.
 
 #### Scenario: Archivo reemplazado por un symlink
 - **WHEN** entre el escaneo y la ejecución `a.tmp` se reemplaza por un symlink hacia `C:\Windows\System32\x.dll`
@@ -318,6 +318,10 @@ Antes de mover un elemento a la Papelera, el sistema SHALL fijar los ancestros d
 #### Scenario: Ruta a mover
 - **WHEN** la re-verificación da `allowed`
 - **THEN** la ruta que se entrega para mover a la Papelera es la ruta real verificada y no la ruta original recibida
+
+#### Scenario: Tamaño y fecha del elemento abierto
+- **WHEN** la re-verificación da `allowed` para un archivo abierto para escritura por otro proceso cuya entrada de carpeta todavía muestra una fecha anterior
+- **THEN** el resultado informa el tamaño y la última escritura vigentes del archivo abierto
 
 ### Requirement: Validación de raíces de reglas personalizadas
 El sistema SHALL rechazar como raíz de una regla de limpieza toda ruta que sea `protected` por un motivo distinto de ancla de contenido (carpetas conocidas del usuario, temporal, raíz de excepción) o que sea ancestro de una raíz protegida, de una raíz de excepción, del perfil actual o de un ancla estructural.

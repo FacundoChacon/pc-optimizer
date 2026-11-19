@@ -1,7 +1,9 @@
 //! Puertos de persistencia: ajustes, escaneos, bitacora de limpieza y hallazgos de basura.
 
 use crate::domain::junk::category::JunkCategory;
-use crate::domain::junk::model::{JunkFindingPage, JunkScanResults, JunkScanSummary};
+use crate::domain::junk::model::{
+    JunkFindingPage, JunkScanResults, JunkScanSummary, StoredFinding,
+};
 use crate::domain::model::{
     CleanupLogEntry, EpochMillis, NewCleanupLogEntry, NewScan, Scan, ScanId, ScanStatus,
 };
@@ -55,6 +57,14 @@ pub trait CleanupLogStore {
     fn append_cleanup_log(&self, entries: &[NewCleanupLogEntry]) -> Result<(), StoreError>;
     /// Orden `ts DESC, id DESC`.
     fn recent_cleanup_log(&self, limit: u32) -> Result<Vec<CleanupLogEntry>, StoreError>;
+    /// Fecha (`ts` maximo) de la ultima entrada del log asociada a `scan_id` con `ts >= since`
+    /// (el fin del escaneo), o `None` si no hay ninguna. Asi se deriva que un escaneo ya fue
+    /// limpiado sin agregar tablas ni columnas (C-09, D-20).
+    fn scan_cleaned_at(
+        &self,
+        scan_id: ScanId,
+        since: EpochMillis,
+    ) -> Result<Option<EpochMillis>, StoreError>;
 }
 
 /// Hallazgos de basura (C-08). Solo registros de la base: ninguna operacion actua sobre archivos.
@@ -83,6 +93,14 @@ pub trait JunkFindingStore {
         offset: u64,
         limit: u32,
     ) -> Result<JunkFindingPage, StoreError>;
+    /// Hallazgos ELEGIBLES (no omitidos) de `scan_id` en las `categories` pedidas, con su
+    /// identidad: orden de categoria segun `JunkCategory::ALL`, luego `size_bytes DESC` y `id ASC`.
+    /// Un escaneo desconocido, sin hallazgos o sin categorias pedidas da una lista vacia.
+    fn cleanup_candidates(
+        &self,
+        scan_id: ScanId,
+        categories: &[JunkCategory],
+    ) -> Result<Vec<StoredFinding>, StoreError>;
 }
 
 /// Persistencia completa.

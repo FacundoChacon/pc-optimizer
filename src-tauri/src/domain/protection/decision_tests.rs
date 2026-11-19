@@ -163,6 +163,7 @@ fn checked() -> CheckedPath {
             volume_serial: 1,
             file_id: 2,
         },
+        modified: None,
         rule: AllowRule::Exception(ExceptionId::WindowsTemp),
     }
 }

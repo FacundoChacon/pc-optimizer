@@ -14,4 +14,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "cancel_scan",
     "get_last_junk_scan",
     "list_junk_findings",
+    "preview_cleanup",
+    "confirm_cleanup",
+    "cancel_cleanup",
 ];

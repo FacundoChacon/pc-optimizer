@@ -3,7 +3,7 @@
 //! La decision es una enumeracion cerrada con codigos textuales estables: son claves del
 //! catalogo de la UI y del `error_detail` del log.
 
-use crate::domain::model::CleanupOutcome;
+use crate::domain::model::{CleanupOutcome, EpochMillis};
 use crate::domain::ports::{EntryKind, FileIdentity, PortError};
 
 use super::path::NormalizedPath;
@@ -199,6 +199,9 @@ pub struct CheckedPath {
     pub path: NormalizedPath,
     pub kind: EntryKind,
     pub size_bytes: u64,
+    /// Ultima escritura leida del elemento ABIERTO (no del listado de la carpeta: NTFS actualiza
+    /// tarde la entrada de directorio de un archivo abierto para escritura, C-08 §Apply notes).
+    pub modified: Option<EpochMillis>,
     pub identity: FileIdentity,
     pub rule: AllowRule,
 }

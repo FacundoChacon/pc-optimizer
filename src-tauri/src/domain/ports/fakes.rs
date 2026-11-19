@@ -14,11 +14,13 @@ use crate::domain::model::{
     Scan, ScanId, ScanKind, ScanStatus, scans_to_prune,
 };
 use crate::domain::ports::{
-    AncestorPin, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem,
-    JunkFindingStore, PortError, RecycleBinInfo, RecycleBinUsage, ScanStore, SensorSample, Sensors,
-    SessionIdentity, SettingsStore, StoreError, Trash,
+    AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity,
+    FileMeta, FileSystem, JunkFindingStore, PortError, RecycleBinInfo, RecycleBinPolicy,
+    RecycleBinUsage, ScanStore, SensorSample, Sensors, SessionIdentity, SettingsStore, StoreError,
+    Trash, TrashError,
 };
 use crate::domain::privileges::UserSid;
+use crate::domain::protection::service::DeleteTarget;
 
 /// Operacion del puerto de archivos (para registrar llamadas e inyectar fallas por operacion).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,6 +43,8 @@ struct FsState {
     op_failures: BTreeMap<(FsOp, PathBuf), PortError>,
     calls: Vec<(FsOp, PathBuf)>,
     pinned: Vec<PathBuf>,
+    /// Tamano y fecha que `read_dir` informa en lugar de los reales (listado desactualizado).
+    stale_listing: BTreeMap<PathBuf, (u64, Option<EpochMillis>)>,
     next_identity: u128,
 }
 
@@ -298,6 +302,20 @@ impl FakeFileSystem {
             .unwrap_or(false)
     }
 
+    /// `read_dir` informa `size_bytes` y `modified` desactualizados para `path`, como NTFS con un
+    /// archivo abierto para escritura; `metadata` sigue informando los reales.
+    pub(crate) fn with_stale_listing(
+        self,
+        path: &str,
+        size_bytes: u64,
+        modified: Option<EpochMillis>,
+    ) -> Self {
+        self.with_state(|s| {
+            s.stale_listing
+                .insert(PathBuf::from(path), (size_bytes, modified));
+        })
+    }
+
     /// Quita la ruta (la usa `FakeTrash`).
     pub(crate) fn remove(&self, path: &Path) {
         if let Ok(mut s) = self.state.lock() {
@@ -394,38 +412,91 @@ impl FileSystem for FakeFileSystem {
                 .entries
                 .iter()
                 .filter(|(child, _)| child.parent() == Some(path))
-                .map(|(child, meta)| DirEntry {
-                    path: child.clone(),
-                    meta: FileMeta {
+                .map(|(child, meta)| {
+                    let mut listed = FileMeta {
                         identity: None,
                         hard_links: None,
                         ..meta.clone()
-                    },
+                    };
+                    if let Some((size_bytes, modified)) = state.stale_listing.get(child) {
+                        listed.size_bytes = *size_bytes;
+                        listed.modified = *modified;
+                    }
+                    DirEntry {
+                        path: child.clone(),
+                        meta: listed,
+                    }
                 })
                 .collect()),
         }
     }
 }
 
+/// Accion que corre justo antes de mover una ruta (simula un reemplazo en la ventana residual).
+type BeforeMove = Box<dyn Fn()>;
+
 /// Papelera falsa: registra lo movido y lo quita del sistema de archivos compartido.
+///
+/// Mueve lo que haya en la ruta del objetivo en el momento de mover, igual que el shell: si un
+/// enlace reemplazo al archivo, se mueve el enlace y su destino sigue existiendo.
 pub(crate) struct FakeTrash {
     fs: Arc<FakeFileSystem>,
-    failures: Mutex<BTreeMap<PathBuf, PortError>>,
+    failures: Mutex<BTreeMap<PathBuf, TrashError>>,
+    hooks: Mutex<BTreeMap<PathBuf, BeforeMove>>,
+    no_ops: Mutex<std::collections::BTreeSet<PathBuf>>,
     moved: Mutex<Vec<PathBuf>>,
+    preflight_error: Mutex<Option<TrashError>>,
+    preflight_calls: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeTrash {
+    /// La comprobacion previa falla con `error` (Papelera no disponible).
+    pub(crate) fn preflight_fails(self, error: TrashError) -> Self {
+        if let Ok(mut e) = self.preflight_error.lock() {
+            *e = Some(error);
+        }
+        self
+    }
+
+    pub(crate) fn preflight_calls(&self) -> Vec<PathBuf> {
+        self.preflight_calls
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn new(fs: Arc<FakeFileSystem>) -> Self {
         Self {
             fs,
             failures: Mutex::new(BTreeMap::new()),
+            hooks: Mutex::new(BTreeMap::new()),
+            no_ops: Mutex::new(std::collections::BTreeSet::new()),
             moved: Mutex::new(Vec::new()),
+            preflight_error: Mutex::new(None),
+            preflight_calls: Mutex::new(Vec::new()),
         }
     }
 
-    pub(crate) fn fail_on(self, path: &str, error: PortError) -> Self {
+    /// Mover `path` falla con `error` y no lo mueve.
+    pub(crate) fn fail_on(self, path: &str, error: TrashError) -> Self {
         if let Ok(mut f) = self.failures.lock() {
             f.insert(PathBuf::from(path), error);
+        }
+        self
+    }
+
+    /// Corre `hook` justo antes de mover `path` (el objetivo sigue fijado).
+    pub(crate) fn before_move(self, path: &str, hook: impl Fn() + 'static) -> Self {
+        if let Ok(mut h) = self.hooks.lock() {
+            h.insert(PathBuf::from(path), Box::new(hook));
+        }
+        self
+    }
+
+    /// Mover `path` responde exito pero no lo mueve (Papelera mentirosa).
+    pub(crate) fn succeed_without_moving(self, path: &str) -> Self {
+        if let Ok(mut n) = self.no_ops.lock() {
+            n.insert(PathBuf::from(path));
         }
         self
     }
@@ -435,24 +506,46 @@ impl FakeTrash {
     }
 }
 
+fn poisoned() -> TrashError {
+    TrashError::Other("fake_trash_lock_poisoned".into())
+}
+
 impl Trash for FakeTrash {
-    fn move_to_trash(&self, path: &Path) -> Result<(), PortError> {
+    fn preflight(&self, sample: &Path) -> Result<(), TrashError> {
+        self.preflight_calls
+            .lock()
+            .map_err(|_| poisoned())?
+            .push(sample.to_path_buf());
+        match self.preflight_error.lock().map_err(|_| poisoned())?.clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn move_to_trash(&self, target: &DeleteTarget) -> Result<(), TrashError> {
+        let path = target.path();
+        if let Some(hook) = self.hooks.lock().map_err(|_| poisoned())?.get(path) {
+            hook();
+        }
         let failure = self
             .failures
             .lock()
-            .map_err(|_| PortError::Io("fake trash lock poisoned".into()))?
+            .map_err(|_| poisoned())?
             .get(path)
             .cloned();
         if let Some(error) = failure {
             return Err(error);
         }
         if !self.fs.exists(path) {
-            return Err(PortError::NotFound(path.display().to_string()));
+            return Err(TrashError::NotFound);
+        }
+        if self.no_ops.lock().map_err(|_| poisoned())?.contains(path) {
+            return Ok(());
         }
         self.fs.remove(path);
         self.moved
             .lock()
-            .map_err(|_| PortError::Io("fake trash lock poisoned".into()))?
+            .map_err(|_| poisoned())?
             .push(path.to_path_buf());
         Ok(())
     }
@@ -693,6 +786,20 @@ impl CleanupLogStore for InMemoryStore {
         log.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         Ok(log)
     }
+
+    fn scan_cleaned_at(
+        &self,
+        scan_id: ScanId,
+        since: EpochMillis,
+    ) -> Result<Option<EpochMillis>, StoreError> {
+        Ok(self
+            .lock()?
+            .log
+            .iter()
+            .filter(|entry| entry.scan_id == Some(scan_id) && entry.ts >= since)
+            .map(|entry| entry.ts)
+            .max())
+    }
 }
 
 impl JunkFindingStore for InMemoryStore {
@@ -816,6 +923,35 @@ impl JunkFindingStore for InMemoryStore {
             .collect();
         Ok(JunkFindingPage { total, items })
     }
+
+    fn cleanup_candidates(
+        &self,
+        scan_id: ScanId,
+        categories: &[JunkCategory],
+    ) -> Result<Vec<StoredFinding>, StoreError> {
+        let inner = self.lock()?;
+        let mut mine: Vec<StoredFinding> = inner
+            .junk_findings
+            .iter()
+            .filter(|(_, scan, finding)| {
+                *scan == scan_id && finding.is_eligible() && categories.contains(&finding.category)
+            })
+            .map(|(id, _, finding)| StoredFinding {
+                id: *id,
+                finding: finding.clone(),
+            })
+            .collect();
+        mine.sort_by_key(|stored| {
+            (
+                JunkCategory::ALL
+                    .iter()
+                    .position(|known| *known == stored.finding.category),
+                std::cmp::Reverse(stored.finding.size_bytes),
+                stored.id,
+            )
+        });
+        Ok(mine)
+    }
 }
 
 /// SID de usuario de prueba `S-1-5-21-1-2-3-<rid>` (28 bytes).
@@ -880,10 +1016,47 @@ impl SessionIdentity for FakeSessionIdentity {
     }
 }
 
+/// Politica de la Papelera falsa: devuelve una disponibilidad o un error configurado y registra
+/// las rutas consultadas.
+pub(crate) struct FakeRecycleBinPolicy {
+    result: Result<BinAvailability, PortError>,
+    queried: Mutex<Vec<PathBuf>>,
+}
+
+impl FakeRecycleBinPolicy {
+    pub(crate) fn with(availability: BinAvailability) -> Self {
+        Self {
+            result: Ok(availability),
+            queried: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn failing(error: PortError) -> Self {
+        Self {
+            result: Err(error),
+            queried: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn queried(&self) -> Vec<PathBuf> {
+        self.queried.lock().map(|q| q.clone()).unwrap_or_default()
+    }
+}
+
+impl RecycleBinPolicy for FakeRecycleBinPolicy {
+    fn availability(&self, path: &Path) -> Result<BinAvailability, PortError> {
+        if let Ok(mut q) = self.queried.lock() {
+            q.push(path.to_path_buf());
+        }
+        self.result.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::ports::store_contract as contract;
+    use crate::domain::protection::decision::ProtectionDecision;
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
@@ -1290,53 +1463,126 @@ mod tests {
         crate::domain::ports::fs_contract::fs_contract_tests!(fake_scenario());
     }
 
-    // --- FakeTrash ---
+    // --- FakeTrash (C-09 3.1: solo acepta objetivos re-verificados) ---
+    const TEMP_DIR: &str = r"C:\Users\ana\AppData\Local\Temp";
+
+    fn temp_fs() -> FakeFileSystem {
+        FakeFileSystem::new()
+            .with_dir(r"C:\Users")
+            .with_dir(r"C:\Users\ana")
+            .with_dir(r"C:\Users\ana\AppData")
+            .with_dir(r"C:\Users\ana\AppData\Local")
+            .with_dir(TEMP_DIR)
+            .with_file(&format!(r"{TEMP_DIR}\a.txt"), 5, None)
+            .with_file(&format!(r"{TEMP_DIR}\b.txt"), 5, None)
+            .with_file(r"C:\Users\ana\Documents\keep.dll", 9, None)
+            .canonical_as_is()
+    }
+
     fn fs_with_files() -> Arc<FakeFileSystem> {
-        Arc::new(
-            FakeFileSystem::new()
-                .with_file(r"C:\t\a.txt", 5, None)
-                .with_file(r"C:\t\b.txt", 5, None),
-        )
+        Arc::new(temp_fs())
+    }
+
+    /// Re-verifica `path` con el servicio real y entrega el objetivo (la unica forma de
+    /// obtener uno).
+    fn target_for(fs: &FakeFileSystem, path: &str) -> DeleteTarget {
+        use crate::domain::protection::service::PathProtection;
+        use crate::domain::protection::test_support::ctx_c_ana;
+        let service = PathProtection::new(fs, Ok(ctx_c_ana()));
+        let checked = match service.check(Path::new(path)) {
+            ProtectionDecision::Allowed(checked) => checked,
+            other => panic!("se esperaba Allowed: {other:?}"),
+        };
+        match service.prepare_delete(&checked) {
+            Ok(target) => target,
+            Err(decision) => panic!("prepare_delete fallo: {decision:?}"),
+        }
+    }
+
+    fn a_txt() -> String {
+        format!(r"{TEMP_DIR}\a.txt")
+    }
+
+    fn b_txt() -> String {
+        format!(r"{TEMP_DIR}\b.txt")
     }
 
     #[test]
     fn trash_should_record_move_and_remove_path_from_shared_fs() {
         let fs = fs_with_files();
         let trash = FakeTrash::new(fs.clone());
-        trash.move_to_trash(&p(r"C:\t\a.txt")).unwrap();
-        assert_eq!(trash.moved(), vec![p(r"C:\t\a.txt")]);
-        assert!(!fs.exists(&p(r"C:\t\a.txt")));
-        assert!(fs.exists(&p(r"C:\t\b.txt")));
+        let target = target_for(&fs, &a_txt());
+        assert_eq!(trash.move_to_trash(&target), Ok(()));
+        assert_eq!(trash.moved(), vec![p(&a_txt())]);
+        assert!(!fs.exists(&p(&a_txt())));
+        assert!(fs.exists(&p(&b_txt())));
     }
 
     #[test]
-    fn trash_should_fail_and_keep_the_file_when_in_use_or_unsupported() {
+    fn trash_should_fail_and_keep_the_file_when_a_configured_error_is_set() {
         let fs = fs_with_files();
         let trash = FakeTrash::new(fs.clone())
-            .fail_on(r"C:\t\a.txt", PortError::InUse("a".into()))
-            .fail_on(
-                r"C:\t\b.txt",
-                PortError::Unsupported("no recycle bin".into()),
-            );
-        assert_eq!(
-            trash.move_to_trash(&p(r"C:\t\a.txt")),
-            Err(PortError::InUse("a".into()))
-        );
-        assert!(matches!(
-            trash.move_to_trash(&p(r"C:\t\b.txt")),
-            Err(PortError::Unsupported(_))
-        ));
-        assert!(fs.exists(&p(r"C:\t\a.txt")) && fs.exists(&p(r"C:\t\b.txt")));
+            .fail_on(&a_txt(), TrashError::InUse)
+            .fail_on(&b_txt(), TrashError::BinUnavailable);
+        let a = target_for(&fs, &a_txt());
+        let b = target_for(&fs, &b_txt());
+        assert_eq!(trash.move_to_trash(&a), Err(TrashError::InUse));
+        assert_eq!(trash.move_to_trash(&b), Err(TrashError::BinUnavailable));
+        assert!(fs.exists(&p(&a_txt())) && fs.exists(&p(&b_txt())));
         assert!(trash.moved().is_empty());
     }
 
     #[test]
-    fn trash_should_report_not_found_for_missing_path() {
-        let trash = FakeTrash::new(fs_with_files());
-        assert!(matches!(
-            trash.move_to_trash(&p(r"C:\no")),
-            Err(PortError::NotFound(_))
-        ));
+    fn trash_should_report_not_found_when_the_entry_vanished_after_verification() {
+        let fs = fs_with_files();
+        let trash = FakeTrash::new(fs.clone());
+        let target = target_for(&fs, &a_txt());
+        fs.remove(&p(&a_txt()));
+        assert_eq!(trash.move_to_trash(&target), Err(TrashError::NotFound));
+    }
+
+    #[test]
+    fn trash_before_move_hook_should_replace_the_entry_with_a_link_and_move_the_link_only() {
+        let fs = fs_with_files();
+        let victim = a_txt();
+        let hook_fs = Arc::clone(&fs);
+        let hook_path = p(&victim);
+        let trash = FakeTrash::new(fs.clone()).before_move(&victim, move || {
+            hook_fs.replace_with_reparse_point(&hook_path);
+        });
+        let target = target_for(&fs, &victim);
+        assert_eq!(trash.move_to_trash(&target), Ok(()));
+        // Se movio lo que habia en la ruta (el enlace); el destino real sigue existiendo.
+        assert_eq!(trash.moved(), vec![p(&victim)]);
+        assert!(!fs.exists(&p(&victim)));
+        assert!(fs.exists(&p(r"C:\Users\ana\Documents\keep.dll")));
+    }
+
+    #[test]
+    fn trash_before_move_hook_should_run_while_the_ancestors_are_still_pinned() {
+        let fs = fs_with_files();
+        let seen = Arc::new(Mutex::new(None));
+        let (hook_fs, hook_seen) = (Arc::clone(&fs), Arc::clone(&seen));
+        let trash = FakeTrash::new(fs.clone()).before_move(&a_txt(), move || {
+            if let Ok(mut slot) = hook_seen.lock() {
+                *slot = Some(hook_fs.pinned().len());
+            }
+        });
+        let target = target_for(&fs, &a_txt());
+        assert_eq!(trash.move_to_trash(&target), Ok(()));
+        assert_eq!(*seen.lock().unwrap(), Some(5));
+        drop(target);
+        assert!(fs.pinned().is_empty());
+    }
+
+    #[test]
+    fn trash_should_report_success_without_moving_when_configured_to_do_so() {
+        let fs = fs_with_files();
+        let trash = FakeTrash::new(fs.clone()).succeed_without_moving(&a_txt());
+        let target = target_for(&fs, &a_txt());
+        assert_eq!(trash.move_to_trash(&target), Ok(()));
+        assert!(fs.exists(&p(&a_txt())));
+        assert!(trash.moved().is_empty());
     }
 
     // --- FakeSensors / FixedClock ---
@@ -1442,5 +1688,27 @@ mod tests {
     #[test]
     fn in_memory_store_should_satisfy_contract_junk_findings_follow_scan_retention() {
         contract::contract_junk_findings_follow_scan_retention(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_cleanup_candidates() {
+        contract::contract_cleanup_candidates_only_eligible_of_requested_categories(
+            InMemoryStore::new,
+        );
+        contract::contract_cleanup_candidates_order_by_category_then_size_then_id(
+            InMemoryStore::new,
+        );
+        contract::contract_cleanup_candidates_keep_the_identity_bits_intact(InMemoryStore::new);
+        contract::contract_cleanup_candidates_are_empty_without_findings(InMemoryStore::new);
+    }
+
+    #[test]
+    fn in_memory_store_should_satisfy_contract_scan_cleaned_at() {
+        contract::contract_scan_cleaned_at_is_the_latest_log_entry_since_the_scan_ended(
+            InMemoryStore::new,
+        );
+        contract::contract_scan_cleaned_at_ignores_other_scans_and_older_entries(
+            InMemoryStore::new,
+        );
     }
 }

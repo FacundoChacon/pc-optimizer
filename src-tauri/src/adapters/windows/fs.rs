@@ -311,4 +311,4 @@ impl AncestorPin for WindowsPin {}
 
 #[cfg(test)]
 #[path = "fs_tests.rs"]
-mod tests;
+pub(super) mod tests;

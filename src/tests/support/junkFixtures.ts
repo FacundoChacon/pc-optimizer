@@ -44,6 +44,7 @@ export function summary(
     finishedAt: 1_800_000_005_000,
     totalItems: counted.reduce((n, c) => n + c.itemCount, 0),
     totalBytes: counted.reduce((n, c) => n + c.sizeBytes, 0),
+    cleanedAt: null,
     categories,
     ...overrides,
   };

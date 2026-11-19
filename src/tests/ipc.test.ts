@@ -2,19 +2,24 @@ import { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  type CleanupEvent,
+  cancelCleanup,
   cancelScan,
+  confirmCleanup,
   getAppInfo,
   getLastJunkScan,
   getPrivilegeContext,
   getSettings,
   getStoreStatus,
   listJunkFindings,
+  previewCleanup,
   recoverStore,
   type ScanEvent,
   setSetting,
   startJunkScan,
   toAppError,
 } from "../lib/ipc";
+import { cleanupSummary, preview } from "./support/cleanupFixtures";
 import { sendChannelMessages, summary } from "./support/junkFixtures";
 
 describe("toAppError", () => {
@@ -456,5 +461,225 @@ describe("escaneo de basura", () => {
         kind: "invalid_response",
       });
     }
+  });
+});
+
+describe("limpieza: cleanedAt en el ultimo escaneo", () => {
+  afterEach(() => {
+    clearMocks();
+  });
+
+  it("getLastJunkScan decodifica cleanedAt nulo y con fecha", async () => {
+    mockIPC(() => summary());
+    await expect(getLastJunkScan()).resolves.toMatchObject({ cleanedAt: null });
+    mockIPC(() => summary({}, { cleanedAt: 1_800_000_099_000 }));
+    await expect(getLastJunkScan()).resolves.toMatchObject({ cleanedAt: 1_800_000_099_000 });
+  });
+
+  it("rechaza con invalid_response un cleanedAt ausente, negativo o no entero", async () => {
+    const { cleanedAt: _omitted, ...withoutCleanedAt } = summary();
+    const bad: unknown[] = [withoutCleanedAt, { ...summary(), cleanedAt: -1 }, { ...summary(), cleanedAt: 1.5 }];
+    for (const raw of bad) {
+      mockIPC(() => raw);
+      await expect(getLastJunkScan()).rejects.toMatchObject({ kind: "invalid_response" });
+    }
+  });
+});
+
+describe("limpieza: previewCleanup", () => {
+  afterEach(() => {
+    clearMocks();
+  });
+
+  it("invoca preview_cleanup con { scanId, categories } y decodifica el preview", async () => {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    const raw = preview();
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args });
+      return raw;
+    });
+    await expect(previewCleanup(4, ["temp_user", "temp_windows"])).resolves.toEqual(raw);
+    expect(calls).toEqual([
+      { cmd: "preview_cleanup", args: { scanId: 4, categories: ["temp_user", "temp_windows"] } },
+    ]);
+  });
+
+  it("decodifica una categoria bloqueada con su motivo y recycleBinAvailable en false", async () => {
+    const raw = preview({
+      recycleBinAvailable: false,
+      categories: [
+        {
+          category: "temp_user",
+          status: "blocked",
+          blockReason: "different_user",
+          itemCount: 0,
+          sizeBytes: 0,
+          recentCount: 0,
+          recentBytes: 0,
+        },
+      ],
+    });
+    mockIPC(() => raw);
+    const decoded = await previewCleanup(1, ["temp_user"]);
+    expect(decoded.recycleBinAvailable).toBe(false);
+    expect(decoded.categories[0]).toMatchObject({ status: "blocked", blockReason: "different_user" });
+  });
+
+  it("rechaza con invalid_response las formas invalidas", async () => {
+    const base = preview();
+    const category = (patch: Record<string, unknown>) => ({
+      ...base,
+      categories: base.categories.map((c, i) => (i === 0 ? { ...c, ...patch } : c)),
+    });
+    const { blockReason: _unused, ...noReason } = {
+      ...base.categories[0],
+      status: "blocked",
+      blockReason: "different_user",
+    };
+    const bad: unknown[] = [
+      null,
+      "texto",
+      { ...base, previewId: -1 },
+      { ...base, totalItems: 1.5 },
+      { ...base, recycleBinAvailable: "si" },
+      { ...base, categories: "x" },
+      category({ category: "documents" }),
+      category({ status: "maybe" }),
+      category({ itemCount: -2 }),
+      category({ sizeBytes: 0.5 }),
+      category({ status: "included", blockReason: "different_user" }),
+      { ...base, categories: [noReason] },
+      category({ status: "blocked", blockReason: "bored" }),
+    ];
+    for (const raw of bad) {
+      mockIPC(() => raw);
+      await expect(previewCleanup(1, ["temp_user"])).rejects.toMatchObject({ kind: "invalid_response" });
+    }
+  });
+
+  it("propaga el error tipado del backend", async () => {
+    mockIPC(() => {
+      throw { kind: "scan_already_cleaned", message: "the scan was already cleaned" };
+    });
+    await expect(previewCleanup(1, ["temp_user"])).rejects.toEqual({
+      kind: "scan_already_cleaned",
+      message: "the scan was already cleaned",
+    });
+  });
+});
+
+describe("limpieza: confirmCleanup y cancelCleanup", () => {
+  afterEach(() => {
+    clearMocks();
+  });
+
+  it("confirmCleanup invoca confirm_cleanup con { previewId, onProgress }, entrega eventos y devuelve el resumen", async () => {
+    const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    const raw = cleanupSummary();
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args: args as Record<string, unknown> });
+      const channel = (args as { onProgress: Channel<unknown> }).onProgress;
+      sendChannelMessages(channel, [
+        { type: "started", previewId: 1, total: 12 },
+        { type: "progress", processed: 12, total: 12, movedCount: 10, movedBytes: 1024 },
+      ]);
+      return raw;
+    });
+    const events: CleanupEvent[] = [];
+    await expect(confirmCleanup(1, (event) => events.push(event))).resolves.toEqual(raw);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cmd).toBe("confirm_cleanup");
+    expect(calls[0]?.args["previewId"]).toBe(1);
+    expect(calls[0]?.args["onProgress"]).toBeInstanceOf(Channel);
+    expect(events).toEqual([
+      { type: "started", previewId: 1, total: 12 },
+      { type: "progress", processed: 12, total: 12, movedCount: 10, movedBytes: 1024 },
+    ]);
+  });
+
+  it("confirmCleanup ignora los eventos invalidos sin cortar la limpieza", async () => {
+    mockIPC((_cmd, args) => {
+      const channel = (args as { onProgress: Channel<unknown> }).onProgress;
+      sendChannelMessages(channel, [
+        { type: "progress", processed: -1, total: 5, movedCount: 0, movedBytes: 0 },
+        { type: "progress", processed: 1.5, total: 5, movedCount: 0, movedBytes: 0 },
+        { type: "started", previewId: "uno", total: 3 },
+        { type: "teleport" },
+        null,
+        { type: "started", previewId: 2, total: 3 },
+      ]);
+      return cleanupSummary();
+    });
+    const events: CleanupEvent[] = [];
+    await confirmCleanup(2, (event) => events.push(event));
+    expect(events).toEqual([{ type: "started", previewId: 2, total: 3 }]);
+  });
+
+  it("decodifica un resumen cancelado y uno abortado con su motivo", async () => {
+    mockIPC(() => cleanupSummary({ status: "cancelled", notProcessed: 4 }));
+    await expect(confirmCleanup(1, () => undefined)).resolves.toMatchObject({
+      status: "cancelled",
+      abortReason: null,
+      notProcessed: 4,
+    });
+    mockIPC(() => cleanupSummary({ status: "aborted", abortReason: "recycle_bin_unavailable" }));
+    await expect(confirmCleanup(1, () => undefined)).resolves.toMatchObject({
+      status: "aborted",
+      abortReason: "recycle_bin_unavailable",
+    });
+  });
+
+  it("rechaza con invalid_response estados, motivos y numeros invalidos", async () => {
+    const base = cleanupSummary();
+    const reason = (patch: Record<string, unknown>) => ({
+      ...base,
+      reasons: base.reasons.map((r, i) => (i === 0 ? { ...r, ...patch } : r)),
+    });
+    const bad: unknown[] = [
+      null,
+      { ...base, status: "paused" },
+      { ...base, status: "aborted", abortReason: null },
+      { ...base, status: "aborted", abortReason: "meteor" },
+      { ...base, status: "completed", abortReason: "log_unavailable" },
+      { ...base, status: "cancelled", abortReason: "trash_unavailable" },
+      { ...base, movedCount: -1 },
+      { ...base, movedBytes: 2.5 },
+      { ...base, notProcessed: -3 },
+      { ...base, reasons: "x" },
+      reason({ outcome: "exploded" }),
+      reason({ outcome: "moved_to_trash" }),
+      reason({ detail: "" }),
+      reason({ detail: 7 }),
+      reason({ count: -1 }),
+      { ...base, categories: [{ ...base.categories[0], category: "documents" }] },
+      { ...base, categories: [{ ...base.categories[0], movedCount: -1 }] },
+    ];
+    for (const raw of bad) {
+      mockIPC(() => raw);
+      await expect(confirmCleanup(1, () => undefined)).rejects.toMatchObject({ kind: "invalid_response" });
+    }
+  });
+
+  it("confirmCleanup propaga preview_expired y el resto de los kinds del backend", async () => {
+    for (const kind of ["preview_expired", "preview_stale", "cleanup_in_progress", "nothing_to_clean"]) {
+      mockIPC(() => {
+        throw { kind, message: kind };
+      });
+      await expect(confirmCleanup(1, () => undefined)).rejects.toEqual({ kind, message: kind });
+    }
+  });
+
+  it("cancelCleanup invoca cancel_cleanup con { previewId } y propaga preview_not_found", async () => {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args });
+      return null;
+    });
+    await expect(cancelCleanup(3)).resolves.toBeUndefined();
+    expect(calls).toEqual([{ cmd: "cancel_cleanup", args: { previewId: 3 } }]);
+    mockIPC(() => {
+      throw { kind: "preview_not_found", message: "cleanup preview not found" };
+    });
+    await expect(cancelCleanup(3)).rejects.toMatchObject({ kind: "preview_not_found" });
   });
 });
