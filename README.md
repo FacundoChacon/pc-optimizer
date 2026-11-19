@@ -70,7 +70,7 @@ npm run tauri dev
 
 ### Elevación
 
-Por ahora la app NO solicita privilegios de administrador (el manifest es `asInvoker`). El modelo de privilegios (siempre elevada, `requireAdministrator`) llega en el change C-05.
+La app instalada siempre corre elevada: el ejecutable de los builds de release embebe el manifest `requireAdministrator`, así que Windows muestra el aviso de UAC en cada arranque. Los builds de desarrollo (`npm run tauri dev`, tests) usan `asInvoker` para poder correr desde una terminal no elevada.
 
 ### Variables de entorno
 
