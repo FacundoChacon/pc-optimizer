@@ -33,7 +33,7 @@ pub(crate) mod fs_contract;
 #[cfg(test)]
 pub(crate) mod store_contract;
 
-pub use clock::Clock;
+pub use clock::{Clock, MonotonicClock};
 pub use content::{ContentHandle, ContentReader};
 pub use error::PortError;
 pub use fs::{AncestorPin, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem};
@@ -43,7 +43,9 @@ pub use recycle_bin_policy::{
     BinAvailability, DisabledReason, RawBinPolicy, RecycleBinPolicy, check_for_move, check_move,
     evaluate_policy,
 };
-pub use sensors::{SensorSample, Sensors};
+pub use sensors::{
+    DiskIoCounters, MemoryReading, Reading, SensorReading, Sensors, Unavailable, VolumeReading,
+};
 pub use session::SessionIdentity;
 pub use shell::{Explorer, FolderPicker};
 pub use store::{

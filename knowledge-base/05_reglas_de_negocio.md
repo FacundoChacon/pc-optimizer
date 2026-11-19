@@ -53,12 +53,12 @@ Cada regla tiene un código único `RN-{DOMINIO}-{NN}`. Las reglas de LIMPIEZA y
 
 ## Dominio: Monitoreo (RN-MON)
 
-- **RN-MON-01**: Muestreo en vivo cada 1-2 s, solo en memoria.
+- **RN-MON-01**: Muestreo en vivo cada 1 s (C-06, antes 1-2 s), solo en memoria (ventana de 300 muestras / 5 min).
 - **RN-MON-02**: Se persisten agregados por minuto durante 24 h y agregados por hora durante ~90 días.
 - **RN-MON-03**: Snapshots periódicos de tamaño de carpetas alimentan "qué carpeta crece más" (tendencia semanal).
 - **RN-MON-04**: Temperaturas best-effort sin driver: NVMe/SMART disco, GPU vía NVML/ADLX, zona térmica ACPI vía WMI. Si no hay dato: "no disponible". Temperatura de CPU frecuentemente no estará disponible y se documenta honestamente en la UI.
 - **RN-MON-05**: Nunca se instalan ni cargan drivers de kernel para obtener métricas.
-- **RN-MON-06**: El muestreo no debe degradar el sistema (**Suposición:** presupuesto < 1 % CPU); en bandeja el intervalo puede relajarse.
+- **RN-MON-06**: El muestreo no debe degradar el sistema: el proceso con la pantalla cerrada promedia < 1 % de la CPU total y cada lectura de sensores cuesta <= 5 ms de media (C-06 D-18). Se mide en el smoke guiado con `Get-Counter` y con el costo medio de lectura del panel de detalles; en bandeja el intervalo puede relajarse (C-22).
 
 ## Dominio: Alertas (RN-ALE)
 

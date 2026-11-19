@@ -644,11 +644,12 @@ fn shell_execute_calls_should_detect_every_variant_and_ignore_comments_and_tests
 
 /// Archivos de produccion con `unsafe` (adaptadores de Windows): cada bloque es minimo y lleva su
 /// `// SAFETY:`. Un archivo nuevo con `unsafe` exige declararlo aca (y justificarlo en su change).
-const UNSAFE_ALLOWED_FILES: [&str; 9] = [
+const UNSAFE_ALLOWED_FILES: [&str; 10] = [
     "src/adapters/windows/explorer.rs",
     "src/adapters/windows/folder_picker.rs",
     "src/adapters/windows/fs.rs",
     "src/adapters/windows/known_folders.rs",
+    "src/adapters/windows/pdh.rs",
     "src/adapters/windows/privileges.rs",
     "src/adapters/windows/recycle_bin.rs",
     "src/adapters/windows/recycle_bin_empty.rs",

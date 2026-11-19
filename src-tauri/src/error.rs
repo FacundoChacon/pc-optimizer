@@ -123,6 +123,9 @@ pub enum AppError {
     /// No se puede mostrar el elemento en el Explorador; lleva el motivo.
     #[error("reveal unavailable: {}", .0.as_str())]
     RevealUnavailable(RevealReason),
+    /// El muestreo del monitor no arranco o fallo: no hay datos en vivo en esta sesion (C-06).
+    #[error("the system monitor is unavailable")]
+    MonitorUnavailable,
 }
 
 impl From<SettingsServiceError> for AppError {
@@ -206,6 +209,7 @@ impl AppError {
             Self::FolderPickerUnavailable => "folder_picker_unavailable",
             Self::FolderNotFound => "folder_not_found",
             Self::RevealUnavailable(_) => "reveal_unavailable",
+            Self::MonitorUnavailable => "monitor_unavailable",
         }
     }
 }
@@ -479,6 +483,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn monitor_unavailable_should_serialize_with_a_stable_kind_and_no_internal_details() {
+        let value = serde_json::to_value(AppError::MonitorUnavailable).unwrap();
+        assert_eq!(value["kind"], "monitor_unavailable");
+        let message = value["message"].as_str().unwrap();
+        assert_eq!(message, "the system monitor is unavailable");
+    }
+
+    #[test]
+    fn monitor_unavailable_should_serialize_next_to_invalid_argument_with_distinct_kinds() {
+        let kinds: Vec<String> = [
+            AppError::MonitorUnavailable,
+            AppError::InvalidArgument("subscriptionId".into()),
+        ]
+        .iter()
+        .map(|e| {
+            serde_json::to_value(e).unwrap()["kind"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+        assert_eq!(kinds, vec!["monitor_unavailable", "invalid_argument"]);
+    }
     #[test]
     fn folder_root_rejected_and_reveal_unavailable_should_carry_their_reason_in_the_message() {
         use crate::domain::disk_usage::model::RevealReason;

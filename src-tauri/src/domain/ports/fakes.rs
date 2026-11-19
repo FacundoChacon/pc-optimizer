@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::domain::disk_usage::model::{
@@ -22,12 +23,14 @@ use crate::domain::model::{
     CleanupLogEntry, DEFAULT_SETTINGS, EpochMillis, NewCleanupLogEntry, NewScan, SCAN_RETENTION,
     Scan, ScanId, ScanKind, ScanStatus, scans_to_prune,
 };
+use crate::domain::monitor::runner::Ticker;
 use crate::domain::ports::recycle_bin_empty::EmptyError;
 use crate::domain::ports::{
-    AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, DuplicateStore, EntryKind,
-    FileIdentity, FileMeta, FileSystem, FolderStore, JunkFindingStore, PortError,
-    RecycleBinEmptier, RecycleBinInfo, RecycleBinPolicy, RecycleBinUsage, ScanStore, SensorSample,
-    Sensors, SessionIdentity, SettingsStore, StoreError, Trash, TrashError,
+    AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, DiskIoCounters, DuplicateStore,
+    EntryKind, FileIdentity, FileMeta, FileSystem, FolderStore, JunkFindingStore, MemoryReading,
+    MonotonicClock, PortError, Reading, RecycleBinEmptier, RecycleBinInfo, RecycleBinPolicy,
+    RecycleBinUsage, ScanStore, SensorReading, Sensors, SessionIdentity, SettingsStore, StoreError,
+    Trash, TrashError, Unavailable, VolumeReading,
 };
 use crate::domain::privileges::UserSid;
 use crate::domain::protection::context::ContentFolder;
@@ -709,13 +712,13 @@ impl RecycleBinEmptier for FakeRecycleBinEmptier {
     }
 }
 
-/// Sensores guionados.
+/// Sensores guionados: devuelve las lecturas en orden y, agotado el guion, `not_supported`.
 pub(crate) struct FakeSensors {
-    queue: VecDeque<Result<SensorSample, PortError>>,
+    queue: VecDeque<SensorReading>,
 }
 
 impl FakeSensors {
-    pub(crate) fn new(script: Vec<Result<SensorSample, PortError>>) -> Self {
+    pub(crate) fn new(script: Vec<SensorReading>) -> Self {
         Self {
             queue: script.into(),
         }
@@ -723,10 +726,96 @@ impl FakeSensors {
 }
 
 impl Sensors for FakeSensors {
-    fn sample(&mut self) -> Result<SensorSample, PortError> {
+    fn read(&mut self) -> SensorReading {
         self.queue
             .pop_front()
-            .unwrap_or_else(|| Err(PortError::Unsupported("no more scripted samples".into())))
+            .unwrap_or_else(SensorReading::not_supported)
+    }
+}
+
+/// Reloj monotonico controlado por el test: solo avanza con `advance`. Los clones comparten
+/// estado, de modo que un `FakeTicker` y el motor ven el mismo tiempo.
+#[derive(Clone)]
+pub(crate) struct FakeMonotonicClock(Arc<AtomicU64>);
+
+impl FakeMonotonicClock {
+    pub(crate) fn new(start_ms: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(start_ms)))
+    }
+
+    pub(crate) fn advance(&self, ms: u64) {
+        self.0.fetch_add(ms, Ordering::SeqCst);
+    }
+}
+
+impl MonotonicClock for FakeMonotonicClock {
+    fn now_ms(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Reloj de pared controlado por el test; los clones comparten estado.
+#[derive(Clone)]
+pub(crate) struct FakeWallClock(Arc<AtomicI64>);
+
+impl FakeWallClock {
+    pub(crate) fn new(start_ms: i64) -> Self {
+        Self(Arc::new(AtomicI64::new(start_ms)))
+    }
+
+    pub(crate) fn advance(&self, ms: i64) {
+        self.0.fetch_add(ms, Ordering::SeqCst);
+    }
+
+    pub(crate) fn set(&self, ms: i64) {
+        self.0.store(ms, Ordering::SeqCst);
+    }
+}
+
+impl Clock for FakeWallClock {
+    fn now(&self) -> EpochMillis {
+        EpochMillis(self.0.load(Ordering::SeqCst))
+    }
+}
+
+/// Espera doble del muestreador: en vez de bloquear, avanza los relojes falsos hasta el plazo y
+/// termina tras `max_waits` esperas. Registra los plazos pedidos.
+pub(crate) struct FakeTicker {
+    mono: FakeMonotonicClock,
+    wall: FakeWallClock,
+    remaining: usize,
+    deadlines: Vec<u64>,
+}
+
+impl FakeTicker {
+    pub(crate) fn new(mono: FakeMonotonicClock, wall: FakeWallClock, max_waits: usize) -> Self {
+        Self {
+            mono,
+            wall,
+            remaining: max_waits,
+            deadlines: Vec::new(),
+        }
+    }
+
+    pub(crate) fn deadlines(&self) -> Vec<u64> {
+        self.deadlines.clone()
+    }
+}
+
+impl Ticker for FakeTicker {
+    fn wait_until(&mut self, deadline_ms: u64) -> bool {
+        if self.remaining == 0 {
+            return false;
+        }
+        self.remaining -= 1;
+        self.deadlines.push(deadline_ms);
+        let now = self.mono.now_ms();
+        if deadline_ms > now {
+            let delta = deadline_ms - now;
+            self.mono.advance(delta);
+            self.wall.advance(i64::try_from(delta).unwrap_or(i64::MAX));
+        }
+        true
     }
 }
 
@@ -2310,30 +2399,56 @@ mod tests {
     }
 
     // --- FakeSensors / FixedClock ---
-    fn sample(cpu: f32, disk: Option<f32>) -> SensorSample {
-        SensorSample {
+    fn reading(cpu: Reading<f32>, disk_active: Reading<f32>) -> SensorReading {
+        SensorReading {
             cpu_pct: cpu,
-            ram_used_bytes: 1,
-            ram_total_bytes: 2,
-            disk_busy_pct: disk,
+            memory: Ok(MemoryReading {
+                used_bytes: 1,
+                total_bytes: 2,
+            }),
+            volume: Ok(VolumeReading {
+                total_bytes: 100,
+                free_bytes: 40,
+            }),
+            disk_io: Ok(DiskIoCounters {
+                read_bytes: 10,
+                written_bytes: 20,
+            }),
+            disk_active_pct: disk_active,
         }
     }
 
     #[test]
-    fn sensors_should_return_scripted_samples_in_order_then_unsupported() {
-        let mut s = FakeSensors::new(vec![Ok(sample(10.0, Some(5.0))), Ok(sample(20.0, None))]);
-        assert_eq!(s.sample().unwrap().cpu_pct, 10.0);
-        let second = s.sample().unwrap();
-        assert_eq!(second.cpu_pct, 20.0);
-        assert_eq!(second.disk_busy_pct, None);
-        assert!(matches!(s.sample(), Err(PortError::Unsupported(_))));
+    fn sensors_should_return_scripted_readings_in_order_then_not_supported() {
+        let mut s = FakeSensors::new(vec![
+            reading(Ok(10.0), Ok(5.0)),
+            reading(Ok(20.0), Err(Unavailable::NotSupported)),
+        ]);
+        assert_eq!(s.read().cpu_pct, Ok(10.0));
+        let second = s.read();
+        assert_eq!(second.cpu_pct, Ok(20.0));
+        assert_eq!(second.disk_active_pct, Err(Unavailable::NotSupported));
+        let exhausted = s.read();
+        assert_eq!(exhausted, SensorReading::not_supported());
+        assert_eq!(exhausted.cpu_pct, Err(Unavailable::NotSupported));
+        assert_eq!(exhausted.memory, Err(Unavailable::NotSupported));
+        assert_eq!(exhausted.volume, Err(Unavailable::NotSupported));
+        assert_eq!(exhausted.disk_io, Err(Unavailable::NotSupported));
     }
 
     #[test]
-    fn sensors_should_replay_scripted_errors() {
-        let mut s = FakeSensors::new(vec![Err(PortError::Io("x".into())), Ok(sample(1.0, None))]);
-        assert_eq!(s.sample(), Err(PortError::Io("x".into())));
-        assert!(s.sample().is_ok());
+    fn sensors_should_report_warming_up_cpu_with_memory_present() {
+        let mut s = FakeSensors::new(vec![reading(Err(Unavailable::WarmingUp), Ok(3.0))]);
+        let first = s.read();
+        assert_eq!(first.cpu_pct, Err(Unavailable::WarmingUp));
+        assert_eq!(
+            first.memory,
+            Ok(MemoryReading {
+                used_bytes: 1,
+                total_bytes: 2
+            })
+        );
+        assert_eq!(first.disk_active_pct, Ok(3.0));
     }
 
     #[test]
@@ -2342,6 +2457,25 @@ mod tests {
         let b = FixedClock(EpochMillis(1_800_000_000_000));
         assert_eq!(a.now(), EpochMillis(1_700_000_000_000));
         assert_ne!(a.now(), b.now());
+    }
+
+    // --- FakeMonotonicClock ---
+    #[test]
+    fn monotonic_fake_should_advance_exactly_the_requested_amount() {
+        let clock = FakeMonotonicClock::new(1_000);
+        let before = clock.now_ms();
+        clock.advance(1_500);
+        assert_eq!(clock.now_ms() - before, 1_500);
+    }
+
+    #[test]
+    fn monotonic_fake_should_accumulate_advances_and_share_state_between_clones() {
+        let clock = FakeMonotonicClock::new(0);
+        let shared = clock.clone();
+        clock.advance(250);
+        shared.advance(4_000);
+        assert_eq!(clock.now_ms(), 4_250);
+        assert_eq!(shared.now_ms(), 4_250);
     }
 
     // --- InMemoryStore contra la bateria de contrato ---

@@ -32,6 +32,7 @@ pub fn app_builder<R: tauri::Runtime>(
         .manage(commands::recycle_bin::EmptyRequests::default())
         .manage(commands::disk_usage::PickedRootSlot::default())
         .manage(commands::disk_usage::PickerGate::default())
+        .manage(commands::monitor::MonitorHub::new())
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
             commands::settings::get_settings,
@@ -59,7 +60,9 @@ pub fn app_builder<R: tauri::Runtime>(
             commands::disk_usage::list_folder_children,
             commands::disk_usage::list_large_files,
             commands::disk_usage::pick_folder_root,
-            commands::disk_usage::reveal_in_explorer
+            commands::disk_usage::reveal_in_explorer,
+            commands::monitor::start_monitor_stream,
+            commands::monitor::stop_monitor_stream
         ])
 }
 
@@ -85,6 +88,38 @@ pub fn manage_store<R: tauri::Runtime>(app: &impl Manager<R>, override_dir: Opti
     app.manage(StoreHandle::new(open_store_state(data_dir)));
 }
 
+/// Arranca el muestreo del monitor (C-06, D-01): siempre activo desde el arranque, despues de la
+/// base y los privilegios. Una falla (sin sensores o sin hilo) deja el hub en `failed` y la app
+/// arranca igual; el monitor no usa la base ni depende de los privilegios.
+pub fn start_monitor_sampler<R: tauri::Runtime>(app: &impl Manager<R>) {
+    let hub = app.state::<commands::monitor::MonitorHub>().inner().clone();
+    // El emisor vive tanto como el proceso: al terminar, la espera del hilo se corta sola.
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    let started = commands::monitor::spawn_sampler(
+        hub.clone(),
+        || {
+            // Los handles de PDH no son `Send`: se construye todo dentro del hilo.
+            let drive = adapters::windows::resolve_protection_context(
+                adapters::windows::UserFolderSource::ProcessToken,
+                Vec::new(),
+            )
+            .system_drive()?;
+            adapters::windows::sensors::WindowsSensors::new(drive).ok()
+        },
+        stop_rx,
+    );
+    match started {
+        // El hilo no se une al salir (no debe demorar el cierre): se deja suelto.
+        Ok(_detached) => {
+            app.manage(MonitorStop(stop_tx));
+        }
+        Err(_) => hub.mark_failed(),
+    }
+}
+
+/// Guarda el emisor de parada del muestreo: soltarlo (fin del proceso) termina el hilo.
+struct MonitorStop(#[allow(dead_code)] std::sync::mpsc::Sender<()>);
+
 /// Arranca la aplicacion Tauri.
 pub fn run() -> Result<(), AppError> {
     let config = resolve_runtime_config(|key| std::env::var(key).ok(), cfg!(debug_assertions));
@@ -93,6 +128,7 @@ pub fn run() -> Result<(), AppError> {
         .setup(move |app| {
             manage_privileges(app, detect(&SystemSessionIdentity));
             manage_store(app, data_dir_override.as_deref());
+            start_monitor_sampler(app);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -407,6 +443,62 @@ mod tests {
         assert_eq!(no_scan["kind"], "scan_not_found");
     }
 
+    #[test]
+    fn monitor_commands_should_answer_over_ipc_with_a_corrupt_store_and_a_mismatch_context() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("data.db"), b"basura".repeat(200)).unwrap();
+        let app = mock_app();
+        manage_store(&app, Some(dir.path()));
+        manage_privileges(
+            &app,
+            PrivilegeContext::new(
+                domain::privileges::UserMatch::Mismatch(
+                    domain::privileges::MismatchReason::DifferentUser,
+                ),
+                true,
+            ),
+        );
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        std::mem::forget(app);
+
+        let snapshot = invoke(
+            &window,
+            "start_monitor_stream",
+            serde_json::json!({"onSample": "__CHANNEL__:1"}),
+        );
+        assert_eq!(snapshot["intervalMs"], 1000);
+        assert_eq!(snapshot["windowMs"], 300_000);
+        assert_eq!(snapshot["samples"], serde_json::json!([]));
+        assert_eq!(snapshot["summary"], serde_json::Value::Null);
+        let id = snapshot["subscriptionId"].clone();
+        assert_eq!(
+            invoke(
+                &window,
+                "stop_monitor_stream",
+                serde_json::json!({"subscriptionId": id})
+            ),
+            serde_json::Value::Null
+        );
+        // Idempotente con el mismo id ya cancelado.
+        assert_eq!(
+            invoke(
+                &window,
+                "stop_monitor_stream",
+                serde_json::json!({"subscriptionId": id})
+            ),
+            serde_json::Value::Null
+        );
+        for bad in [serde_json::json!(-1), serde_json::json!(1.5)] {
+            let error = invoke_error(
+                &window,
+                "stop_monitor_stream",
+                serde_json::json!({"subscriptionId": bad}),
+            );
+            assert_eq!(error["kind"], "invalid_argument");
+        }
+    }
     #[test]
     fn duplicate_commands_should_answer_their_error_and_empty_cases_over_ipc() {
         let dir = tempfile::TempDir::new().unwrap();

@@ -30,8 +30,11 @@ Organizadas por épica y luego por historia (US-NNN). Cada historia lleva **hito
 **Hito**: v0.1 · **Gobernanza**: MEDIUM
 **Como** usuario **quiero** ver uso de CPU, RAM y disco en vivo **para** detectar qué satura mi equipo.
 
-- [ ] Muestreo cada 1-2 s.
-- [ ] Sin impacto perceptible en el rendimiento.
+- [ ] Muestreo cada 1 s en un hilo propio, siempre activo desde el arranque; ventana de 5 min en memoria, sin persistir (C-06).
+- [ ] Valores en vivo de CPU, memoria y disco del sistema (tiempo activo, lectura/escritura y espacio); una métrica que no se puede medir se muestra como "No disponible", nunca como 0.
+- [ ] Modo simple: tres tarjetas con nivel en palabras; modo avanzado: medidores, cuatro gráficos de 5 min y detalles de disponibilidad.
+- [ ] Tras una suspensión el hueco se ve como corte, sin ceros.
+- [ ] Sin impacto perceptible: el proceso con la pantalla cerrada promedia < 1 % de la CPU total y cada lectura cuesta <= 5 ms de media (medido en el smoke, RN-MON-06).
 
 **Reglas relacionadas**: RN-MON-01, RN-MON-06
 

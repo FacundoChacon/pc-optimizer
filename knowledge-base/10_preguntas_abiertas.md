@@ -24,7 +24,7 @@
 
 | ID | Prioridad | Pregunta | Bloquea | Decisor |
 |----|-----------|----------|---------|---------|
-| PA-01 | Alta | ¿Qué librería de gráficos usar (Recharts, uPlot, visx, ECharts, canvas propio) considerando gráficos en vivo cada 1-2 s y bajo overhead? | v0.1 (monitor en vivo) | Dev / dueño del proyecto |
+| PA-01 | ~~Alta~~ **Resuelta (C-06, 2026-11-16)** | ¿Qué librería de gráficos usar (Recharts, uPlot, visx, ECharts, canvas propio) considerando gráficos en vivo cada 1-2 s y bajo overhead? | v0.1 (monitor en vivo) | Dev / dueño del proyecto | **Decisión: SVG propio sin librería (ver 09).**
 | PA-02 | ✅ Resuelta | ¿Se permite vaciar la Papelera como única acción permanente (con doble confirmación) o la app solo la abre? → **Sí, con doble confirmación; nunca automática.** | v0.1 (limpieza) | Dueño del proyecto |
 | PA-03 | Alta | ¿Cómo detectar de forma fiable apps "sin uso"? (Prefetch/UserAssist/last access son señales débiles; Prefetch puede estar deshabilitado en SSD) | v0.2 | Dev |
 | PA-04 | Media | Pesos finales del health score (SU-01) y curva de cada subpuntaje | v0.2 | Dueño del proyecto |
@@ -41,4 +41,4 @@
 | PA-16 | Media | Duplicados en carpetas arbitrarias: ¿se permite elegir una carpeta con un selector (plugin `dialog` o COM propio, validada con `check_rule_root`) y en qué versión? C-11 queda limitado a las 6 carpetas de contenido del usuario. C-07 ya implementa el selector propio (`IFileOpenDialog`, `pickId`) para el análisis de solo lectura; para duplicados sigue pendiente | Post v0.1 | Dueño del proyecto |
 | PA-14 | ✅ Resuelta | Detección over-the-shoulder: ¿bloqueo total o solo de las categorías por-usuario? (hoy: solo por-usuario) → **Bloqueo solo de categorías por-usuario, con aviso explicativo.** | v0.1 | Dueño del proyecto |
 
-> Nota C-07: PA-01 no se fuerza; el análisis de disco usa una lista con barras SVG sin librería (treemap diferido hasta que C-06 decida PA-01).
+> Nota C-07: PA-01 no se fuerza; el análisis de disco usa una lista con barras SVG sin librería. Tras C-06 (PA-01 resuelta: SVG propio) el treemap ya no está bloqueado y puede hacerse con SVG propio (algoritmo squarified puro).

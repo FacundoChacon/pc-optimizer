@@ -26,7 +26,7 @@ describe("tokens del tema (styles.css)", () => {
   it("el CSS crudo se lee y define los tokens requeridos", () => {
     for (const name of [
       "surface", "surface-raised", "content", "content-muted", "accent",
-      "focus", "success", "warning", "danger", "on-accent", "border-strong",
+      "focus", "success", "warning", "danger", "on-accent", "border-strong", "series-2",
     ]) {
       expect(tokens, name).toHaveProperty(name);
     }
@@ -46,7 +46,7 @@ describe("tokens del tema (styles.css)", () => {
   });
 
   // `accent` tambien rellena las barras proporcionales de Espacio en disco.
-  it.each(["focus", "border-strong", "accent"])("%s tiene al menos 3:1 sobre ambas superficies", (name) => {
+  it.each(["focus", "border-strong", "accent", "series-2"])("%s tiene al menos 3:1 sobre ambas superficies", (name) => {
     for (const bg of backgrounds) {
       expect(contrastRatio(color(name), color(bg)), `${name} / ${bg}`).toBeGreaterThanOrEqual(3);
     }

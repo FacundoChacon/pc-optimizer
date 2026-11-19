@@ -69,3 +69,10 @@ El drag & drop desde Explorador (nivel de integridad medio) hacia la ventana ele
 ## Nota C-07: selector de carpeta y Explorador en el proceso elevado
 
 `pick_folder_root` (`IFileOpenDialog` con `FOS_PICKFOLDERS`) y `reveal_in_explorer` (`SHOpenFolderAndSelectItems`, nunca `ShellExecute`) corren en hilos COM STA propios del backend, sin plugins `dialog`/`shell` ni capabilities nuevas. Riesgo conocido: el diálogo del shell carga extensiones de terceros dentro del proceso elevado (mitigado con `FOS_PICKFOLDERS`). En over-the-shoulder el Explorador está bloqueado.
+
+## Nota C-06: fuentes reales, ciclo de vida y huecos
+
+- CPU, memoria y bytes leídos/escritos acumulados del volumen del sistema: `sysinfo` (CPU por PDH interno, memoria `GlobalMemoryStatusEx`, disco `IOCTL_DISK_PERFORMANCE`). Espacio del volumen: `GetDiskFreeSpaceExW`. Tiempo activo del disco: PDH `\LogicalDisk(C:)\% Idle Time` (`PdhAddEnglishCounterW`, independiente del idioma) → `100 - idle` acotado a 0..=100; la primera colección es "en calentamiento". Único `unsafe` nuevo: `adapters/windows/pdh.rs`.
+- El muestreo arranca con la app (después de la base y los privilegios) y corre siempre, con una ventana de 300 muestras de 1 s y desalojo por antigüedad (> 300 s). Un pánico en el hilo lo deja en `failed` (sin reinicio automático) y la app sigue.
+- Huecos: delta monotónico > 2,5 intervalos, desacuerdo pared/monotónico > 2 s o pared hacia atrás (vacía la ventana). Tras un hueco CPU, tiempo activo y tasas quedan ausentes (`after_gap`); memoria y espacio se conservan.
+- Una métrica ausente lleva su motivo (`warming_up`, `after_gap`, `source_error`, `not_supported`) y nunca se muestra como 0.

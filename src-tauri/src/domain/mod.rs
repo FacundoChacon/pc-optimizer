@@ -5,6 +5,7 @@ pub mod disk_usage;
 pub mod duplicates;
 pub mod junk;
 pub mod model;
+pub mod monitor;
 pub mod ports;
 pub mod privileges;
 pub mod protection;

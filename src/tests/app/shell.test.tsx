@@ -65,6 +65,7 @@ describe("Layouts y NavList (8.2)", () => {
       es.nav.disk,
       es.nav.cleanup,
       es.nav.duplicates,
+      es.nav.monitor,
       es.nav.settings,
     ]);
   });
