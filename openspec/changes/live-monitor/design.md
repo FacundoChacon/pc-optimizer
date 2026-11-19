@@ -483,3 +483,11 @@ Lo que ya funciona: nivel siempre con icono y texto, foco visible y cursor por t
 | `package-lock.json` y `Cargo.lock` | sin cambios |
 
 Cada tarea de comportamiento de los grupos 1 a 7 tiene su salida RED anotada (partes 1 a 4). Pendientes: 8.3 (smoke con el dueño) y 8.4 (cierre).
+
+### Fix H-2 (smoke): anuncios simultáneos de nivel
+
+- **Causa**: `useLevelAnnouncements` llamaba a `announce()` una vez por métrica dentro del mismo efecto; la región `aria-live` (`Announcer`) guarda un solo mensaje, así que con dos cambios de nivel en la misma muestra sobrevivía solo el último (se perdía "Procesador: muy alto" cuando también cambiaba el disco).
+- **Fix**: el efecto acumula los cambios de la muestra (orden `cpu`, `memory`, `diskActive`, el de la pantalla) y hace UN `announce()` con los textos unidos por `es.monitor.announceSeparator` (`". "`, nueva clave del catálogo). Con un solo cambio el texto es idéntico al anterior.
+- **RED** (`vitest run src/tests/monitor/simple.test.tsx`, código viejo): `2 failed | 9 passed`; `AssertionError: expected -1 to be greater than or equal to 0` (el primer mensaje, "Procesador", ya no estaba en la región) y `toHaveTextContent` del mensaje unido sin coincidir.
+- **Tests nuevos** (`src/tests/monitor/simple.test.tsx`): "dos cambios de nivel en la misma muestra se anuncian juntos en un solo mensaje", "tres cambios simultaneos salen en el orden de la pantalla y sin cambios no se anuncia nada nuevo", "solo la metrica que cambia entra en el anuncio".
+- **Conteos**: `src/tests/monitor` 47/47 (base 44); suite completa `--maxWorkers=2` **680 passed en 39 archivos** (base 677); `typecheck` y `build` verdes.

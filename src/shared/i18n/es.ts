@@ -671,6 +671,7 @@ export const es = {
       },
     },
     announce: "{metric}: {level}",
+    announceSeparator: ". ",
     tiles: {
       memoryDetail: "{used} de {total}",
       diskActive: "Activo {pct}",

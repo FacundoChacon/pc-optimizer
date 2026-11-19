@@ -101,6 +101,48 @@ describe("Monitor en modo simple", () => {
     expect(screen.getByRole("main").querySelectorAll("[aria-live]")).toHaveLength(0);
   });
 
+  it("dos cambios de nivel en la misma muestra se anuncian juntos en un solo mensaje", async () => {
+    const backend = await openMonitor();
+    await screen.findByRole("region", { name: es.monitor.metrics.cpu });
+    const announcer = screen.getByRole("status");
+    act(() =>
+      backend.emitMonitor([sampleEvent(2, summary({ cpu: metric(95, "very_high"), diskActive: metric(80, "high") }))]),
+    );
+    const cpu = format(es.monitor.announce, { metric: es.monitor.metrics.cpu, level: "muy alto" });
+    const disk = format(es.monitor.announce, { metric: es.monitor.metrics.diskActive, level: "alto" });
+    expect(announcer).toHaveTextContent([cpu, disk].join(es.monitor.announceSeparator));
+  });
+
+  it("tres cambios simultaneos salen en el orden de la pantalla y sin cambios no se anuncia nada nuevo", async () => {
+    const backend = await openMonitor();
+    await screen.findByRole("region", { name: es.monitor.metrics.cpu });
+    const announcer = screen.getByRole("status");
+    act(() =>
+      backend.emitMonitor([
+        sampleEvent(2, summary({ cpu: metric(75, "high"), memory: metric(95, "very_high"), diskActive: metric(75, "high") })),
+      ]),
+    );
+    const text = announcer.textContent ?? "";
+    expect(text.indexOf(es.monitor.metrics.cpu)).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf(es.monitor.metrics.memory)).toBeGreaterThan(text.indexOf(es.monitor.metrics.cpu));
+    expect(text.indexOf(es.monitor.metrics.diskActive)).toBeGreaterThan(text.indexOf(es.monitor.metrics.memory));
+    // Sin cambios de nivel: el mensaje queda igual.
+    act(() =>
+      backend.emitMonitor([
+        sampleEvent(3, summary({ cpu: metric(76, "high"), memory: metric(96, "very_high"), diskActive: metric(76, "high") })),
+      ]),
+    );
+    expect(announcer.textContent).toBe(text);
+  });
+
+  it("solo la metrica que cambia entra en el anuncio", async () => {
+    const backend = await openMonitor();
+    await screen.findByRole("region", { name: es.monitor.metrics.cpu });
+    const announcer = screen.getByRole("status");
+    act(() => backend.emitMonitor([sampleEvent(2, summary({ memory: metric(88, "high") }))]));
+    expect(announcer.textContent).toBe(format(es.monitor.announce, { metric: es.monitor.metrics.memory, level: "alto" }));
+  });
+
   it("monitor no disponible muestra su mensaje y ninguna tarjeta", async () => {
     await openMonitor(null, { failures: { start_monitor_stream: { kind: "monitor_unavailable", message: "x" } } });
     expect(await screen.findByRole("alert")).toHaveTextContent(es.errors.monitor_unavailable);
