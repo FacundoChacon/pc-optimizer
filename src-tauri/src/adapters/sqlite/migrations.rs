@@ -22,6 +22,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("migrations/002_junk.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("migrations/003_duplicates.sql"),
+    },
 ];
 
 /// Version mas alta de la lista.

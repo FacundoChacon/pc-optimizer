@@ -38,10 +38,16 @@ pub const NOT_MOVED: &str = "not_moved";
 pub const TRASH_UNAVAILABLE: &str = "trash_unavailable";
 /// Otro fallo sin codigo.
 pub const IO: &str = "io";
+/// Duplicados: el contenido de la copia ya no coincide con el del grupo.
+pub const CONTENT_CHANGED: &str = "content_changed";
+/// Duplicados: la copia no se pudo abrir o leer para re-verificar su contenido.
+pub const CONTENT_UNREADABLE: &str = "content_unreadable";
+/// Duplicados: ninguna de las copias que el usuario eligio conservar sigue igual.
+pub const KEPT_COPY_UNAVAILABLE: &str = "kept_copy_unavailable";
 
 /// Codigos propios de la limpieza (los de proteccion salen de `ProtectedReason::code()`).
 #[cfg(test)]
-pub(crate) const ALL_CODES: [&str; 14] = [
+pub(crate) const ALL_CODES: [&str; 17] = [
     BLOCKED_DIFFERENT_USER,
     BLOCKED_UNDETERMINED,
     SKIPPED_CLOUD,
@@ -56,6 +62,9 @@ pub(crate) const ALL_CODES: [&str; 14] = [
     NOT_MOVED,
     TRASH_UNAVAILABLE,
     IO,
+    CONTENT_CHANGED,
+    CONTENT_UNREADABLE,
+    KEPT_COPY_UNAVAILABLE,
 ];
 
 /// Resultado y detalle de una decision de proteccion que no es `Allowed` (`None` si lo es).

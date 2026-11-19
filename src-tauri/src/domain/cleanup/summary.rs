@@ -2,11 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::domain::junk::category::JunkCategory;
 use crate::domain::model::{CleanupOutcome, EpochMillis, ScanId};
 
 use super::model::{
-    CategorySummary, CleanupPreview, CleanupStatus, CleanupSummary, PreviewId, ReasonCount,
+    CategorySummary, CleanupCategory, CleanupPreview, CleanupStatus, CleanupSummary, PreviewId,
+    ReasonCount,
 };
 
 /// Acumulador de resultados item por item.
@@ -65,7 +65,7 @@ impl Tally {
         self.total_items
     }
 
-    fn category_mut(&mut self, category: JunkCategory) -> &mut CategorySummary {
+    fn category_mut(&mut self, category: CleanupCategory) -> &mut CategorySummary {
         let index = self
             .categories
             .iter()
@@ -86,7 +86,7 @@ impl Tally {
     /// Anota el resultado de un item; `detail` es `None` solo si se movio.
     pub(super) fn record(
         &mut self,
-        category: JunkCategory,
+        category: CleanupCategory,
         outcome: CleanupOutcome,
         detail: Option<&str>,
         size_bytes: u64,

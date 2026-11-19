@@ -31,7 +31,7 @@ Cada regla tiene un código único `RN-{DOMINIO}-{NN}`. Las reglas de LIMPIEZA y
 - **RN-DUP-03**: Nunca se auto-borran duplicados; el usuario elige cuál copia conservar en cada grupo.
 - **RN-DUP-04**: Debe quedar al menos una copia por grupo; la UI no permite marcar todas para borrar.
 - **RN-DUP-05**: El borrado de duplicados sigue RN-LIM (Papelera, preview, confirmación, log) y RN-PROT.
-- **RN-DUP-06**: Los duplicados no se buscan dentro de rutas protegidas. **Suposición:** además se excluyen archivos < 1 MB por defecto (configurable en avanzado).
+- **RN-DUP-06**: Los duplicados no se buscan dentro de rutas protegidas. Solo se recorren las 6 carpetas de contenido del usuario actual (Escritorio, Documentos, Descargas, Música, Imágenes, Videos), sin seguir enlaces ni descender a `.git`, `.hg`, `.svn`, `node_modules`. Se excluyen archivos < 1 MiB por defecto (opciones cerradas por escaneo en avanzado: 100 KiB, 1, 10 y 100 MiB; no persistido).
 
 ## Dominio: Mejoras (RN-MEJ)
 

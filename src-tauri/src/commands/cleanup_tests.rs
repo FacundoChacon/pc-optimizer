@@ -207,7 +207,7 @@ fn sample_summary(status: CleanupStatus) -> CleanupSummary {
             },
         ],
         categories: vec![CategorySummary {
-            category: JunkCategory::TempUser,
+            category: JunkCategory::TempUser.into(),
             moved_count: 6,
             moved_bytes: 6_000,
             skipped_count: 2,

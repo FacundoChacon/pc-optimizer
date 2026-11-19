@@ -6,6 +6,46 @@
 
 use super::path::{NormalizedPath, PathRejection, normalize_lexical};
 
+/// Carpeta de contenido del usuario, con la clave estable que viaja por IPC (C-11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ContentFolder {
+    Desktop,
+    Documents,
+    Downloads,
+    Music,
+    Pictures,
+    Videos,
+}
+
+impl ContentFolder {
+    /// Las seis, en el orden estable de la UI.
+    pub const ALL: [ContentFolder; 6] = [
+        Self::Desktop,
+        Self::Documents,
+        Self::Downloads,
+        Self::Music,
+        Self::Pictures,
+        Self::Videos,
+    ];
+
+    /// Clave estable (coincide con el `CHECK` de la migracion 003).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Desktop => "desktop",
+            Self::Documents => "documents",
+            Self::Downloads => "downloads",
+            Self::Music => "music",
+            Self::Pictures => "pictures",
+            Self::Videos => "videos",
+        }
+    }
+
+    /// Inverso de `as_str`; distingue mayusculas y no recorta espacios.
+    pub fn parse(raw: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|folder| folder.as_str() == raw)
+    }
+}
+
 /// De donde salen las carpetas del usuario actual.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserSource {
@@ -22,8 +62,8 @@ pub struct RawUserFolders {
     pub local_app_data: String,
     pub roaming_app_data: String,
     pub temp: Option<String>,
-    /// Desktop, Documents, Downloads, Music, Pictures, Videos.
-    pub content_folders: Vec<String>,
+    /// Desktop, Documents, Downloads, Music, Pictures, Videos, cada una con su clave.
+    pub content_folders: Vec<(ContentFolder, String)>,
     pub source: UserSource,
 }
 
@@ -78,6 +118,8 @@ pub struct UserContext {
     roaming_app_data: NormalizedPath,
     temp: Option<NormalizedPath>,
     content_folders: Vec<NormalizedPath>,
+    /// Las mismas carpetas con su clave (C-11); mismo orden que `content_folders`.
+    keyed_content_folders: Vec<(ContentFolder, NormalizedPath)>,
     source: UserSource,
 }
 
@@ -100,6 +142,14 @@ impl UserContext {
 
     pub fn content_folders(&self) -> &[NormalizedPath] {
         &self.content_folders
+    }
+
+    /// La carpeta de contenido `folder`, o `None` si el SO no la informo o no era interpretable.
+    pub fn content_folder(&self, folder: ContentFolder) -> Option<&NormalizedPath> {
+        self.keyed_content_folders
+            .iter()
+            .find(|(key, _)| *key == folder)
+            .map(|(_, path)| path)
     }
 
     pub fn source(&self) -> UserSource {
@@ -206,16 +256,23 @@ impl ProtectionContext {
             Some(text) => optional_anchor("temp", text)?,
             None => None,
         };
-        let mut content_folders = Vec::new();
-        for text in &raw.content_folders {
-            content_folders.extend(optional_anchor("content_folders", text)?);
+        let mut keyed_content_folders = Vec::new();
+        for (key, text) in &raw.content_folders {
+            if let Some(path) = optional_anchor("content_folders", text)? {
+                keyed_content_folders.push((*key, path));
+            }
         }
+        let content_folders = keyed_content_folders
+            .iter()
+            .map(|(_, path)| path.clone())
+            .collect();
         Ok(Some(UserContext {
             profile,
             local_app_data,
             roaming_app_data,
             temp,
             content_folders,
+            keyed_content_folders,
             source: raw.source,
         }))
     }

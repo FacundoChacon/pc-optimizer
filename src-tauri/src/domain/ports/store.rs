@@ -1,5 +1,9 @@
 //! Puertos de persistencia: ajustes, escaneos, bitacora de limpieza y hallazgos de basura.
 
+use crate::domain::duplicates::model::{
+    DuplicateGroupPage, DuplicateScanResults, DuplicateScanSummary, GroupResolution,
+    StoredDuplicateGroup,
+};
 use crate::domain::junk::category::JunkCategory;
 use crate::domain::junk::model::{
     JunkFindingPage, JunkScanResults, JunkScanSummary, StoredFinding,
@@ -7,6 +11,7 @@ use crate::domain::junk::model::{
 use crate::domain::model::{
     CleanupLogEntry, EpochMillis, NewCleanupLogEntry, NewScan, Scan, ScanId, ScanStatus,
 };
+use crate::domain::protection::context::ContentFolder;
 
 /// Fallo de persistencia. No contiene SQL ni tipos de `rusqlite`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -103,6 +108,61 @@ pub trait JunkFindingStore {
     ) -> Result<Vec<StoredFinding>, StoreError>;
 }
 
+/// Duplicados (C-11). Solo registros de la base: ninguna operacion actua sobre archivos y la
+/// unica que escribe la marca de conservada es `resolve_duplicate_groups`.
+pub trait DuplicateStore {
+    /// Guarda de forma ATOMICA el resultado, el estado por carpeta, los grupos y las copias de un
+    /// escaneo de duplicados `Running`, elimina los grupos y copias de todo escaneo de duplicados
+    /// anterior (se conserva su escaneo y su resultado) y finaliza el escaneo como `Done`. Si algo
+    /// falla no queda nada del escaneo nuevo y el escaneo sigue `Running`.
+    ///
+    /// Errores: `NotFound` (escaneo inexistente), `InvalidState` (no es de duplicados o no esta
+    /// `Running`), `Constraint` (resultado invalido: ver `DuplicateScanResults::validate`).
+    fn complete_duplicate_scan(
+        &self,
+        scan_id: ScanId,
+        results: &DuplicateScanResults,
+        finished_at: EpochMillis,
+    ) -> Result<(), StoreError>;
+    /// Resumen del escaneo de duplicados `Done` mas reciente; ignora `Cancelled`/`Error` y otros
+    /// tipos.
+    fn last_done_duplicate_scan(&self) -> Result<Option<DuplicateScanSummary>, StoreError>;
+    /// Grupos con sus copias, por bytes recuperables `size * (n - 1)` descendentes y luego por
+    /// id, con el total filtrado. `root`: grupos con al menos una copia en esa carpeta;
+    /// `min_size`: grupos de `size_bytes >= min_size`. Un escaneo desconocido o una pagina fuera de
+    /// rango da una lista vacia.
+    fn list_duplicate_groups(
+        &self,
+        scan_id: ScanId,
+        offset: u64,
+        limit: u32,
+        root: Option<ContentFolder>,
+        min_size: Option<u64>,
+    ) -> Result<DuplicateGroupPage, StoreError>;
+    /// Los grupos `group_ids` que pertenecen a `scan_id`, con sus copias, ordenados por id. Los
+    /// ids desconocidos o de otro escaneo no aparecen.
+    fn get_duplicate_groups(
+        &self,
+        scan_id: ScanId,
+        group_ids: &[i64],
+    ) -> Result<Vec<StoredDuplicateGroup>, StoreError>;
+    /// Resuelve los grupos en una sola transaccion: fecha de resolucion y marca de conservada solo
+    /// en las copias indicadas. Rechaza sin cambios (`Constraint`/`NotFound`/`InvalidState`) un
+    /// grupo ya resuelto, de otro escaneo, sin copias conservadas o con copias ajenas al grupo.
+    fn resolve_duplicate_groups(
+        &self,
+        scan_id: ScanId,
+        resolutions: &[GroupResolution],
+        now: EpochMillis,
+    ) -> Result<(), StoreError>;
+}
+
 /// Persistencia completa.
-pub trait Store: SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore {}
-impl<T: SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore> Store for T {}
+pub trait Store:
+    SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore + DuplicateStore
+{
+}
+impl<T: SettingsStore + ScanStore + CleanupLogStore + JunkFindingStore + DuplicateStore> Store
+    for T
+{
+}

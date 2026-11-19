@@ -46,7 +46,12 @@ pub fn app_builder<R: tauri::Runtime>(
             commands::cleanup::cancel_cleanup,
             commands::recycle_bin::prepare_empty_recycle_bin,
             commands::recycle_bin::acknowledge_empty_recycle_bin,
-            commands::recycle_bin::empty_recycle_bin
+            commands::recycle_bin::empty_recycle_bin,
+            commands::duplicates::start_duplicate_scan,
+            commands::duplicates::get_last_duplicate_scan,
+            commands::duplicates::list_duplicate_groups,
+            commands::duplicates::preview_duplicate_cleanup,
+            commands::duplicates::confirm_duplicate_cleanup
         ])
 }
 
@@ -339,6 +344,101 @@ mod tests {
         assert_eq!(not_running["kind"], "preview_not_found");
         let last = invoke(&window, "get_last_junk_scan", serde_json::json!({}));
         assert_eq!(last, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn duplicate_commands_should_answer_their_error_and_empty_cases_over_ipc() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let window = window_for_scans(dir.path());
+
+        assert_eq!(
+            invoke(&window, "get_last_duplicate_scan", serde_json::json!({})),
+            serde_json::Value::Null
+        );
+        let invalid_roots = invoke_error(
+            &window,
+            "start_duplicate_scan",
+            serde_json::json!({"roots": ["downloads", "appdata"], "onProgress": "__CHANNEL__:1"}),
+        );
+        assert_eq!(invalid_roots["kind"], "invalid_argument");
+        let invalid_min = invoke_error(
+            &window,
+            "start_duplicate_scan",
+            serde_json::json!({"minSizeBytes": 5, "onProgress": "__CHANNEL__:1"}),
+        );
+        assert_eq!(invalid_min["kind"], "invalid_argument");
+        let invalid_limit = invoke_error(
+            &window,
+            "list_duplicate_groups",
+            serde_json::json!({"scanId": 1, "offset": 0, "limit": 201}),
+        );
+        assert_eq!(invalid_limit["kind"], "invalid_argument");
+        let unknown_scan = invoke_error(
+            &window,
+            "list_duplicate_groups",
+            serde_json::json!({"scanId": 1, "offset": 0, "limit": 10}),
+        );
+        assert_eq!(unknown_scan["kind"], "scan_not_found");
+        let preview = invoke_error(
+            &window,
+            "preview_duplicate_cleanup",
+            serde_json::json!({"scanId": 1, "decisions": [{"groupId": 1, "keepFileIds": [1]}]}),
+        );
+        assert_eq!(preview["kind"], "scan_not_found");
+        let out_of_range = invoke_error(
+            &window,
+            "preview_duplicate_cleanup",
+            serde_json::json!({"scanId": 1, "decisions": [{"groupId": -1, "keepFileIds": [1]}]}),
+        );
+        assert_eq!(out_of_range["kind"], "invalid_argument");
+        let unknown_preview = invoke_error(
+            &window,
+            "confirm_duplicate_cleanup",
+            serde_json::json!({"previewId": 42, "onProgress": "__CHANNEL__:1"}),
+        );
+        assert_eq!(unknown_preview["kind"], "preview_not_found");
+    }
+
+    #[test]
+    fn duplicate_commands_should_be_blocked_over_ipc_in_a_mismatch_before_reading_anything() {
+        use domain::privileges::{MismatchReason, UserMatch};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = mock_app();
+        manage_store(&app, Some(dir.path()));
+        manage_privileges(
+            &app,
+            PrivilegeContext::new(UserMatch::Mismatch(MismatchReason::DifferentUser), true),
+        );
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        std::mem::forget(app);
+        for (cmd, body) in [
+            (
+                "start_duplicate_scan",
+                serde_json::json!({"onProgress": "__CHANNEL__:1"}),
+            ),
+            (
+                "preview_duplicate_cleanup",
+                serde_json::json!({"scanId": 1, "decisions": [{"groupId": 1, "keepFileIds": [1]}]}),
+            ),
+        ] {
+            let error = invoke_error(&window, cmd, body);
+            assert_eq!(error["kind"], "duplicates_blocked", "{cmd}");
+            assert!(
+                error["message"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("different_user"),
+                "{cmd}"
+            );
+        }
+        // Sin escaneo creado.
+        assert_eq!(
+            invoke(&window, "get_last_duplicate_scan", serde_json::json!({})),
+            serde_json::Value::Null
+        );
     }
 
     #[test]

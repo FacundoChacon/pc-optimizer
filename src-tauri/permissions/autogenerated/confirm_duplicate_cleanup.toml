@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-duplicate-cleanup"
+description = "Enables the confirm_duplicate_cleanup command without any pre-configured scope."
+commands.allow = ["confirm_duplicate_cleanup"]
+
+[[permission]]
+identifier = "deny-confirm-duplicate-cleanup"
+description = "Denies the confirm_duplicate_cleanup command without any pre-configured scope."
+commands.deny = ["confirm_duplicate_cleanup"]

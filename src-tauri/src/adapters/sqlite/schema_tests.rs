@@ -48,11 +48,15 @@ fn insert_log(conn: &Connection, outcome: &str, size: i64) -> rusqlite::Result<u
 #[test]
 fn open_should_create_exactly_the_current_schema_and_seed() {
     let (_dir, _path, conn) = fresh();
-    assert_eq!(read_user_version(&conn).unwrap(), 2);
+    assert_eq!(read_user_version(&conn).unwrap(), 3);
     assert_eq!(
         names(&conn, "table"),
         vec![
             "cleanup_log",
+            "duplicate_file",
+            "duplicate_group",
+            "duplicate_scan_result",
+            "duplicate_scan_root",
             "junk_category_result",
             "junk_finding",
             "scan",
@@ -207,7 +211,7 @@ fn open_connection_should_report_schema_too_new_and_leave_the_file_untouched() {
         err,
         StoreError::SchemaTooNew {
             found: 99,
-            supported: 2
+            supported: 3
         }
     );
     assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -461,7 +465,7 @@ fn open_should_migrate_a_version_1_database_keeping_all_its_data() {
         insert_log(&v1, "moved_to_trash", 10).unwrap();
     }
     let conn = open_connection(&path).unwrap();
-    assert_eq!(read_user_version(&conn).unwrap(), 2);
+    assert_eq!(read_user_version(&conn).unwrap(), 3);
     let ui_mode: String = conn
         .query_row(
             "SELECT value_json FROM settings WHERE key='ui_mode'",

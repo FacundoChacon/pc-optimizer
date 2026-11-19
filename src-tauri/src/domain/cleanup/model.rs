@@ -3,7 +3,7 @@
 //! Type-state: un [`CleanupPreview`] solo lo crea `build_preview` (sus campos son privados al
 //! modulo `cleanup`) y `run_cleanup` lo consume por valor.
 
-use crate::domain::junk::category::JunkCategory;
+use crate::domain::junk::category::{CategoryScope, JunkCategory};
 use crate::domain::model::{CleanupOutcome, EpochMillis, ScanId};
 use crate::domain::ports::FileIdentity;
 use crate::domain::privileges::MismatchReason;
@@ -27,11 +27,59 @@ pub fn is_recent(modified: Option<EpochMillis>, now: EpochMillis) -> bool {
     }
 }
 
+/// Fuente de un item a limpiar (C-11): una categoria de la whitelist de basura o las copias de
+/// un grupo de duplicados. Lista cerrada.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CleanupCategory {
+    Junk(JunkCategory),
+    Duplicates,
+}
+
+impl CleanupCategory {
+    /// Cadena de `cleanup_log.category` y de los DTO.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Junk(category) => category.as_str(),
+            Self::Duplicates => "duplicates",
+        }
+    }
+
+    /// Alcance de la fuente: las copias viven en las carpetas de contenido del usuario, asi que
+    /// son por-usuario y la barrera 1 las bloquea en mismatch.
+    pub fn scope(self) -> CategoryScope {
+        match self {
+            Self::Junk(category) => category.scope(),
+            Self::Duplicates => CategoryScope::PerUser,
+        }
+    }
+
+    /// La categoria de basura, si lo es.
+    pub fn junk(self) -> Option<JunkCategory> {
+        match self {
+            Self::Junk(category) => Some(category),
+            Self::Duplicates => None,
+        }
+    }
+}
+
+impl From<JunkCategory> for CleanupCategory {
+    fn from(category: JunkCategory) -> Self {
+        Self::Junk(category)
+    }
+}
+
+impl PartialEq<JunkCategory> for CleanupCategory {
+    fn eq(&self, other: &JunkCategory) -> bool {
+        *self == Self::Junk(*other)
+    }
+}
+
 /// Fila a mover, tal como se mostro en el preview (copia de lo persistido).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CleanupItem {
+    /// Hallazgo de basura o copia duplicada (`duplicate_file.id`).
     pub finding_id: i64,
-    pub category: JunkCategory,
+    pub category: CleanupCategory,
     /// Ruta real persistida por el escaneo.
     pub path: String,
     pub size_bytes: u64,
@@ -51,7 +99,7 @@ pub enum PreviewCategoryStatus {
 /// Una categoria del preview con sus totales.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewCategory {
-    pub category: JunkCategory,
+    pub category: CleanupCategory,
     pub status: PreviewCategoryStatus,
     pub item_count: u64,
     pub size_bytes: u64,
@@ -118,6 +166,8 @@ impl CleanupPreview {
     ) -> Self {
         let categories = JunkCategory::ALL
             .into_iter()
+            .map(CleanupCategory::Junk)
+            .chain(std::iter::once(CleanupCategory::Duplicates))
             .filter(|category| items.iter().any(|item| item.category == *category))
             .map(|category| {
                 let mine = || items.iter().filter(|item| item.category == category);
@@ -183,7 +233,7 @@ pub struct ReasonCount {
 /// Totales de una categoria en el resumen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CategorySummary {
-    pub category: JunkCategory,
+    pub category: CleanupCategory,
     pub moved_count: u64,
     pub moved_bytes: u64,
     /// `skipped_locked` + `skipped_protected` + `skipped_cloud`.

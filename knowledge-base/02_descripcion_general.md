@@ -67,7 +67,7 @@ No hay API REST. Contrato entre UI y backend = comandos Tauri (allowlist) y even
 |---------|--------------------|-------|
 | scan | `start_scan`, `cancel_scan`, `get_scan_result` | Emite eventos de progreso |
 | cleanup | `preview_cleanup`, `confirm_cleanup`, `get_cleanup_log` | Preview obligatorio antes de confirm |
-| duplicates | `find_duplicates`, `resolve_duplicate_group` | El usuario elige qué conservar |
+| duplicates | `start_duplicate_scan`, `get_last_duplicate_scan`, `list_duplicate_groups`, `preview_duplicate_cleanup`, `confirm_duplicate_cleanup` | El usuario elige qué conservar; cancelación con `cancel_scan` / `cancel_cleanup`; la resolución del grupo ocurre al confirmar |
 | improvements | `list_improvements`, `apply_improvement`, `undo_improvement` | Lista cerrada |
 | monitor | `subscribe_metrics` (evento), `get_history` | Muestreo 1-2 s |
 | alerts/rules | `get/set_alert_rules`, `get/set_cleanup_rules`, `get/set_schedule` | Rutas protegidas siempre aplican |

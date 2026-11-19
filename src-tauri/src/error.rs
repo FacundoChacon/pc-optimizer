@@ -91,6 +91,19 @@ pub enum AppError {
     /// Ya hay un vaciado en curso.
     #[error("a recycle bin empty is already in progress")]
     RecycleBinEmptyInProgress,
+    /// Las carpetas de contenido serian las del perfil de otra cuenta
+    /// (`different_user` / `undetermined`): no se busca ni se previsualiza nada (C-11).
+    #[error("duplicates are blocked: {}", .0.as_str())]
+    DuplicatesBlocked(MismatchReason),
+    /// El grupo de duplicados no existe en el escaneo.
+    #[error("duplicate group not found")]
+    DuplicateGroupNotFound,
+    /// El grupo de duplicados ya se resolvio.
+    #[error("duplicate group already resolved")]
+    DuplicateGroupResolved,
+    /// La decision no conserva ninguna copia (eliminaria todas).
+    #[error("at least one copy of each group must be kept")]
+    DuplicateKeepRequired,
 }
 
 impl From<SettingsServiceError> for AppError {
@@ -164,6 +177,10 @@ impl AppError {
             Self::RecycleBinBlocked(_) => "recycle_bin_blocked",
             Self::RecycleBinUnavailable => "recycle_bin_unavailable",
             Self::RecycleBinEmptyInProgress => "recycle_bin_empty_in_progress",
+            Self::DuplicatesBlocked(_) => "duplicates_blocked",
+            Self::DuplicateGroupNotFound => "duplicate_group_not_found",
+            Self::DuplicateGroupResolved => "duplicate_group_resolved",
+            Self::DuplicateKeepRequired => "duplicate_keep_required",
         }
     }
 }
@@ -356,6 +373,45 @@ mod tests {
             (MismatchReason::Undetermined, "undetermined"),
         ] {
             let value = serde_json::to_value(AppError::RecycleBinBlocked(reason)).unwrap();
+            assert!(value["message"].as_str().unwrap().ends_with(code));
+        }
+    }
+
+    #[test]
+    fn duplicate_errors_should_serialize_with_stable_kinds_and_a_message_without_paths() {
+        let cases = [
+            (
+                AppError::DuplicatesBlocked(MismatchReason::DifferentUser),
+                "duplicates_blocked",
+            ),
+            (
+                AppError::DuplicatesBlocked(MismatchReason::Undetermined),
+                "duplicates_blocked",
+            ),
+            (
+                AppError::DuplicateGroupNotFound,
+                "duplicate_group_not_found",
+            ),
+            (AppError::DuplicateGroupResolved, "duplicate_group_resolved"),
+            (AppError::DuplicateKeepRequired, "duplicate_keep_required"),
+        ];
+        for (error, kind) in cases {
+            let value = serde_json::to_value(&error).unwrap();
+            assert_eq!(value["kind"], kind);
+            let message = value["message"].as_str().unwrap();
+            assert!(!message.is_empty(), "{kind}");
+            assert!(!message.contains(char::from(0x5c)), "{kind}: {message}");
+            assert!(!message.contains('/'), "{kind}: {message}");
+        }
+    }
+
+    #[test]
+    fn duplicates_blocked_should_carry_the_mismatch_reason_in_its_message() {
+        for (reason, code) in [
+            (MismatchReason::DifferentUser, "different_user"),
+            (MismatchReason::Undetermined, "undetermined"),
+        ] {
+            let value = serde_json::to_value(AppError::DuplicatesBlocked(reason)).unwrap();
             assert!(value["message"].as_str().unwrap().ends_with(code));
         }
     }

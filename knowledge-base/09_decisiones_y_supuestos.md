@@ -137,7 +137,7 @@
 **Cómo validar**: pruebas en VM Win10.
 
 ### SU-06 — Duplicados excluyen archivos < 1 MB por defecto
-**Supuesto**: reduce ruido y costo.
+**Supuesto**: reduce ruido y costo. **Validado en C-11**: 1 MiB por defecto; en avanzado, una de cuatro opciones cerradas por escaneo (100 KiB, 1, 10, 100 MiB), sin valor libre ni ajuste persistido.
 **Origen**: inferido.
 **Riesgo si es falso**: se omiten duplicados relevantes.
 **Cómo validar**: opción configurable en modo avanzado.

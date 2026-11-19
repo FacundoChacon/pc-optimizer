@@ -73,11 +73,13 @@ erDiagram
 - `scan_id` FK (ON DELETE CASCADE), `category`, `scope` (`machine|per_user|mixed`), `status` (`done|partial|blocked|unavailable`), `block_reason` (`different_user|undetermined`, obligatorio solo en `partial`/`blocked`), `item_count`, `size_bytes`, `skipped_count`, `inaccessible_count`.
 - PK `(scan_id, category)`: una fila por categoría y escaneo, incluida `recycle_bin` (sin hallazgos). Retención: junto con su `scan` (cascada).
 
-### duplicate_group / duplicate_file
-- `duplicate_group`: `id`, `scan_id`, `size_bytes`, `blake3` (hash completo, hex).
-- `duplicate_file`: `id`, `group_id` FK, `path`, `mtime`, `kept` (decisión del usuario; nunca auto-asignada).
-- Índices: `(scan_id, size_bytes)`, `(blake3)`.
-- Retención: junto con su `scan`.
+### duplicate_scan_result / duplicate_scan_root / duplicate_group / duplicate_file (migración 003, C-11)
+- `duplicate_scan_result`: una fila por escaneo de duplicados terminado (`scan_id` PK): `min_size_bytes` (100 KiB, 1, 10 o 100 MiB) y los contadores del escaneo (`files_seen`, `below_min_size`, `protected_count`, `cloud_count`, `hard_linked_count`, `changed_count`, `unreadable_count`, `inaccessible_dirs`, `excluded_dirs`, `hashed_bytes`).
+- `duplicate_scan_root`: estado por carpeta de contenido (`root` = `desktop`, `documents`, `downloads`, `music`, `pictures`, `videos`; `status` = `done`, `not_selected`, `nested`, `unavailable`; `reason` obligatorio solo si `unavailable`) y `files_seen`.
+- `duplicate_group`: `id`, `scan_id`, `size_bytes`, `blake3` (hash completo, hex minúscula de 64), `file_count` (>= 2), `resolved_at` (nullable; fecha de resolución del grupo).
+- `duplicate_file`: `id`, `group_id` FK, `root`, `path`, `mtime` (por handle, nullable), identidad (`volume_serial`, `file_id`), `kept` (decisión del usuario; nunca auto-asignada, solo la escribe la resolución de un grupo confirmado).
+- Índices: `(scan_id, size_bytes, blake3)` único, `(blake3)`, `(root, group_id)`.
+- Retención: junto con su `scan`; solo el último escaneo de duplicados `done` conserva sus grupos.
 
 ### cleanup_log
 - `id`, `ts`, `category`, `path`, `size_bytes`, `outcome` (`moved_to_trash`, `skipped_locked`, `skipped_protected`, `skipped_cloud`, `error`, `recycle_bin_emptied`), `scan_id` FK nullable, `error_detail` nullable.

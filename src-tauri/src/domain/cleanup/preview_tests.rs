@@ -149,7 +149,11 @@ fn build_preview_should_only_include_the_requested_categories_in_whitelist_order
         ],
     );
     let preview = case.ok();
-    let listed: Vec<C> = preview.categories().iter().map(|c| c.category).collect();
+    let listed: Vec<C> = preview
+        .categories()
+        .iter()
+        .filter_map(|c| c.category.junk())
+        .collect();
     assert_eq!(listed, vec![C::TempUser, C::WuCache]);
     let paths: Vec<&str> = preview.items().iter().map(|i| i.path.as_str()).collect();
     assert_eq!(paths, vec![r"C:\t\a", r"C:\w\a"]);

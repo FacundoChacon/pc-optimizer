@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { format, formatBytes, formatDateTime } from "../../shared/i18n/format";
+import { format, formatBytes, formatDateTime, formatPlural } from "../../shared/i18n/format";
 
 describe("format", () => {
   it("reemplaza un marcador", () => {
@@ -63,5 +63,27 @@ describe("formatDateTime", () => {
     expect(formatDateTime(Date.UTC(2027, 0, 15, 12, 0))).not.toBe(
       formatDateTime(Date.UTC(2027, 5, 15, 12, 0)),
     );
+  });
+});
+
+describe("formatPlural", () => {
+  const forms = { one: "Se movio {count} copia.", other: "Se movieron {count} copias." };
+
+  it("usa la forma singular solo con exactamente uno", () => {
+    expect(formatPlural(forms, 1)).toBe("Se movio 1 copia.");
+  });
+
+  it.each([0, 2, 3, 1000])("usa la forma plural con %i", (count) => {
+    expect(formatPlural(forms, count)).toBe(`Se movieron ${count} copias.`);
+  });
+
+  it("completa los demas marcadores y deja {count} a cargo del conteo", () => {
+    const withSize = { one: "{count} copia ({size})", other: "{count} copias ({size})" };
+    expect(formatPlural(withSize, 1, { size: "2 MB" })).toBe("1 copia (2 MB)");
+    expect(formatPlural(withSize, 4, { size: "2 MB" })).toBe("4 copias (2 MB)");
+  });
+
+  it("un conteo invalido cae en la forma plural", () => {
+    expect(formatPlural(forms, Number.NaN)).toBe("Se movieron NaN copias.");
   });
 });

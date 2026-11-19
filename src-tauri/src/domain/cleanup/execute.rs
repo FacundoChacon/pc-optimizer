@@ -10,7 +10,7 @@ use crate::domain::privileges::{PrivilegeContext, ScopeAccess, UserScope, scope_
 use crate::domain::protection::context::{ContextError, ProtectionContext};
 use crate::domain::protection::decision::{AllowRule, CheckedPath, ProtectedReason};
 use crate::domain::protection::path::normalize_lexical;
-use crate::domain::protection::service::PathProtection;
+use crate::domain::protection::service::{DeleteTarget, PathProtection};
 
 use super::detail::{self, blocked_detail, outcome_for_decision, outcome_for_trash};
 use super::model::{
@@ -22,12 +22,61 @@ use super::summary::Tally;
 pub trait CleanupObserver {
     /// Una vez, antes del primer item, con el total a procesar.
     fn started(&mut self, total: u64);
-    /// Cada [`PROGRESS_EVERY_ITEMS`] items procesados y una vez mas al terminar el ciclo.
+    /// Cada `progress_every` items procesados y una vez mas al terminar el ciclo.
     fn progress(&mut self, processed: u64, total: u64, moved_count: u64, moved_bytes: u64);
+    /// Un item termino con un resultado (movido u omitido) y ya cuenta como procesado: se avisa
+    /// antes de su `progress`. Un item interrumpido por su `ItemGuard` no se avisa. Los consumidores
+    /// que necesiten saber QUE items se procesaron (C-11, resolucion de grupos) lo implementan.
+    fn item_processed(&mut self, _finding_id: i64) {}
 }
 
-/// Cada cuantos items se avisa el progreso (D-18): por conteo, sin reloj.
+/// Cada cuantos items se avisa el progreso de la basura (D-18): por conteo, sin reloj.
 pub const PROGRESS_EVERY_ITEMS: u64 = 32;
+
+/// Veredicto de una verificacion adicional sobre un item (C-11, D-13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardVerdict {
+    /// Seguir: mover el item.
+    Proceed,
+    /// No mover: se registra con este resultado (`skipped_locked` o `skipped_protected`) y este
+    /// codigo de detalle estable, y la ejecucion sigue con el siguiente.
+    Skip(CleanupOutcome, &'static str),
+    /// El usuario cancelo durante la verificacion: el item no se mueve ni se registra, no se
+    /// procesa ninguno de los siguientes y la ejecucion termina `cancelled`.
+    Interrupted,
+}
+
+/// Verificacion adicional de una fuente, por item.
+///
+/// Corre DESPUES de la re-verificacion de ruta (`prepare_delete`) y de las guardas de cambio y de
+/// 24 h, y ANTES de mover, mientras los ancestros del item siguen fijados (`target` vive hasta
+/// despues de mover). Solo puede restringir (omitir o interrumpir): nunca autoriza algo que la
+/// re-verificacion estandar rechazo.
+pub trait ItemGuard {
+    fn verify(
+        &mut self,
+        item: &CleanupItem,
+        target: &DeleteTarget,
+        cancel: &AtomicBool,
+    ) -> GuardVerdict;
+}
+
+/// Sin verificacion adicional: lo que usa la limpieza de basura.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoGuard;
+
+impl ItemGuard for NoGuard {
+    fn verify(&mut self, _: &CleanupItem, _: &DeleteTarget, _: &AtomicBool) -> GuardVerdict {
+        GuardVerdict::Proceed
+    }
+}
+
+/// Resultado de procesar un item.
+enum Processed {
+    Done(Step),
+    /// El `ItemGuard` fue interrumpido por la cancelacion.
+    Interrupted,
+}
 
 /// Resultado de procesar un item, listo para registrar.
 struct Step {
@@ -58,7 +107,7 @@ impl Step {
     clippy::too_many_arguments,
     reason = "cada argumento es un puerto o una entrada independiente de la ejecucion; agruparlos solo agregaria una estructura sin significado"
 )]
-pub fn run_cleanup<F, T, L, C, O>(
+pub fn run_cleanup<F, T, L, C, O, G>(
     preview: CleanupPreview,
     privileges: &PrivilegeContext,
     protection: Result<ProtectionContext, ContextError>,
@@ -68,6 +117,8 @@ pub fn run_cleanup<F, T, L, C, O>(
     clock: &C,
     cancel: &AtomicBool,
     observer: &mut O,
+    guard: &mut G,
+    progress_every: u64,
 ) -> CleanupSummary
 where
     F: FileSystem,
@@ -75,6 +126,7 @@ where
     L: CleanupLogStore,
     C: Clock,
     O: CleanupObserver,
+    G: ItemGuard,
 {
     let started_at = clock.now();
     observer.started(preview.items().len() as u64);
@@ -100,7 +152,7 @@ where
             status = CleanupStatus::Cancelled;
             break;
         }
-        let step = process_item(
+        let step = match process_item(
             item,
             &Env {
                 privileges,
@@ -109,8 +161,17 @@ where
                 service: &service,
                 fs,
                 trash,
+                cancel,
             },
-        );
+            guard,
+        ) {
+            Processed::Done(step) => step,
+            // Ni se mueve ni se registra: el item queda entre los no procesados.
+            Processed::Interrupted => {
+                status = CleanupStatus::Cancelled;
+                break;
+            }
+        };
         let entry = NewCleanupLogEntry {
             ts: clock.now(),
             category: item.category.as_str().to_string(),
@@ -128,6 +189,7 @@ where
             step.detail.as_deref(),
             step.size_bytes,
         );
+        observer.item_processed(item.finding_id);
         if logged.is_err() {
             status = CleanupStatus::Aborted(AbortReason::LogUnavailable);
             break;
@@ -136,7 +198,7 @@ where
             status = CleanupStatus::Aborted(reason);
             break;
         }
-        if tally.processed().is_multiple_of(PROGRESS_EVERY_ITEMS) {
+        if tally.processed().is_multiple_of(progress_every.max(1)) {
             report(observer, &tally);
             last_reported = tally.processed();
         }
@@ -160,13 +222,23 @@ struct Env<'a, F: FileSystem, T: Trash> {
     service: &'a PathProtection<'a, F>,
     fs: &'a F,
     trash: &'a T,
+    cancel: &'a AtomicBool,
 }
 
 /// Re-verifica un item y, si todo coincide, lo mueve (D-05 pasos 2 a 9).
-fn process_item<F: FileSystem, T: Trash>(item: &CleanupItem, env: &Env<'_, F, T>) -> Step {
+fn process_item<F: FileSystem, T: Trash, G: ItemGuard>(
+    item: &CleanupItem,
+    env: &Env<'_, F, T>,
+    guard: &mut G,
+) -> Processed {
     // Sin verificar el disco se registra la ruta y el tamano persistidos.
     let skipped = |outcome: CleanupOutcome, detail: &str| {
-        Step::new(outcome, Some(detail), item.path.clone(), item.size_bytes)
+        Processed::Done(Step::new(
+            outcome,
+            Some(detail),
+            item.path.clone(),
+            item.size_bytes,
+        ))
     };
     // Barrera 1: el alcance por-usuario se reevalua con el contexto de AHORA, sin tocar el disco.
     if item.category.scope() == CategoryScope::PerUser
@@ -212,11 +284,24 @@ fn process_item<F: FileSystem, T: Trash>(item: &CleanupItem, env: &Env<'_, F, T>
     // Con lo leido del archivo ABIERTO: el listado de carpeta puede ir atrasado (D-27).
     let verified =
         |outcome: CleanupOutcome, code: &str| Step::new(outcome, Some(code), real.clone(), size);
+    let done = |step: Step| Processed::Done(step);
     if current.size_bytes != item.size_bytes || current.modified != item.modified_at {
-        return verified(CleanupOutcome::SkippedLocked, detail::CHANGED_SINCE_SCAN);
+        return done(verified(
+            CleanupOutcome::SkippedLocked,
+            detail::CHANGED_SINCE_SCAN,
+        ));
     }
     if is_recent(current.modified, env.now) {
-        return verified(CleanupOutcome::SkippedLocked, detail::RECENTLY_MODIFIED);
+        return done(verified(
+            CleanupOutcome::SkippedLocked,
+            detail::RECENTLY_MODIFIED,
+        ));
+    }
+    // Verificacion adicional de la fuente, con la fijacion viva (`target` vive hasta el final).
+    match guard.verify(item, &target, env.cancel) {
+        GuardVerdict::Proceed => {}
+        GuardVerdict::Skip(outcome, code) => return done(verified(outcome, code)),
+        GuardVerdict::Interrupted => return Processed::Interrupted,
     }
     if let Err(error) = env.trash.move_to_trash(&target) {
         let (outcome, code) = outcome_for_trash(&error);
@@ -226,7 +311,7 @@ fn process_item<F: FileSystem, T: Trash>(item: &CleanupItem, env: &Env<'_, F, T>
             TrashError::BackendUnavailable => Some(AbortReason::TrashUnavailable),
             _ => None,
         };
-        return step;
+        return done(step);
     }
     // Defensa en profundidad: la Papelera dijo que si; si el mismo archivo sigue ahi, no se movio.
     let still_there = matches!(
@@ -234,10 +319,15 @@ fn process_item<F: FileSystem, T: Trash>(item: &CleanupItem, env: &Env<'_, F, T>
         Ok(meta) if meta.identity == Some(current.identity)
     );
     if still_there {
-        return verified(CleanupOutcome::Error, detail::NOT_MOVED);
+        return done(verified(CleanupOutcome::Error, detail::NOT_MOVED));
     }
     // `target` se suelta al salir: la fijacion vive hasta despues de la post-verificacion.
-    Step::new(CleanupOutcome::MovedToTrash, None, real.clone(), size)
+    done(Step::new(
+        CleanupOutcome::MovedToTrash,
+        None,
+        real.clone(),
+        size,
+    ))
 }
 
 #[cfg(test)]

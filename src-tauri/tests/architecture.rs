@@ -529,3 +529,61 @@ fn the_declared_exception_file_should_contain_exactly_the_single_call() {
     let production = strip_cfg_test_items(&compact_code(&source));
     assert_eq!(production.matches("SHEmptyRecycleBin").count(), 1);
 }
+
+/// Archivo donde, y solo donde, se asigna la marca `kept` de una copia (D-10): la resolucion de
+/// un grupo confirmado.
+const KEPT_WRITER: &str = "src/adapters/sqlite/duplicates.rs";
+
+/// Cantidad de asignaciones `kept = ...` (no comparaciones `kept == ...`) en una fuente de
+/// produccion; comentarios y bloques `#[cfg(test)]` no cuentan.
+fn kept_assignments(source: &str) -> usize {
+    let production = strip_cfg_test_items(&compact_code(source));
+    production
+        .match_indices("kept=")
+        .filter(|(start, _)| !production[start + "kept=".len()..].starts_with('='))
+        .count()
+}
+
+#[test]
+fn kept_should_only_be_assigned_by_the_group_resolution() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = rust_files_under(&src_dir).unwrap();
+    let mut violations = Vec::new();
+    let mut writer_assignments = 0;
+    for file in files.iter().filter(|f| !is_test_only_file(f)) {
+        let source = std::fs::read_to_string(file).unwrap();
+        let rel = relative_to_crate(file);
+        let count = kept_assignments(&source);
+        if rel == KEPT_WRITER {
+            writer_assignments = count;
+        } else if count > 0 {
+            violations.push(format!("{rel}: {count} asignacion(es) de `kept`"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "`kept` solo se escribe al resolver un grupo: {violations:#?}"
+    );
+    assert_eq!(
+        writer_assignments, 1,
+        "la resolucion debe contener exactamente una sentencia que asigne `kept`"
+    );
+}
+
+#[test]
+fn kept_assignments_should_count_sql_assignments_and_ignore_comparisons_comments_and_tests() {
+    let sql = r#"const A: &str = "UPDATE duplicate_file SET kept = 1 WHERE id = ?1";"#;
+    assert_eq!(kept_assignments(sql), 1);
+    let two = r#"const A: &str = "UPDATE f SET kept=1"; const B: &str = "UPDATE f SET kept = 0";"#;
+    assert_eq!(kept_assignments(two), 2);
+    assert_eq!(kept_assignments("let same = file.kept == 1;"), 0);
+    assert_eq!(kept_assignments("// UPDATE f SET kept = 1"), 0);
+    assert_eq!(
+        kept_assignments(
+            "#[cfg(test)]
+mod tests { const A: &str = \"SET kept = 1\"; }"
+        ),
+        0
+    );
+    assert_eq!(kept_assignments("struct F { kept: bool }"), 0);
+}

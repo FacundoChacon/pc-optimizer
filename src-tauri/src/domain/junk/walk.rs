@@ -19,7 +19,12 @@ pub trait WalkVisitor {
     fn candidate(&mut self, entry: DirEntry);
     /// Punto de reanalisis encontrado; su destino no se recorre.
     fn reparse_point(&mut self, path: PathBuf);
+    /// Carpeta excluida por el predicado de `walk_directory`: no se desciende a ella.
+    fn excluded_dir(&mut self, _path: PathBuf) {}
 }
+
+/// Predicado de exclusion de carpetas por nombre (comparado por quien lo implementa).
+pub type DirExclusion = fn(&str) -> bool;
 
 /// Como termino el recorrido.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +56,7 @@ pub fn walk_source<F: FileSystem, V: WalkVisitor>(
         depth: source.depth,
         now,
         visitor,
+        exclude: None,
         inaccessible: 0,
         cancelled: false,
     };
@@ -70,12 +76,44 @@ pub fn walk_source<F: FileSystem, V: WalkVisitor>(
     }
 }
 
+/// Recorre `root` en profundidad (C-11) entregando TODO archivo al `visitor` como candidato, sin
+/// seguir puntos de reanalisis y sin descender a las carpetas cuyo nombre acepte `exclude`.
+pub fn walk_directory<F: FileSystem, V: WalkVisitor>(
+    fs: &F,
+    root: &Path,
+    exclude: DirExclusion,
+    visitor: &mut V,
+) -> WalkReport {
+    let mut walker = Walker {
+        fs,
+        filter: Filter::NONE,
+        depth: Depth::Recursive,
+        now: EpochMillis(0),
+        visitor,
+        exclude: Some(exclude),
+        inaccessible: 0,
+        cancelled: false,
+    };
+    let present = walker.walk_root(root);
+    WalkReport {
+        end: if walker.cancelled {
+            WalkEnd::Cancelled
+        } else {
+            WalkEnd::Completed
+        },
+        inaccessible: walker.inaccessible,
+        present,
+    }
+}
+
 struct Walker<'a, F: FileSystem, V: WalkVisitor> {
     fs: &'a F,
     filter: Filter,
     depth: Depth,
     now: EpochMillis,
     visitor: &'a mut V,
+    /// Carpetas que no se recorren (solo `walk_directory`).
+    exclude: Option<DirExclusion>,
     inaccessible: u64,
     cancelled: bool,
 }
@@ -144,7 +182,9 @@ impl<F: FileSystem, V: WalkVisitor> Walker<'_, F, V> {
         let name = file_name(&entry.path);
         match (entry.meta.kind, entry.meta.cloud_placeholder) {
             (EntryKind::Directory, _) => {
-                if self.depth == Depth::Recursive {
+                if self.exclude.is_some_and(|excluded| excluded(&name)) {
+                    self.visitor.excluded_dir(entry.path);
+                } else if self.depth == Depth::Recursive {
                     subdirs.push(entry.path);
                 }
             }

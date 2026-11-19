@@ -99,6 +99,10 @@ sequenceDiagram
 
 Botón "Vaciar Papelera…" en la tarjeta de la Papelera y en el resumen de la limpieza (no en mismatch). Preparar (mide) → diálogo 1 "Continuar" (reconocer) → diálogo 2 con casilla obligatoria → "Eliminar para siempre" (vaciar con token). El backend rechaza toda llamada fuera de orden, vencida (2 min) o si la Papelera cambió (`recycle_bin_changed`: se vuelve al paso 1). Resultado por medición posterior (`emptied`, `partial`, `failed`, `unverified`) y una fila en `cleanup_log`.
 
+### Variante: duplicados (C-11)
+
+Pantalla Duplicados: "Buscar duplicados" (avanzado: carpetas y tamaño mínimo) → progreso por etapa (archivos vistos, parciales, bytes hasheados) con "Cancelar" → grupos sin ninguna copia elegida → el usuario elige cuál conservar en cada grupo (simple: una; avanzado: una o más) → "Revisar y mover a la Papelera" (preview de un solo uso) → confirmar. La ejecución re-verifica cada copia (identidad, tamaño, fecha y hash completo) y la copia conservada de cada grupo; lo que no coincide se omite (`content_changed`, `content_unreadable`, `kept_copy_unavailable`). Al terminar, los grupos con al menos una copia procesada quedan resueltos.
+
 ## Flujo 3: Aplicar mejora → snapshot → undo
 
 **Disparador**: el usuario pulsa "Aplicar" en una mejora.

@@ -140,7 +140,8 @@ fn from_raw_should_fail_when_an_anchor_is_a_volume_root() {
             "content_folders",
             Box::new(|r| {
                 if let Some(user) = r.user.as_mut() {
-                    user.content_folders.push(r"C:\".into());
+                    user.content_folders
+                        .push((ContentFolder::Videos, r"C:\".into()));
                 }
             }),
         ),
@@ -173,8 +174,10 @@ fn from_raw_should_drop_unnormalizable_optional_content_folders_without_error() 
     let mut raw = raw_c_ana();
     if let Some(user) = raw.user.as_mut() {
         user.temp = Some("nada".into());
-        user.content_folders.push(r"\\srv\share\Docs".into());
-        user.content_folders.push(String::new());
+        user.content_folders
+            .push((ContentFolder::Videos, r"\\srv\share\Docs".into()));
+        user.content_folders
+            .push((ContentFolder::Music, String::new()));
     }
     let ctx = ProtectionContext::from_raw(raw).unwrap();
     let user = ctx.user().unwrap();
@@ -255,4 +258,64 @@ fn raw_system_drive_should_be_none_when_windows_dir_is_missing_or_not_a_drive_pa
     assert_eq!(raw.system_drive(), None);
     raw.windows_dir = Some(String::new());
     assert_eq!(raw.system_drive(), None);
+}
+
+#[test]
+fn content_folder_should_round_trip_the_six_keys_and_reject_anything_else() {
+    for (folder, key) in ContentFolder::ALL.into_iter().zip([
+        "desktop",
+        "documents",
+        "downloads",
+        "music",
+        "pictures",
+        "videos",
+    ]) {
+        assert_eq!(folder.as_str(), key);
+        assert_eq!(ContentFolder::parse(key), Some(folder));
+    }
+    for raw in ["appdata", "", "DOWNLOADS", " downloads", "download"] {
+        assert_eq!(ContentFolder::parse(raw), None, "{raw:?}");
+    }
+}
+
+#[test]
+fn content_folder_should_return_each_folder_by_key() {
+    let ctx = ProtectionContext::from_raw(raw_c_ana()).unwrap();
+    let user = ctx.user().unwrap();
+    for (folder, name) in ContentFolder::ALL.into_iter().zip([
+        "Desktop",
+        "Documents",
+        "Downloads",
+        "Music",
+        "Pictures",
+        "Videos",
+    ]) {
+        assert_eq!(
+            user.content_folder(folder).map(ToString::to_string),
+            Some(format!(r"C:\Users\ana\{name}")),
+            "{folder:?}"
+        );
+    }
+}
+
+#[test]
+fn content_folder_should_be_none_for_the_missing_key_and_keep_the_others() {
+    let mut raw = raw_c_ana();
+    if let Some(user) = raw.user.as_mut() {
+        user.content_folders
+            .retain(|(key, _)| *key != ContentFolder::Downloads);
+    }
+    let ctx = ProtectionContext::from_raw(raw).unwrap();
+    let user = ctx.user().unwrap();
+    assert_eq!(user.content_folder(ContentFolder::Downloads), None);
+    assert!(user.content_folder(ContentFolder::Documents).is_some());
+    assert_eq!(user.content_folders().len(), 5);
+}
+
+#[test]
+fn content_folder_should_have_no_folders_when_there_is_no_current_user() {
+    let mut raw = raw_c_ana();
+    raw.user = None;
+    let ctx = ProtectionContext::from_raw(raw).unwrap();
+    assert!(ctx.user().is_none());
 }
