@@ -68,7 +68,41 @@ fn missing_top_level_permissions(yaml: &str) -> Vec<Violation> {
     }]
 }
 
+/// Quita espacios y comillas simples o dobles de los extremos.
+fn unquote(text: &str) -> &str {
+    text.trim().trim_matches(['"', '\'']).trim()
+}
+
+/// Valores de permiso que declara una linea: `clave: valor`, `clave: "valor"` y, para `permissions`,
+/// el estilo de flujo `{ a: b, c: d }`. Las claves de texto libre (`run`, `name`, `if`) no declaran permisos.
+fn permission_values(code: &str) -> Vec<&str> {
+    let trimmed = code.trim_start();
+    let trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+    let Some((key, value)) = trimmed.split_once(':') else {
+        return Vec::new();
+    };
+    let key = unquote(key);
+    let plain_key = !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !plain_key || matches!(key, "run" | "name" | "if") {
+        return Vec::new();
+    }
+    let value = value.trim();
+    match value.strip_prefix('{') {
+        Some(inner) if key == "permissions" => inner
+            .trim_end_matches('}')
+            .split(',')
+            .filter_map(|entry| entry.split_once(':'))
+            .map(|(_, entry_value)| unquote(entry_value))
+            .collect(),
+        _ => vec![unquote(value)],
+    }
+}
+
 /// Permisos `write` (o `write-all`) fuera del job `publish`; `write-all` no se admite en ningun lado.
+/// Normaliza comillas y el estilo de flujo (`permissions: { contents: write }`).
 fn write_permissions_outside_publish(yaml: &str) -> Vec<Violation> {
     let mut in_jobs = false;
     let mut job: Option<&str> = None;
@@ -84,11 +118,10 @@ fn write_permissions_outside_publish(yaml: &str) -> Vec<Violation> {
         } else if in_jobs && indent == 2 && code.trim_end().ends_with(':') {
             job = Some(code.trim().trim_end_matches(':'));
         }
-        let Some((_, value)) = code.split_once(':') else {
-            continue;
-        };
-        let value = value.trim();
-        let forbidden = value == "write-all" || (value == "write" && job != Some("publish"));
+        let forbidden = permission_values(code).iter().any(|value| {
+            value.eq_ignore_ascii_case("write-all")
+                || (value.eq_ignore_ascii_case("write") && job != Some("publish"))
+        });
         if forbidden {
             violations.push(Violation {
                 line,
@@ -110,18 +143,71 @@ fn forbidden_triggers(yaml: &str) -> Vec<Violation> {
         .collect()
 }
 
-/// Expresiones `${{ }}` con datos que controla quien abre el PR (evento, nombre de rama): inyeccion en scripts.
+/// Unicas expresiones `${{ }}` admitidas dentro de un `run:`: valores que no controla quien abre el PR.
+/// Cualquier otro dato (rama, evento, entradas, salidas de pasos) va por `env:` y se lee como `$VAR`.
+const SAFE_RUN_EXPRESSIONS: [&str; 6] = [
+    "runner.temp",
+    "runner.os",
+    "github.sha",
+    "github.workspace",
+    "github.run_id",
+    "github.run_number",
+];
+
+/// `true` si el texto trae una expresion `${{ }}` fuera de la lista admitida (o sin cerrar).
+fn has_unsafe_expression(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(start) = rest.find("${{") {
+        let after = &rest[start + 3..];
+        let Some(end) = after.find("}}") else {
+            return true;
+        };
+        if !SAFE_RUN_EXPRESSIONS.contains(&after[..end].trim()) {
+            return true;
+        }
+        rest = &after[end + 2..];
+    }
+    false
+}
+
+/// Expresiones `${{ }}` fuera de la lista admitida dentro de scripts `run:` (linea, bloque `|`/`>` o continuacion):
+/// inyeccion de comandos con datos que controla quien abre el PR. En `if:`, `with:` y `env:` se admiten.
 fn untrusted_expressions(yaml: &str) -> Vec<Violation> {
-    code_lines(yaml)
-        .filter(|(_, code)| {
-            code.contains("${{")
-                && (code.contains("github.event.") || code.contains("github.head_ref"))
-        })
-        .map(|(line, code)| Violation {
-            line,
-            text: code.trim().to_string(),
-        })
-        .collect()
+    let raw: Vec<&str> = yaml.lines().collect();
+    let mut run_key_column: Option<usize> = None;
+    let mut violations = Vec::new();
+    for (line, code) in code_lines(yaml) {
+        let raw_line = raw[line - 1];
+        let indent = indent_of(raw_line);
+        let mut offending = None;
+        if let Some(column) = run_key_column {
+            if raw_line.trim().is_empty() || (code.is_empty() && indent <= column) {
+                continue;
+            }
+            if indent > column {
+                // Dentro del script los comentarios tambien los expande GitHub: se mira la linea cruda.
+                offending = Some(raw_line);
+            } else {
+                run_key_column = None;
+            }
+        }
+        if run_key_column.is_none() {
+            let trimmed = code.trim_start();
+            let step = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim_start();
+            if step.starts_with("run:") {
+                let column = code.len() - step.len();
+                run_key_column = Some(column);
+                offending = Some(&raw_line[column..]);
+            }
+        }
+        if offending.is_some_and(has_unsafe_expression) {
+            violations.push(Violation {
+                line,
+                text: raw_line.trim().to_string(),
+            });
+        }
+    }
+    violations
 }
 
 /// Excepciones de `cargo audit` escritas en el workflow (`--ignore` o IDs `RUSTSEC-`): viven en `audit.toml`, aprobadas.
@@ -369,34 +455,91 @@ fn checkout_should_accept_persist_credentials_false_before_or_after_uses() {
     assert_eq!(checkout_with_persisted_credentials(&before), Vec::new());
 }
 
-/// Workflows reales del repo: (nombre de archivo, contenido); falla si no hay ninguno.
-fn real_workflows() -> Vec<(String, String)> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(".github")
-        .join("workflows");
-    let entries = std::fs::read_dir(&dir)
-        .unwrap_or_else(|error| panic!("no se pudo leer {}: {error}", dir.display()));
-    let mut found = Vec::new();
+fn is_yaml(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "yml" || ext == "yaml")
+}
+
+/// Archivos `action.yml` / `action.yaml` de las acciones compuestas, a cualquier profundidad.
+fn collect_actions(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries {
         let path = entry.expect("entrada del directorio").path();
-        if path.extension().is_some_and(|ext| ext == "yml") {
-            let text = std::fs::read_to_string(&path).expect("leer el workflow");
-            let name = path
-                .file_name()
-                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-            found.push((name, text));
+        if path.is_dir() {
+            collect_actions(&path, found);
+        } else if is_yaml(&path) && path.file_stem().is_some_and(|stem| stem == "action") {
+            found.push(path);
         }
     }
-    assert!(!found.is_empty(), "no hay workflows en {}", dir.display());
+}
+
+/// Archivos que ejecuta GitHub bajo `<root>/.github`: workflows (`.yml` y `.yaml`) y acciones compuestas.
+/// Devuelve (nombre relativo a `.github`, contenido), ordenado; `actions/` puede no existir.
+fn policy_files(root: &std::path::Path) -> Vec<(String, String)> {
+    let github = root.join(".github");
+    let workflows = github.join("workflows");
+    let entries = std::fs::read_dir(&workflows)
+        .unwrap_or_else(|error| panic!("no se pudo leer {}: {error}", workflows.display()));
+    let mut paths: Vec<std::path::PathBuf> = entries
+        .map(|entry| entry.expect("entrada del directorio").path())
+        .filter(|path| is_yaml(path))
+        .collect();
+    collect_actions(&github.join("actions"), &mut paths);
+    let mut found: Vec<(String, String)> = paths
+        .iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(path).expect("leer el archivo");
+            let name = path.strip_prefix(&github).map_or_else(
+                |_| String::new(),
+                |rel| rel.to_string_lossy().replace("\\", "/"),
+            );
+            (name, text)
+        })
+        .collect();
     found.sort();
     found
+}
+
+/// Workflows reales del repo: (nombre de archivo, contenido); falla si no hay ninguno.
+fn real_workflows() -> Vec<(String, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let found = policy_files(&root);
+    assert!(
+        found.iter().any(|(name, _)| name.starts_with("workflows/")),
+        "no hay workflows en {}",
+        root.join(".github").join("workflows").display()
+    );
+    found
+}
+
+/// Todas las reglas sobre un archivo, con el nombre de cada una.
+fn all_violations(yaml: &str) -> Vec<(&'static str, Vec<Violation>)> {
+    vec![
+        ("acciones sin fijar", unpinned_actions(yaml)),
+        (
+            "sin permissions superior",
+            missing_top_level_permissions(yaml),
+        ),
+        (
+            "write fuera de publish",
+            write_permissions_outside_publish(yaml),
+        ),
+        ("disparador prohibido", forbidden_triggers(yaml)),
+        ("expresion no confiable", untrusted_expressions(yaml)),
+        ("excepcion de auditoria", audit_exceptions(yaml)),
+        (
+            "checkout con credenciales",
+            checkout_with_persisted_credentials(yaml),
+        ),
+    ]
 }
 
 fn workflow(name: &str) -> String {
     real_workflows()
         .into_iter()
-        .find(|(file, _)| file == name)
+        .find(|(file, _)| file.strip_prefix("workflows/") == Some(name))
         .map(|(_, text)| text)
         .unwrap_or_else(|| panic!("falta .github/workflows/{name}"))
 }
@@ -404,24 +547,7 @@ fn workflow(name: &str) -> String {
 #[test]
 fn real_workflows_should_satisfy_every_policy_rule() {
     for (name, yaml) in real_workflows() {
-        let checks = [
-            ("acciones sin fijar", unpinned_actions(&yaml)),
-            (
-                "sin permissions superior",
-                missing_top_level_permissions(&yaml),
-            ),
-            (
-                "write fuera de publish",
-                write_permissions_outside_publish(&yaml),
-            ),
-            ("disparador prohibido", forbidden_triggers(&yaml)),
-            ("expresion no confiable", untrusted_expressions(&yaml)),
-            ("excepcion de auditoria", audit_exceptions(&yaml)),
-            (
-                "checkout con credenciales",
-                checkout_with_persisted_credentials(&yaml),
-            ),
-        ];
+        let checks = all_violations(&yaml);
         for (rule, violations) in checks {
             assert_eq!(violations, Vec::new(), "{name}: {rule}");
         }
@@ -518,5 +644,252 @@ fn release_workflow_should_be_manual_draft_only_and_the_only_one_with_write_acce
     assert!(
         !code_lines(&ci).any(|(_, line)| line.contains("contents: write")),
         "ci.yml no necesita escritura"
+    );
+}
+
+fn write_repo_file(root: &std::path::Path, relative: &str, text: &str) {
+    let path = root.join(relative);
+    std::fs::create_dir_all(path.parent().expect("carpeta padre")).expect("crear carpetas");
+    std::fs::write(path, text).expect("escribir el archivo");
+}
+
+#[test]
+fn policy_files_should_include_yaml_workflows_and_composite_actions() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    let root = repo.path();
+    write_repo_file(root, ".github/workflows/a.yml", "name: a\n");
+    write_repo_file(root, ".github/workflows/b.yaml", "name: b\n");
+    write_repo_file(root, ".github/workflows/notas.txt", "no es un workflow\n");
+    write_repo_file(root, ".github/actions/uno/action.yml", "name: uno\n");
+    write_repo_file(root, ".github/actions/dos/sub/action.yaml", "name: dos\n");
+    write_repo_file(root, ".github/actions/dos/otro.yml", "no es action.yml\n");
+
+    let names: Vec<String> = policy_files(root)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "actions/dos/sub/action.yaml",
+            "actions/uno/action.yml",
+            "workflows/a.yml",
+            "workflows/b.yaml",
+        ]
+    );
+}
+
+#[test]
+fn policy_files_should_work_without_an_actions_directory() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    write_repo_file(repo.path(), ".github/workflows/a.yml", "name: a\n");
+    assert_eq!(policy_files(repo.path()).len(), 1);
+}
+
+#[test]
+fn violations_in_a_yaml_extension_workflow_and_in_a_composite_action_should_be_reported() {
+    let repo = tempfile::tempdir().expect("tempdir");
+    let root = repo.path();
+    let bad = "permissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n";
+    write_repo_file(root, ".github/workflows/malo.yaml", bad);
+    write_repo_file(root, ".github/actions/x/action.yml", bad);
+    write_repo_file(
+        root,
+        ".github/workflows/bueno.yml",
+        "permissions:\n  contents: read\n",
+    );
+
+    let reported: Vec<String> = policy_files(root)
+        .into_iter()
+        .filter(|(_, yaml)| {
+            all_violations(yaml)
+                .iter()
+                .any(|(rule, found)| *rule == "acciones sin fijar" && !found.is_empty())
+        })
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(reported, ["actions/x/action.yml", "workflows/malo.yaml"]);
+}
+
+#[test]
+fn write_permissions_should_reject_flow_style_quoted_and_write_all_variants_outside_publish() {
+    let rejected = [
+        "      permissions: { contents: write }",
+        "      permissions: {contents: write}",
+        "      permissions: { contents: read, packages: write }",
+        "      permissions: { \"contents\": \"write\" }",
+        "      contents: \"write\"",
+        "      contents: 'write'",
+        "      \"contents\": write",
+        "      permissions: write-all",
+        "      permissions: \"write-all\"",
+        "      permissions: 'write-all'",
+        "      permissions: { all: write-all }",
+    ];
+    for line in rejected {
+        let yaml = format!("permissions:\n  contents: read\njobs:\n  rust:\n{line}\n");
+        let violations = write_permissions_outside_publish(&yaml);
+        assert_eq!(violations.len(), 1, "debia rechazar {line:?}");
+        assert_eq!(violations[0].line, 5, "{line:?}");
+    }
+}
+
+#[test]
+fn write_permissions_should_accept_flow_style_read_only_and_publish_write() {
+    let accepted = [
+        ("rust", "      permissions: { contents: read }"),
+        ("rust", "      permissions: {}"),
+        ("rust", "      permissions: read-all"),
+        ("rust", "      contents: \"read\""),
+        ("rust", "      - run: echo \"a: write\""),
+        ("rust", "      - name: write"),
+        ("publish", "      permissions: { contents: write }"),
+        ("publish", "      contents: \"write\""),
+    ];
+    for (job, line) in accepted {
+        let yaml = format!("permissions:\n  contents: read\njobs:\n  {job}:\n{line}\n");
+        assert_eq!(
+            write_permissions_outside_publish(&yaml),
+            Vec::new(),
+            "debia aceptar {job}: {line:?}"
+        );
+    }
+    let publish_all =
+        "permissions:\n  contents: read\njobs:\n  publish:\n    permissions: write-all\n";
+    assert_eq!(write_permissions_outside_publish(publish_all).len(), 1);
+}
+
+#[test]
+fn untrusted_expressions_should_reject_everything_outside_the_allowlist_in_run_lines() {
+    let rejected = [
+        "      - run: echo ${{ github.ref_name }}",
+        "      - run: echo ${{ github.head_ref }}",
+        "      - run: echo ${{ github.event.pull_request.title }}",
+        "      - run: echo ${{ inputs.version }}",
+        "      - run: echo ${{ steps.version.outputs.version }}",
+        "      - run: echo ${{ needs.preflight.outputs.version }}",
+        "      - run: echo ${{ secrets.TOKEN }}",
+        "      - run: echo ${{ env.VERSION }}",
+        "      - run: echo ${{ github.sha || github.head_ref }}",
+        "      - run: echo ${{ format('{0}', github.ref_name) }}",
+        "      - run: echo ${{github.ref_name}}",
+        "      - run: echo \"${{ github.sha }}\" ${{ inputs.x }}",
+        "        run: echo ${{ inputs.x }}",
+        "      - run: echo ${{ github.sha",
+        "      - run: echo hi # ${{ github.head_ref }}",
+    ];
+    for line in rejected {
+        let yaml = format!("jobs:\n  a:\n    steps:\n{line}\n");
+        let violations = untrusted_expressions(&yaml);
+        assert_eq!(violations.len(), 1, "debia rechazar {line:?}");
+        assert_eq!(violations[0].line, 4, "{line:?}");
+    }
+}
+
+#[test]
+fn untrusted_expressions_should_accept_the_allowlist_and_any_expression_outside_run() {
+    let accepted = [
+        "      - run: echo ${{ runner.temp }}",
+        "      - run: echo ${{ runner.os }} ${{ github.sha }}",
+        "      - run: echo ${{github.sha}}",
+        "      - run: echo ${{ github.run_id }}-${{ github.run_number }}",
+        "      - run: cd ${{ github.workspace }}",
+        "        if: github.ref_name == 'main'",
+        "        if: ${{ github.head_ref != '' }}",
+        "          path: ${{ inputs.path }}",
+        "          V: ${{ needs.preflight.outputs.version }}",
+        "          version: ${{ steps.version.outputs.version }}",
+        "        name: Paso ${{ github.ref_name }}",
+        "      - run: echo sin expresiones",
+        "      # run: echo ${{ inputs.x }}",
+    ];
+    for line in accepted {
+        let yaml = format!("jobs:\n  a:\n    steps:\n{line}\n");
+        assert_eq!(untrusted_expressions(&yaml), Vec::new(), "{line:?}");
+    }
+}
+
+#[test]
+fn untrusted_expressions_should_scan_multiline_run_blocks_until_they_end() {
+    let block = "jobs:\n  a:\n    steps:\n      - name: x\n        run: |\n          echo ok\n\n          echo \"${{ inputs.name }}\"\n          # ${{ github.head_ref }}\n      - name: y\n        env:\n          V: ${{ inputs.name }}\n        run: echo \"$V\"\n";
+    let lines: Vec<usize> = untrusted_expressions(block)
+        .iter()
+        .map(|v| v.line)
+        .collect();
+    assert_eq!(lines, [8, 9]);
+
+    for marker in ["|", "|-", "|+", ">", ">-", "|2"] {
+        let yaml = format!(
+            "jobs:\n  a:\n    steps:\n      - run: {marker}\n          echo ${{{{ steps.a.outputs.b }}}}\n"
+        );
+        assert_eq!(untrusted_expressions(&yaml).len(), 1, "{marker}");
+    }
+
+    let plain_continuation =
+        "jobs:\n  a:\n    steps:\n      - run: echo uno\n          ${{ inputs.x }}\n";
+    assert_eq!(untrusted_expressions(plain_continuation).len(), 1);
+
+    let ends_by_dedent = "jobs:\n  a:\n    steps:\n      - run: |\n          echo ok\n        env:\n          V: ${{ steps.a.outputs.b }}\n      - uses: x\n        with:\n          v: ${{ inputs.v }}\n";
+    assert_eq!(untrusted_expressions(ends_by_dedent), Vec::new());
+
+    let allowed_in_block = "jobs:\n  a:\n    steps:\n      - run: |\n          cp x ${{ runner.temp }}/y\n          echo ${{ github.sha }}\n";
+    assert_eq!(untrusted_expressions(allowed_in_block), Vec::new());
+}
+
+#[test]
+fn bundle_job_should_remove_stale_installers_before_building() {
+    let yaml = workflow("ci.yml");
+    let bundle = yaml
+        .split("\n  bundle:\n")
+        .nth(1)
+        .expect("falta el job bundle");
+    let clean = bundle
+        .find("rm -rf src-tauri/target/release/bundle")
+        .expect("el job bundle debe borrar src-tauri/target/release/bundle");
+    let build = bundle
+        .find("npm run tauri build")
+        .expect("el job bundle debe construir con tauri build");
+    assert!(clean < build, "el borrado debe ir antes de construir");
+    assert!(
+        bundle.contains("test \"${#installers[@]}\" -eq 1"),
+        "se mantiene la comprobacion de un unico instalador"
+    );
+}
+
+#[test]
+fn release_preflight_should_tell_a_free_tag_from_an_api_failure() {
+    let yaml = workflow("release.yml");
+    let preflight = yaml
+        .split("\n  ci:\n")
+        .next()
+        .expect("falta el job preflight");
+    assert!(
+        preflight.contains("HTTP 404"),
+        "solo un 404 significa tag libre"
+    );
+    assert!(
+        !preflight.contains("> /dev/null 2>&1; then"),
+        "cualquier error de la API no puede tomarse por tag inexistente"
+    );
+}
+
+#[test]
+fn release_publish_should_delete_the_tag_it_created_when_a_later_step_fails() {
+    let yaml = workflow("release.yml");
+    let publish = yaml
+        .split("\n  publish:\n")
+        .nth(1)
+        .expect("falta el job publish");
+    assert!(publish.contains("id: tag"), "el paso del tag necesita id");
+    assert!(
+        publish.contains("if: failure() && steps.tag.outcome == 'success'"),
+        "la limpieza solo corre si este run creo el tag"
+    );
+    assert!(publish.contains("-X DELETE \"repos/$GITHUB_REPOSITORY/git/refs/tags/v$VERSION\""));
+    let create = publish.find("gh release create").expect("release create");
+    let cleanup = publish.find("-X DELETE").expect("limpieza");
+    assert!(
+        create < cleanup,
+        "la limpieza va despues de crear el release"
     );
 }
