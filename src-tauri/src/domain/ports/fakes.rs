@@ -13,14 +13,16 @@ use crate::domain::model::{
     CleanupLogEntry, DEFAULT_SETTINGS, EpochMillis, NewCleanupLogEntry, NewScan, SCAN_RETENTION,
     Scan, ScanId, ScanKind, ScanStatus, scans_to_prune,
 };
+use crate::domain::ports::recycle_bin_empty::EmptyError;
 use crate::domain::ports::{
     AncestorPin, BinAvailability, CleanupLogStore, Clock, DirEntry, EntryKind, FileIdentity,
-    FileMeta, FileSystem, JunkFindingStore, PortError, RecycleBinInfo, RecycleBinPolicy,
-    RecycleBinUsage, ScanStore, SensorSample, Sensors, SessionIdentity, SettingsStore, StoreError,
-    Trash, TrashError,
+    FileMeta, FileSystem, JunkFindingStore, PortError, RecycleBinEmptier, RecycleBinInfo,
+    RecycleBinPolicy, RecycleBinUsage, ScanStore, SensorSample, Sensors, SessionIdentity,
+    SettingsStore, StoreError, Trash, TrashError,
 };
 use crate::domain::privileges::UserSid;
 use crate::domain::protection::service::DeleteTarget;
+use crate::domain::recycle_bin::root::VolumeRoot;
 
 /// Operacion del puerto de archivos (para registrar llamadas e inyectar fallas por operacion).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -554,22 +556,48 @@ impl Trash for FakeTrash {
 /// Consulta de la Papelera falsa: devuelve un valor o un error configurado y registra las raices
 /// consultadas.
 pub(crate) struct FakeRecycleBin {
-    result: Result<RecycleBinUsage, PortError>,
+    /// Estado actual de la Papelera: lo comparte con su `FakeRecycleBinEmptier` (C-10).
+    result: Arc<Mutex<Result<RecycleBinUsage, PortError>>>,
     queried: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeRecycleBin {
     pub(crate) fn with_usage(items: u64, bytes: u64) -> Self {
         Self {
-            result: Ok(RecycleBinUsage { items, bytes }),
+            result: Arc::new(Mutex::new(Ok(RecycleBinUsage { items, bytes }))),
             queried: Mutex::new(Vec::new()),
         }
     }
 
     pub(crate) fn failing(error: PortError) -> Self {
         Self {
-            result: Err(error),
+            result: Arc::new(Mutex::new(Err(error))),
             queried: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Cambia lo que mide la Papelera (otra app mando algo, el usuario restauro algo...).
+    pub(crate) fn set_usage(&self, items: u64, bytes: u64) {
+        if let Ok(mut state) = self.result.lock() {
+            *state = Ok(RecycleBinUsage { items, bytes });
+        }
+    }
+
+    /// A partir de ahora la medicion falla con `error`.
+    pub(crate) fn set_failing(&self, error: PortError) {
+        if let Ok(mut state) = self.result.lock() {
+            *state = Err(error);
+        }
+    }
+
+    /// Vaciador falso que actua sobre esta misma Papelera: tras `empty` la medicion cambia segun
+    /// `after`. Nunca toca la Papelera real.
+    pub(crate) fn emptier(&self, after: AfterEmpty) -> FakeRecycleBinEmptier {
+        FakeRecycleBinEmptier {
+            bin: Arc::clone(&self.result),
+            after,
+            result: Ok(()),
+            calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -583,6 +611,65 @@ impl RecycleBinInfo for FakeRecycleBin {
     fn query(&self, volume_root: &Path) -> Result<RecycleBinUsage, PortError> {
         if let Ok(mut queried) = self.queried.lock() {
             queried.push(volume_root.to_path_buf());
+        }
+        self.result
+            .lock()
+            .map_err(|_| PortError::Io("lock poisoned".to_owned()))?
+            .clone()
+    }
+}
+
+/// Que mide la Papelera despues de que el vaciador falso corre.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AfterEmpty {
+    /// Queda en 0 elementos.
+    Empty,
+    /// Quedan `items` elementos y `bytes` bytes (vaciado parcial).
+    Leaves { items: u64, bytes: u64 },
+    /// No cambia nada.
+    Unchanged,
+    /// La medicion posterior falla.
+    MeasureFails(PortError),
+}
+
+/// Vaciador falso: registra las raices recibidas y deja la Papelera falsa en el estado pedido.
+pub(crate) struct FakeRecycleBinEmptier {
+    bin: Arc<Mutex<Result<RecycleBinUsage, PortError>>>,
+    after: AfterEmpty,
+    result: Result<(), EmptyError>,
+    calls: Mutex<Vec<PathBuf>>,
+}
+
+impl FakeRecycleBinEmptier {
+    /// La llamada devuelve `error` (el estado posterior sigue segun `AfterEmpty`).
+    pub(crate) fn failing_with(mut self, error: EmptyError) -> Self {
+        self.result = Err(error);
+        self
+    }
+
+    /// Raices recibidas, en orden.
+    pub(crate) fn calls(&self) -> Vec<PathBuf> {
+        self.calls.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+}
+
+impl RecycleBinEmptier for FakeRecycleBinEmptier {
+    fn empty(&self, root: &VolumeRoot) -> Result<(), EmptyError> {
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.push(root.as_path());
+        }
+        if let Ok(mut state) = self.bin.lock() {
+            match &self.after {
+                AfterEmpty::Empty => *state = Ok(RecycleBinUsage { items: 0, bytes: 0 }),
+                AfterEmpty::Leaves { items, bytes } => {
+                    *state = Ok(RecycleBinUsage {
+                        items: *items,
+                        bytes: *bytes,
+                    });
+                }
+                AfterEmpty::Unchanged => {}
+                AfterEmpty::MeasureFails(error) => *state = Err(error.clone()),
+            }
         }
         self.result.clone()
     }
@@ -1101,6 +1188,60 @@ mod tests {
             Err(PortError::PermissionDenied("papelera".into()))
         );
         assert_eq!(bin.queried(), vec![p(r"C:\")]);
+    }
+
+    // --- FakeRecycleBinEmptier (C-10) ---
+    fn c_root() -> VolumeRoot {
+        VolumeRoot::from_drive_letter('C').unwrap()
+    }
+
+    #[test]
+    fn emptier_fake_should_leave_the_shared_bin_empty_and_record_the_root() {
+        let bin = FakeRecycleBin::with_usage(12, 340_000_000);
+        let emptier = bin.emptier(AfterEmpty::Empty);
+        assert_eq!(emptier.calls(), Vec::<PathBuf>::new());
+        assert_eq!(emptier.empty(&c_root()), Ok(()));
+        assert_eq!(emptier.calls(), vec![p(r"C:\")]);
+        assert_eq!(
+            bin.query(Path::new(r"C:\")),
+            Ok(RecycleBinUsage { items: 0, bytes: 0 })
+        );
+    }
+
+    #[test]
+    fn emptier_fake_should_leave_a_partial_state_when_asked() {
+        let bin = FakeRecycleBin::with_usage(12, 340_000_000);
+        let emptier = bin.emptier(AfterEmpty::Leaves {
+            items: 2,
+            bytes: 40_000_000,
+        });
+        emptier.empty(&c_root()).unwrap();
+        assert_eq!(
+            bin.query(Path::new(r"C:\")),
+            Ok(RecycleBinUsage {
+                items: 2,
+                bytes: 40_000_000
+            })
+        );
+    }
+
+    #[test]
+    fn emptier_fake_should_keep_the_measure_when_the_call_fails_and_state_is_unchanged() {
+        let bin = FakeRecycleBin::with_usage(12, 340_000_000);
+        let emptier = bin
+            .emptier(AfterEmpty::Unchanged)
+            .failing_with(EmptyError::PermissionDenied);
+        assert_eq!(emptier.empty(&c_root()), Err(EmptyError::PermissionDenied));
+        assert_eq!(bin.query(Path::new(r"C:\")).unwrap().items, 12);
+        assert_eq!(emptier.calls().len(), 1);
+    }
+
+    #[test]
+    fn emptier_fake_should_make_the_following_measure_fail_when_asked() {
+        let bin = FakeRecycleBin::with_usage(3, 30);
+        let emptier = bin.emptier(AfterEmpty::MeasureFails(PortError::Io("x".into())));
+        emptier.empty(&c_root()).unwrap();
+        assert_eq!(bin.query(Path::new(r"C:\")), Err(PortError::Io("x".into())));
     }
 
     // --- FakeFileSystem ---
@@ -1710,5 +1851,6 @@ mod tests {
         contract::contract_scan_cleaned_at_ignores_other_scans_and_older_entries(
             InMemoryStore::new,
         );
+        contract::contract_empty_bin_entry_does_not_mark_the_scan_as_cleaned(InMemoryStore::new);
     }
 }

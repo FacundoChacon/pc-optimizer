@@ -20,7 +20,7 @@ Dominio de gobernanza **HIGH**. Este documento es la referencia operativa de RN-
 | `wu_cache` | `C:\Windows\SoftwareDistribution\Download` | Subruta explícita permitida |
 | `thumbnail_cache` | Caché de miniaturas del Explorador | Por-usuario |
 | `crash_dumps` | Volcados de fallos conocidos (ej. `%LOCALAPPDATA%\CrashDumps`, `Minidump`) | |
-| `recycle_bin` | Papelera | Única acción permanente; doble confirmación; pregunta abierta PA-02 |
+| `recycle_bin` | Papelera | Única acción permanente (C-10): protocolo backend de 3 pasos (preparar → reconocer → vaciar), solo volumen del sistema, vence a 2 min, re-medición estricta, bloqueada en mismatch; se registra con `scan_id` nulo (no marca el escaneo como limpiado) |
 | `custom_rule` | Reglas del usuario (v0.3) | Siempre sujetas a rutas protegidas |
 
 ### Ubicaciones concretas de la detección (C-08)

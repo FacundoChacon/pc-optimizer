@@ -17,4 +17,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "preview_cleanup",
     "confirm_cleanup",
     "cancel_cleanup",
+    "prepare_empty_recycle_bin",
+    "acknowledge_empty_recycle_bin",
+    "empty_recycle_bin",
 ];

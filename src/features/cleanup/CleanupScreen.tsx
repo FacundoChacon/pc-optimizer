@@ -1,15 +1,19 @@
 import { useEffect, useRef } from "react";
+import { usePrivilege } from "../../app/providers/PrivilegeProvider";
 import { useSettings } from "../../app/providers/SettingsProvider";
+import type { CategorySummary } from "../../lib/ipc";
 import { errorMessage } from "../../shared/i18n/errors";
 import { es } from "../../shared/i18n/es";
 import { format, formatBytes, formatDateTime } from "../../shared/i18n/format";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { CategoryCard } from "./CategoryCard";
-import { useCleanup } from "./CleanupProvider";
+import { useCleanup, useEmptyRecycleBin } from "./CleanupProvider";
 import { CleanupPreviewDialog } from "./CleanupPreviewDialog";
 import { CleanupProgress } from "./CleanupProgress";
 import { CleanupSummaryCard } from "./CleanupSummary";
+import { EmptyRecycleBinDialog } from "./EmptyRecycleBinDialog";
+import { EmptyRecycleBinResult } from "./EmptyRecycleBinResult";
 import { isCleanable } from "./cleanupText";
 import { useJunkScan } from "./JunkScanProvider";
 import { ScanProgress } from "./ScanProgress";
@@ -22,9 +26,13 @@ export function CleanupScreen() {
   const { settings } = useSettings();
   const { loaded, last, progress, error, notice, start, cancel } = useJunkScan();
   const cleaning = useCleanup();
+  const emptying = useEmptyRecycleBin();
+  const privilege = usePrivilege();
   const advanced = settings.uiMode === "advanced";
   const scanning = progress !== null;
   const cleanRunning = cleaning.progress !== null;
+  // Medir o vaciar la Papelera ocupa la pantalla: nada mas puede arrancar hasta que termine.
+  const binBusy = emptying.phase === "preparing" || emptying.phase === "emptying";
   const scanButton = useRef<HTMLButtonElement>(null);
   const wasScanning = useRef(scanning);
 
@@ -43,15 +51,28 @@ export function CleanupScreen() {
         category.status !== "unavailable" &&
         category.itemCount > 0,
     );
-  const canClean = last !== null && hasEligible && last.cleanedAt === null && !scanning && !cleanRunning;
+  const canClean =
+    last !== null && hasEligible && last.cleanedAt === null && !scanning && !cleanRunning && !binBusy;
   const alreadyCleaned = last !== null && last.cleanedAt !== null && cleaning.summary === null;
   const showSummary = cleaning.summary !== null && !cleanRunning;
   const showEmpty = loaded && last === null && !scanning;
 
   const scanAgain = () => {
     cleaning.reset();
+    emptying.dismiss();
     start();
   };
+
+  // "Vaciar Papelera…" (C-10): solo sin trabajos en curso y fuera de mismatch (la Papelera es por-usuario).
+  const privilegeReady = privilege.phase === "ready";
+  const binBlocked = privilegeReady && privilege.context.status === "mismatch";
+  const canOfferEmpty =
+    privilegeReady && !binBlocked && !scanning && !cleanRunning && emptying.phase !== "emptying";
+  const startEmpty = canOfferEmpty ? emptying.start : undefined;
+  const measuredBin = (summary: CategorySummary) =>
+    summary.category === "recycle_bin" && emptying.measure !== null
+      ? { ...summary, ...emptying.measure }
+      : summary;
 
   return (
     <div className="flex flex-col gap-4">
@@ -65,7 +86,7 @@ export function CleanupScreen() {
         <Button
           ref={scanButton}
           variant={canClean || showSummary ? "secondary" : "primary"}
-          disabled={scanning || cleanRunning}
+          disabled={scanning || cleanRunning || binBusy}
           onClick={scanAgain}
         >
           {es.cleanup.scan}
@@ -94,6 +115,15 @@ export function CleanupScreen() {
       )}
       {scanning && <ScanProgress progress={progress} onCancel={cancel} />}
       {cleaning.progress !== null && <CleanupProgress progress={cleaning.progress} onCancel={cleaning.cancel} />}
+      <EmptyRecycleBinResult
+        phase={emptying.phase}
+        result={emptying.result}
+        error={emptying.error}
+        focusRequested={emptying.focusResult}
+        onFocused={emptying.consumeResultFocus}
+        onReviewAgain={emptying.start}
+        onDismiss={emptying.dismiss}
+      />
       {showSummary && cleaning.summary !== null && (
         <CleanupSummaryCard
           summary={cleaning.summary}
@@ -102,6 +132,8 @@ export function CleanupScreen() {
           focusRequested={cleaning.focusSummary}
           onFocused={cleaning.consumeSummaryFocus}
           onScanAgain={scanAgain}
+          onEmptyBin={startEmpty}
+          binBlocked={binBlocked}
         />
       )}
       {showEmpty && (
@@ -118,9 +150,20 @@ export function CleanupScreen() {
           </Card>
           <h2 className="text-lg font-semibold">{es.cleanup.categoriesHeading}</h2>
           <div className="grid gap-4 md:grid-cols-2">
-            {last.categories.map((summary) => (
-              <CategoryCard key={summary.category} summary={summary} scanId={last.scanId} advanced={advanced} />
-            ))}
+            {last.categories.map((original) => {
+              const summary = measuredBin(original);
+              const offer =
+                summary.category === "recycle_bin" && summary.status === "done" && summary.itemCount > 0;
+              return (
+                <CategoryCard
+                  key={summary.category}
+                  summary={summary}
+                  scanId={last.scanId}
+                  advanced={advanced}
+                  onEmptyBin={offer ? startEmpty : undefined}
+                />
+              );
+            })}
           </div>
         </>
       )}
@@ -135,6 +178,14 @@ export function CleanupScreen() {
         onToggle={cleaning.toggle}
         onConfirm={cleaning.confirm}
         onCancel={cleaning.closeDialog}
+      />
+      <EmptyRecycleBinDialog
+        phase={emptying.phase}
+        request={emptying.request}
+        ack={emptying.ack}
+        onContinue={emptying.acknowledge}
+        onConfirm={emptying.confirm}
+        onCancel={emptying.cancel}
       />
     </div>
   );

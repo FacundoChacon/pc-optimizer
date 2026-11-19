@@ -560,3 +560,56 @@ fn scan_environment_should_keep_the_data_dir_it_was_given() {
     env.set_data_dir(Some(PathBuf::from(r"D:\datos")));
     assert_eq!(env.data_dir(), Some(PathBuf::from(r"D:\datos")));
 }
+
+#[test]
+fn active_job_empty_should_exclude_every_other_job_in_both_directions() {
+    let active = ActiveJob::default();
+    let empty = active.begin_empty().unwrap();
+    assert!(matches!(
+        active.begin_scan(),
+        Err(AppError::RecycleBinEmptyInProgress)
+    ));
+    assert!(matches!(
+        active.begin_cleanup(PreviewId(1)),
+        Err(AppError::RecycleBinEmptyInProgress)
+    ));
+    assert!(matches!(
+        active.begin_empty(),
+        Err(AppError::RecycleBinEmptyInProgress)
+    ));
+    assert!(matches!(
+        active.ensure_idle(),
+        Err(AppError::RecycleBinEmptyInProgress)
+    ));
+    drop(empty);
+    assert!(active.ensure_idle().is_ok());
+
+    let scan = active.begin_scan().unwrap();
+    assert!(matches!(
+        active.begin_empty(),
+        Err(AppError::ScanInProgress)
+    ));
+    drop(scan);
+    let cleanup = active.begin_cleanup(PreviewId(1)).unwrap();
+    assert!(matches!(
+        active.begin_empty(),
+        Err(AppError::CleanupInProgress)
+    ));
+    drop(cleanup);
+    assert!(active.begin_empty().is_ok());
+}
+
+#[test]
+fn active_job_empty_should_not_be_cancellable_by_scan_or_cleanup_cancels() {
+    let active = ActiveJob::default();
+    let empty = active.begin_empty().unwrap();
+    assert!(matches!(
+        active.cancel_scan(ScanId(1)),
+        Err(AppError::ScanNotFound(_))
+    ));
+    assert!(matches!(
+        active.cancel_cleanup(PreviewId(1)),
+        Err(AppError::PreviewNotFound)
+    ));
+    assert!(!empty.cancel_flag().load(Ordering::Relaxed));
+}

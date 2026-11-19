@@ -193,7 +193,7 @@ El resultado de un escaneo SHALL incluir, por categoría: alcance, estado (`done
 - **THEN** su tamaño figura en su categoría pero no se suma a los totales elegibles del escaneo
 
 ### Requirement: Un escaneo de basura a la vez con progreso
-El sistema SHALL ejecutar como máximo un escaneo a la vez sin bloquear la interfaz e informar progreso durante el recorrido (categoría actual, archivos vistos y bytes elegibles acumulados); pedir otro escaneo mientras uno está en curso MUST fallar con el error `scan_in_progress` sin afectar al que corre, y pedirlo mientras una limpieza está en curso MUST fallar con `cleanup_in_progress` sin afectar a la limpieza.
+El sistema SHALL ejecutar como máximo un escaneo a la vez sin bloquear la interfaz e informar progreso durante el recorrido (categoría actual, archivos vistos y bytes elegibles acumulados); pedir otro escaneo mientras uno está en curso MUST fallar con el error `scan_in_progress` sin afectar al que corre, pedirlo mientras una limpieza está en curso MUST fallar con `cleanup_in_progress` sin afectar a la limpieza, y pedirlo mientras se vacía la Papelera MUST fallar con `recycle_bin_empty_in_progress` sin afectar al vaciado.
 
 #### Scenario: Progreso
 - **WHEN** se inicia un escaneo
@@ -206,6 +206,10 @@ El sistema SHALL ejecutar como máximo un escaneo a la vez sin bloquear la inter
 #### Scenario: Escaneo durante una limpieza
 - **WHEN** se pide un escaneo mientras una limpieza está en curso
 - **THEN** la petición falla con `cleanup_in_progress`, no se crea ningún escaneo y la limpieza termina normalmente
+
+#### Scenario: Escaneo durante el vaciado de la Papelera
+- **WHEN** se pide un escaneo mientras la Papelera se está vaciando
+- **THEN** la petición falla con `recycle_bin_empty_in_progress`, no se crea ningún escaneo y el vaciado termina normalmente
 
 ### Requirement: Cancelación de un escaneo
 El usuario SHALL poder cancelar el escaneo en curso; el recorrido MUST detenerse en el próximo archivo o carpeta, el escaneo MUST quedar `cancelled` y sus hallazgos parciales MUST descartarse. Cancelar un escaneo que no está en curso MUST fallar con `scan_not_found`.

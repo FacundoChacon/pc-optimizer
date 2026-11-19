@@ -5,6 +5,7 @@ use serde::{Serialize, Serializer};
 
 use crate::adapters::sqlite::state::RecoveryError;
 use crate::domain::ports::StoreError;
+use crate::domain::privileges::MismatchReason;
 use crate::domain::settings::{SettingsError, SettingsServiceError};
 
 /// Error de aplicacion devuelto por los comandos IPC.
@@ -66,6 +67,30 @@ pub enum AppError {
     /// El preview no tiene ningun item para mover.
     #[error("there is nothing to clean")]
     NothingToClean,
+    /// La solicitud de vaciado no existe, fue reemplazada, ya se uso o el token no corresponde.
+    #[error("recycle bin empty request not found")]
+    EmptyRequestNotFound,
+    /// La solicitud de vaciado supero su tiempo de vida (2 minutos).
+    #[error("recycle bin empty request expired")]
+    EmptyRequestExpired,
+    /// Falta la primera confirmacion del vaciado.
+    #[error("recycle bin empty request not acknowledged")]
+    EmptyNotAcknowledged,
+    /// La Papelera cambio desde que se midio: no se vacio nada.
+    #[error("the recycle bin changed since it was measured")]
+    RecycleBinChanged,
+    /// No hay nada que vaciar.
+    #[error("the recycle bin is already empty")]
+    RecycleBinAlreadyEmpty,
+    /// La Papelera es por-usuario y la sesion no es la del token (`different_user` / `undetermined`).
+    #[error("the recycle bin is blocked: {}", .0.as_str())]
+    RecycleBinBlocked(MismatchReason),
+    /// No se pudo resolver el volumen del sistema o medir la Papelera.
+    #[error("the recycle bin is unavailable")]
+    RecycleBinUnavailable,
+    /// Ya hay un vaciado en curso.
+    #[error("a recycle bin empty is already in progress")]
+    RecycleBinEmptyInProgress,
 }
 
 impl From<SettingsServiceError> for AppError {
@@ -131,6 +156,14 @@ impl AppError {
             Self::ScanAlreadyCleaned => "scan_already_cleaned",
             Self::CleanupInProgress => "cleanup_in_progress",
             Self::NothingToClean => "nothing_to_clean",
+            Self::EmptyRequestNotFound => "empty_request_not_found",
+            Self::EmptyRequestExpired => "empty_request_expired",
+            Self::EmptyNotAcknowledged => "empty_not_acknowledged",
+            Self::RecycleBinChanged => "recycle_bin_changed",
+            Self::RecycleBinAlreadyEmpty => "recycle_bin_already_empty",
+            Self::RecycleBinBlocked(_) => "recycle_bin_blocked",
+            Self::RecycleBinUnavailable => "recycle_bin_unavailable",
+            Self::RecycleBinEmptyInProgress => "recycle_bin_empty_in_progress",
         }
     }
 }
@@ -279,6 +312,51 @@ mod tests {
             let message = value["message"].as_str().unwrap();
             assert!(!message.is_empty(), "{kind}");
             assert!(!message.contains(char::from(0x5c)), "{kind}: {message}");
+        }
+    }
+
+    #[test]
+    fn recycle_bin_empty_errors_should_serialize_with_stable_kinds_and_a_plain_message() {
+        let cases = [
+            (AppError::EmptyRequestNotFound, "empty_request_not_found"),
+            (AppError::EmptyRequestExpired, "empty_request_expired"),
+            (AppError::EmptyNotAcknowledged, "empty_not_acknowledged"),
+            (AppError::RecycleBinChanged, "recycle_bin_changed"),
+            (
+                AppError::RecycleBinAlreadyEmpty,
+                "recycle_bin_already_empty",
+            ),
+            (
+                AppError::RecycleBinBlocked(MismatchReason::DifferentUser),
+                "recycle_bin_blocked",
+            ),
+            (AppError::RecycleBinUnavailable, "recycle_bin_unavailable"),
+            (
+                AppError::RecycleBinEmptyInProgress,
+                "recycle_bin_empty_in_progress",
+            ),
+        ];
+        for (error, kind) in cases {
+            let value = serde_json::to_value(&error).unwrap();
+            assert_eq!(value["kind"], kind);
+            let message = value["message"].as_str().unwrap();
+            assert!(!message.is_empty(), "{kind}");
+            assert!(!message.contains(char::from(0x5c)), "{kind}: {message}");
+            assert!(
+                !message.contains(':') || kind == "recycle_bin_blocked",
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn recycle_bin_blocked_should_carry_the_mismatch_reason_in_its_message() {
+        for (reason, code) in [
+            (MismatchReason::DifferentUser, "different_user"),
+            (MismatchReason::Undetermined, "undetermined"),
+        ] {
+            let value = serde_json::to_value(AppError::RecycleBinBlocked(reason)).unwrap();
+            assert!(value["message"].as_str().unwrap().ends_with(code));
         }
     }
 

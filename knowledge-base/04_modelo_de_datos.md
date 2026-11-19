@@ -83,6 +83,7 @@ erDiagram
 - `id`, `ts`, `category`, `path`, `size_bytes`, `outcome` (`moved_to_trash`, `skipped_locked`, `skipped_protected`, `skipped_cloud`, `error`, `recycle_bin_emptied`), `scan_id` FK nullable, `error_detail` nullable.
 - `error_detail` es un código estable en ASCII `snake_case` (sin rutas ni texto localizado) para todo outcome distinto de `moved_to_trash`; la tabla de códigos está en KB 11 §Registro (C-09).
 - "Escaneo limpiado" es un estado derivado del log, sin columnas nuevas: un escaneo está limpiado si existe una entrada con su `scan_id` y `ts` en o después de su `finished_at`.
+- Fila de vaciado de la Papelera (C-10): una por vaciado pedido al shell, `category = recycle_bin`, `path` = raíz del volumen (`C:\`), `size_bytes` = liberado, `outcome` `recycle_bin_emptied` (con `error_detail` `partial` o `unverified` si corresponde) o `error` (código del fallo), `scan_id` **nulo** (así no marca ningún escaneo como limpiado). Sin migración.
 - Append-only (sin UPDATE/DELETE desde la app). Índice `(ts)`.
 - Retención: **Suposición:** indefinida (es auditoría; volumen bajo). Purga manual en Configuración.
 

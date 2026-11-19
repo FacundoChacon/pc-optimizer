@@ -2,16 +2,19 @@ import { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  acknowledgeEmptyRecycleBin,
   type CleanupEvent,
   cancelCleanup,
   cancelScan,
   confirmCleanup,
+  emptyRecycleBin,
   getAppInfo,
   getLastJunkScan,
   getPrivilegeContext,
   getSettings,
   getStoreStatus,
   listJunkFindings,
+  prepareEmptyRecycleBin,
   previewCleanup,
   recoverStore,
   type ScanEvent,
@@ -681,5 +684,123 @@ describe("limpieza: confirmCleanup y cancelCleanup", () => {
       throw { kind: "preview_not_found", message: "cleanup preview not found" };
     });
     await expect(cancelCleanup(3)).rejects.toMatchObject({ kind: "preview_not_found" });
+  });
+});
+
+describe("vaciado de la Papelera: prepare / acknowledge / empty", () => {
+  afterEach(() => {
+    clearMocks();
+  });
+
+  const request = {
+    requestId: 1,
+    itemCount: 12,
+    sizeBytes: 340_000_000,
+    createdAt: 1_800_000_000_000,
+    expiresAt: 1_800_000_120_000,
+  };
+  const ack = {
+    requestId: 1,
+    confirmToken: 4_294_967_296,
+    itemCount: 12,
+    sizeBytes: 340_000_000,
+    expiresAt: 1_800_000_120_000,
+  };
+  const result = {
+    status: "emptied",
+    itemsBefore: 12,
+    bytesBefore: 340_000_000,
+    itemsAfter: 0,
+    bytesAfter: 0,
+    freedBytes: 340_000_000,
+    detail: null,
+    logged: true,
+    finishedAt: 1_800_000_001_000,
+  };
+
+  function answer(value: unknown): { calls: Array<{ cmd: string; args: unknown }> } {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args });
+      return value;
+    });
+    return { calls };
+  }
+
+  it("prepareEmptyRecycleBin decodifica la solicitud sin enviar argumentos", async () => {
+    const { calls } = answer(request);
+    await expect(prepareEmptyRecycleBin()).resolves.toEqual(request);
+    expect(calls).toEqual([{ cmd: "prepare_empty_recycle_bin", args: {} }]);
+  });
+
+  it("acknowledgeEmptyRecycleBin envia solo requestId y decodifica el token", async () => {
+    const { calls } = answer(ack);
+    await expect(acknowledgeEmptyRecycleBin(1)).resolves.toEqual(ack);
+    expect(calls).toEqual([{ cmd: "acknowledge_empty_recycle_bin", args: { requestId: 1 } }]);
+  });
+
+  it("emptyRecycleBin envia requestId y confirmToken (nunca una raiz ni una ruta)", async () => {
+    const { calls } = answer(result);
+    await expect(emptyRecycleBin(1, 4_294_967_296)).resolves.toEqual(result);
+    expect(calls).toEqual([
+      { cmd: "empty_recycle_bin", args: { requestId: 1, confirmToken: 4_294_967_296 } },
+    ]);
+  });
+
+  it("emptyRecycleBin acepta los cuatro estados y una medicion posterior nula", async () => {
+    for (const status of ["emptied", "partial", "failed", "unverified"] as const) {
+      answer({ ...result, status });
+      await expect(emptyRecycleBin(1, 2)).resolves.toMatchObject({ status });
+    }
+    answer({ ...result, status: "unverified", itemsAfter: null, bytesAfter: null, detail: "unverified" });
+    await expect(emptyRecycleBin(1, 2)).resolves.toMatchObject({ itemsAfter: null, bytesAfter: null });
+  });
+
+  it("rechaza respuestas con campo faltante, tipo erroneo o numero inseguro", async () => {
+    const { requestId: _omit, ...missing } = request;
+    const bad: unknown[] = [
+      missing,
+      { ...request, itemCount: "12" },
+      { ...request, sizeBytes: -1 },
+      { ...request, requestId: Number.MAX_SAFE_INTEGER + 1 },
+      { ...request, expiresAt: 1.5 },
+      null,
+      "texto",
+    ];
+    for (const value of bad) {
+      answer(value);
+      await expect(prepareEmptyRecycleBin()).rejects.toMatchObject({ kind: "invalid_response" });
+    }
+    for (const value of [{ ...ack, confirmToken: null }, { ...ack, confirmToken: 2 ** 60 }, {}]) {
+      answer(value);
+      await expect(acknowledgeEmptyRecycleBin(1)).rejects.toMatchObject({ kind: "invalid_response" });
+    }
+  });
+
+  it("rechaza resultados con estado desconocido, detalle invalido o medicion posterior a medias", async () => {
+    const bad: unknown[] = [
+      { ...result, status: "done" },
+      { ...result, detail: "Texto con espacios" },
+      { ...result, detail: 5 },
+      { ...result, logged: "yes" },
+      { ...result, itemsAfter: 0, bytesAfter: null },
+      { ...result, itemsAfter: null, bytesAfter: 0 },
+      { ...result, freedBytes: 2 ** 60 },
+      { ...result, finishedAt: undefined },
+    ];
+    for (const value of bad) {
+      answer(value);
+      await expect(emptyRecycleBin(1, 2)).rejects.toMatchObject({ kind: "invalid_response" });
+    }
+  });
+
+  it("propaga el error tipado del backend sin tocarlo", async () => {
+    mockIPC(() => {
+      throw { kind: "recycle_bin_changed", message: "changed" };
+    });
+    await expect(emptyRecycleBin(1, 2)).rejects.toEqual({
+      kind: "recycle_bin_changed",
+      message: "changed",
+    });
   });
 });

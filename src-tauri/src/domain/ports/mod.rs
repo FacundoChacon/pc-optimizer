@@ -6,6 +6,7 @@ pub mod clock;
 pub mod error;
 pub mod fs;
 pub mod recycle_bin;
+pub mod recycle_bin_empty;
 pub mod recycle_bin_policy;
 pub mod sensors;
 pub mod session;
@@ -23,6 +24,7 @@ pub use clock::Clock;
 pub use error::PortError;
 pub use fs::{AncestorPin, DirEntry, EntryKind, FileIdentity, FileMeta, FileSystem};
 pub use recycle_bin::{RecycleBinInfo, RecycleBinUsage};
+pub use recycle_bin_empty::{EmptyError, RecycleBinEmptier};
 pub use recycle_bin_policy::{
     BinAvailability, DisabledReason, RawBinPolicy, RecycleBinPolicy, check_for_move, check_move,
     evaluate_policy,

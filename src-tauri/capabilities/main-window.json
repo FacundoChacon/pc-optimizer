@@ -17,6 +17,9 @@
     "allow-list-junk-findings",
     "allow-preview-cleanup",
     "allow-confirm-cleanup",
-    "allow-cancel-cleanup"
+    "allow-cancel-cleanup",
+    "allow-prepare-empty-recycle-bin",
+    "allow-acknowledge-empty-recycle-bin",
+    "allow-empty-recycle-bin"
   ]
 }

@@ -29,6 +29,7 @@ pub fn app_builder<R: tauri::Runtime>(
         .manage(commands::scan::ActiveJob::default())
         .manage(commands::scan::ScanEnvironment::default())
         .manage(commands::cleanup::CleanupPreviews::default())
+        .manage(commands::recycle_bin::EmptyRequests::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
             commands::settings::get_settings,
@@ -42,7 +43,10 @@ pub fn app_builder<R: tauri::Runtime>(
             commands::scan::list_junk_findings,
             commands::cleanup::preview_cleanup,
             commands::cleanup::confirm_cleanup,
-            commands::cleanup::cancel_cleanup
+            commands::cleanup::cancel_cleanup,
+            commands::recycle_bin::prepare_empty_recycle_bin,
+            commands::recycle_bin::acknowledge_empty_recycle_bin,
+            commands::recycle_bin::empty_recycle_bin
         ])
 }
 
@@ -335,6 +339,87 @@ mod tests {
         assert_eq!(not_running["kind"], "preview_not_found");
         let last = invoke(&window, "get_last_junk_scan", serde_json::json!({}));
         assert_eq!(last, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn empty_commands_should_answer_their_error_cases_over_ipc_without_touching_the_bin() {
+        use domain::privileges::{MismatchReason, UserMatch};
+
+        // Sin solicitud previa: ni el segundo ni el tercer paso llegan al shell.
+        let dir = tempfile::TempDir::new().unwrap();
+        let window = window_for_scans(dir.path());
+        let ack = invoke_error(
+            &window,
+            "acknowledge_empty_recycle_bin",
+            serde_json::json!({"requestId": 1}),
+        );
+        assert_eq!(ack["kind"], "empty_request_not_found");
+        let empty = invoke_error(
+            &window,
+            "empty_recycle_bin",
+            serde_json::json!({"requestId": 1, "confirmToken": 4_294_967_296_u64}),
+        );
+        assert_eq!(empty["kind"], "empty_request_not_found");
+        let invalid = invoke_error(
+            &window,
+            "empty_recycle_bin",
+            serde_json::json!({"requestId": -1, "confirmToken": 1}),
+        );
+        assert_eq!(invalid["kind"], "invalid_argument");
+
+        // En mismatch los tres pasos se bloquean antes de medir o tocar nada.
+        let blocked_dir = tempfile::TempDir::new().unwrap();
+        let app = mock_app();
+        manage_store(&app, Some(blocked_dir.path()));
+        manage_privileges(
+            &app,
+            PrivilegeContext::new(UserMatch::Mismatch(MismatchReason::DifferentUser), true),
+        );
+        let blocked = WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        std::mem::forget(app);
+        for (cmd, body) in [
+            ("prepare_empty_recycle_bin", serde_json::json!({})),
+            (
+                "acknowledge_empty_recycle_bin",
+                serde_json::json!({"requestId": 1}),
+            ),
+            (
+                "empty_recycle_bin",
+                serde_json::json!({"requestId": 1, "confirmToken": 1}),
+            ),
+        ] {
+            let error = invoke_error(&blocked, cmd, body);
+            assert_eq!(error["kind"], "recycle_bin_blocked", "{cmd}");
+            assert!(
+                error["message"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("different_user"),
+                "{cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_commands_should_fail_on_a_corrupt_store_before_doing_anything() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("data.db"), b"basura".repeat(200)).unwrap();
+        let window = window_for_scans(dir.path());
+        for (cmd, body) in [
+            ("prepare_empty_recycle_bin", serde_json::json!({})),
+            (
+                "empty_recycle_bin",
+                serde_json::json!({"requestId": 1, "confirmToken": 1}),
+            ),
+        ] {
+            assert_eq!(
+                invoke_error(&window, cmd, body)["kind"],
+                "store_corrupt",
+                "{cmd}"
+            );
+        }
     }
 
     #[test]

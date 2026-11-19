@@ -95,6 +95,10 @@ sequenceDiagram
 - Abortos (no se sigue moviendo; lo ya movido queda en la Papelera y registrado): Papelera no disponible en el volumen (`recycle_bin_unavailable`), mecanismo de Papelera inutilizable (`trash_unavailable`) o no se puede escribir el log (`log_unavailable`).
 - Archivo escrito hace menos de 24 h, o distinto de lo escaneado (tamaño o fecha por handle) → `skipped_locked` con detalle (`recently_modified` / `changed_since_scan`).
 
+### Variante: vaciar la Papelera (C-10, RN-LIM-06)
+
+Botón "Vaciar Papelera…" en la tarjeta de la Papelera y en el resumen de la limpieza (no en mismatch). Preparar (mide) → diálogo 1 "Continuar" (reconocer) → diálogo 2 con casilla obligatoria → "Eliminar para siempre" (vaciar con token). El backend rechaza toda llamada fuera de orden, vencida (2 min) o si la Papelera cambió (`recycle_bin_changed`: se vuelve al paso 1). Resultado por medición posterior (`emptied`, `partial`, `failed`, `unverified`) y una fila en `cleanup_log`.
+
 ## Flujo 3: Aplicar mejora → snapshot → undo
 
 **Disparador**: el usuario pulsa "Aplicar" en una mejora.

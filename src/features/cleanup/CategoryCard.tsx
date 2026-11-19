@@ -12,10 +12,12 @@ interface CategoryCardProps {
   summary: CategorySummary;
   scanId: number;
   advanced: boolean;
+  /** Solo la Papelera: "Vaciar Papelera…". `undefined` = no se ofrece (mismatch, sin elementos, trabajo en curso). */
+  onEmptyBin?: (() => void) | undefined;
 }
 
 /** Una categoria: estado (icono + texto), tamano y, en modo avanzado, sus rutas. */
-export function CategoryCard({ summary, scanId, advanced }: CategoryCardProps) {
+export function CategoryCard({ summary, scanId, advanced, onEmptyBin }: CategoryCardProps) {
   const [showPaths, setShowPaths] = useState(false);
   const text = categoryStatusText(summary);
   const isBin = summary.category === "recycle_bin";
@@ -29,6 +31,11 @@ export function CategoryCard({ summary, scanId, advanced }: CategoryCardProps) {
         <p className="text-content-muted">
           {format(es.cleanup.recycleBinItems, { count: String(summary.itemCount) })}
         </p>
+      )}
+      {isBin && onEmptyBin !== undefined && (
+        <div>
+          <Button onClick={onEmptyBin}>{es.recycleBin.emptyAction}</Button>
+        </div>
       )}
       {text.showSize && !isBin && advanced && (
         <p className="text-content-muted">

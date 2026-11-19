@@ -783,3 +783,37 @@ pub(crate) fn contract_scan_cleaned_at_ignores_other_scans_and_older_entries<S: 
         Some(EpochMillis(5_000))
     );
 }
+
+/// C-10 D-09: la fila de un vaciado (`scan_id` nulo) se lee igual y no marca ningun escaneo como
+/// limpiado; una entrada de limpieza del mismo escaneo si.
+pub(crate) fn contract_empty_bin_entry_does_not_mark_the_scan_as_cleaned<S: Store>(
+    make: impl Fn() -> S,
+) {
+    let store = make();
+    let scan = create_done_scan(&store, 1_000).unwrap();
+    let since = EpochMillis(1_001);
+    let emptied = NewCleanupLogEntry {
+        ts: EpochMillis(1_500),
+        category: "recycle_bin".into(),
+        path: r"C:\".into(),
+        size_bytes: 340_000_000,
+        outcome: CleanupOutcome::RecycleBinEmptied,
+        scan_id: None,
+        error_detail: Some("partial".into()),
+    };
+    store
+        .append_cleanup_log(std::slice::from_ref(&emptied))
+        .unwrap();
+    assert_eq!(store.scan_cleaned_at(scan, since).unwrap(), None);
+    let log = store.recent_cleanup_log(10).unwrap();
+    assert_eq!(log.len(), 1);
+    assert!(same_content(&emptied, &log[0]));
+
+    store
+        .append_cleanup_log(&[log_entry(1_600, r"C:\t\a", Some(scan))])
+        .unwrap();
+    assert_eq!(
+        store.scan_cleaned_at(scan, since).unwrap(),
+        Some(EpochMillis(1_600))
+    );
+}
