@@ -312,3 +312,43 @@ Comandos: `npx vitest run <ruta> --maxWorkers=2`.
 | Vitest | 680 (39 archivos) | 713 (43 archivos) |
 | `typecheck`, `build`, `cargo fmt --check`, `clippy -D warnings` | verdes | verdes |
 | `package-lock.json`, `Cargo.lock`, `tauri.conf.json` | - | sin cambios |
+
+### Seguimiento de D-10 (2026-11-19)
+
+Con el benchmark de 2.4 (64 ms en release / 108 ms en debug por página de limpiezas sobre 100 000 filas) el dueño decidió **mantener D-10 A (sin migración ni índice)**.
+
+### Grupos 5-9 (Frontend): navegación, pedido de preview, Inicio, Historial y revisión UX
+
+Comandos: `npx vitest run <ruta> --maxWorkers=2`. Los RED de "pantalla nueva" fallan por el símbolo o el texto inexistente.
+
+- **5.1 RED** (`src/tests/history/navigation.test.tsx`): `AssertionError: expected [ 'home', 'disk', 'cleanup', ...(3) ] to deeply equal [ 'home', 'disk', 'cleanup', ...(4) ]` (6 entradas en lugar de 7). GREEN: entrada `history` en `navigation.ts` con un `HistoryScreen` mínimo (reemplazado en 8.1). Los conteos de `providers`, `shell`, `disk/navigation`, `monitor/navigation` y `duplicatesScreen` se actualizaron mecánicamente a 7 entradas.
+- **5.2 RED** (`src/tests/app/navigationFocus.test.tsx`): `expect(element).not.toHaveFocus()` con `focus: "none"` (el proveedor igual enfocaba `<main>`). GREEN: `navigate(id, { focus })`. TRIANGULATE: sin opciones y `focus: "main"` siguen enfocando `<main>`.
+- **5.3 RED** (`src/tests/dashboard/cleanNowPlan.test.ts`): `Failed to resolve import "../../features/dashboard/cleanNowPlan"`. GREEN: `cleanNowPlan` y `hasEligibleItems` (CleanupScreen reutiliza `hasEligibleItems`). TRIANGULATE: sin escaneo, cancelado, `cleanedAt`, bloqueadas/no disponibles/0 ítems/solo Papelera, 59 min 59 s -> preview, 60 min y 2 h -> scan_then_preview, `startedAt` cuando `finishedAt` es nulo.
+- **5.4 RED** (`src/tests/dashboard/cleanNowRequest.test.tsx`): `TypeError: useCleanNow is not a function` (8 tests). GREEN: `useCleanNowRequest.ts` (pedido de sesión `request/consume/drop`) y `useCleanNow` en `CleanupProvider`; `CleanupScreen` consume el pedido al montar (`preview` -> `cleaning.open()`; `scan_then_preview` -> `start()` y, al terminar con un escaneo nuevo `done` y elegibles, abre el preview; sin elegibles anuncia `es.cleanup.cleanNowNothing`); al desmontar descarta el pedido y la espera; `CleanupPreviewDialog.fallbackFocus` devuelve el foco a "Limpiar" o al `h1` (ahora con `tabIndex=-1`) si el elemento previo ya no existe. TRIANGULATE: Esc -> foco en "Limpiar" y 0 `confirm_cleanup`; sin botón Limpiar -> foco en el encabezado; sin elegibles, cancelada y con error -> sin diálogo; salir antes de terminar -> sin diálogo al volver. Los tests de `src/tests/cleanup` pasan sin cambios.
+- **6.1 RED** (`cardState.test.ts`): `Failed to resolve import "../../features/dashboard/cardState"`. GREEN: `spaceCardState`, `memoryCardState`, `junkCardState` puros. TRIANGULATE (17 tests): respaldo de disco con fecha y sin nivel, sin ambos -> no disponible con código, análisis cancelado o sin volumen no sirve, cargando, `stale`, `warming_up`, `source_error`, sin escaneo, `store_unavailable`, ya limpiado, Papelera aparte, `old_logs` no cuenta como limpiable.
+- **6.2**: `Missing`, `MetricLine` y `SpaceLine` pasan de `MonitorTiles.tsx` a `MetricLines.tsx` sin cambio de comportamiento; `src/tests/monitor` 47 tests antes y después. Inicio reutiliza `LevelBadge`, `levelPhrase`, `levelText`, `spaceLevelText` y `MeterList`.
+- **6.3 RED** (`homeSimple.test.tsx`, escrito antes del `HomeScreen`): 15 de 15 fallan (`Unable to find role="region" name "Espacio"`), incluida la parte "Inicio exactamente un primario" de 9.1 (el Inicio vacío no tenía ninguno). GREEN: `HomeScreen`, `HomeCard`, `SpaceCard`, `JunkCard`, `MemoryCard`, `CleanNowAction`. Se retiran `es.home.emptyTitle/emptyBody` y se actualiza `App.test.tsx`. Lección: la fixture del monitor necesita bytes enteros (un decimal hace que el decodificador devuelva `invalid_response`).
+- **6.4 RED** (`homeBusy.test.tsx`): `Failed to resolve import "../../features/dashboard/homeBusy"`. GREEN: `busyTask` puro y `CleanNowAction` deshabilitado con motivo (`aria-describedby` = ayuda + motivo). TRIANGULATE: tabla de los seis trabajos y su orden, búsqueda de duplicados, búsqueda de basura (se rehabilita al terminar), base no disponible, `mismatch` habilitado. Limpieza, vaciado, análisis de disco y limpieza de duplicados se cubren con la tabla de `busyTask` (los flags vienen de los proveedores).
+- **7.1/7.2/7.3 RED** (`homeAdvanced.test.tsx`, 16 de 19 fallan antes del código): `Unable to find role="list" name "Procesador y memoria..."`, `Unable to find an element with the text ...`. GREEN: `AdvancedSystem` (`MeterList` + `TimeSeriesChart` de 2 series con los tonos `primary`/`secondary` ya validados en C-06 con `--color-series-2`, leyenda, eje de 5 min, sin `style`; skill `dataviz` aplicada reutilizando el componente validado), `JunkTable`, `DiskSummaryBlock`, `RecentCleanups` (`useCleanupRuns(3)`). En el test: una categoría `partial` exige `blockReason` y `scope: per_user`, y "Basura" es el nombre de región tanto de la tarjeta simple como de la tabla avanzada, así que la alternancia se verifica con "Sistema".
+- **8.1/8.2 RED** (`historyScreen.test.tsx`, 11 de 11 fallan con el `HistoryScreen` mínimo): `Unable to find an element with the text: Todavía no limpiaste nada...`, `Unable to find role="button" and name "Ver archivos"`. GREEN: `useCleanupRuns` (páginas de 20), `useRunEntries` (100 por página), `RunList`, `RunEntries`, `HistoryScreen`. Se corrige la fixture `historyEntry` (la ruta tenía escapes `\U`, `\a` interpretados) y su aserto en `history/ipc.test.ts`.
+- **9.1** (`src/tests/app/primaryAction.test.tsx`, 8 tests): todas las pantallas, simple y avanzado, backend vacío y con resultados, a lo sumo un primario visible; Inicio exactamente uno ("Limpiar ahora"). Sin RED propio por ser test de regresión (la parte de Inicio ya había fallado en 6.3). Ninguna pantalla existente viola la regla: no hubo que detenerse.
+
+### Revisión UX (tarea 9.2, skill `ux-ui-revisor`, solo lectura)
+
+Limitación: la auditoría se hizo sobre el código, el catálogo y los tests (no se lanzó la app real; el smoke guiado del grupo 10 cubre lo visual). Resumen: Inicio e Historial tienen jerarquía clara, una sola CTA en Inicio y ninguna en Historial, estados no disponibles explícitos y teclado completo; sin hallazgos críticos.
+
+Corregidos (RED anotado):
+1. **Alta - foco perdido al pulsar "Limpiar ahora" con búsqueda previa** (`CleanupScreen`): el botón de Inicio se desmonta y la navegación no mueve el foco, así que el teclado quedaba en `<body>` durante toda la búsqueda (WCAG 2.4.3). RED: `expect(heading "Limpieza").toHaveFocus()` fallaba en `cleanNowRequest.test.tsx`. Fix: tras iniciar la búsqueda el foco va al `h1` de Limpieza.
+2. **Media - varios "Ver archivos" idénticos en el Historial avanzado** (`RunList`): el nombre accesible no distingue la limpieza (WCAG 2.4.6). RED: `toHaveAccessibleDescription(fecha + frase)` fallaba en `historyScreen.test.tsx`. Fix: `aria-describedby` apunta a la fecha y la frase de cada limpieza.
+
+Diferidos:
+3. Media: en avanzado, "Sin datos recientes" solo aparece en el bloque Sistema; `MeterList` no lo marca (compartido con Monitor de C-06; conviene tratarlo en un change de monitor).
+4. Baja: la tabla de basura de Inicio avanzado tiene 6 columnas con códigos; a 960 px depende de `overflow-x-auto`. Verificar a ojo en el smoke.
+5. Baja: "Ver detalle" es un botón secundario (no un enlace); coherente con el resto de la app, pero compite visualmente con "Limpiar ahora" en anchos angostos. Revisar en el smoke.
+6. Baja: la tarjeta Espacio con respaldo del análisis de disco no muestra nivel "casi lleno" (D-05, a propósito).
+
+Descartados por ser gusto: tamaño del texto de las cifras y orden de las tarjetas (fijado por D-01).
+
+### Conteos al cerrar la Parte 2 (grupos 5-9)
+
+- Vitest: 819 tests en 53 archivos (Parte 1: 713 en 43); `typecheck` y `build` verdes; `package-lock.json` sin cambios. Sin cambios en Rust en esta parte. Un test de `settings.test.tsx` (flujo de recuperación) falló una vez con todos los hilos y pasa solo y con `--maxWorkers=2` (flaky conocido por carga).
