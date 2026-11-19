@@ -49,10 +49,10 @@
 
 ## 8. CI en GitHub: verde y demostración en rojo (D-15, D-19; requiere autorización del dueño)
 
-- [ ] 8.1 Con autorización del dueño: push de `feat/packaging-and-release-pipeline` y PR contra `main` (descripción con el resumen del change). Verificación: los 4 jobs en verde; URL de la ejecución, duración por job, tamaño del artefacto y resultado de `cargo audit` anotados. Si `cargo audit` reporta vulnerabilidades o un test falla solo en el runner (D-19), DETENER y volver al dueño con la causa raíz y las opciones; ninguna excepción sin su aprobación.
-- [ ] 8.2 Con autorización del dueño: rama `ci-gate/failing-test` desde la del change con un test que falla a propósito → PR **borrador** contra `feat/packaging-and-release-pipeline`. Verificación: job `rust` en rojo en el paso de la suite; URL, paso y mensaje anotados.
-- [ ] 8.3 Con autorización del dueño: rama `ci-gate/network-crate` con `ureq` agregado a `src-tauri/Cargo.toml` y `Cargo.lock` actualizado → PR **borrador**. Verificación: el paso "Auditoría de crates de red" en rojo nombrando `ureq`; URL, paso y mensaje anotados.
-- [ ] 8.4 Cerrar ambos PRs sin fusionar y borrar las ramas `ci-gate/*` remotas y locales (con autorización). Verificación: `git ls-remote --heads origin "ci-gate/*"` vacío; `git log feat/packaging-and-release-pipeline` sin los commits de demostración.
+- [x] 8.1 Con autorización del dueño: push de `feat/packaging-and-release-pipeline` y PR contra `main` (descripción con el resumen del change). Verificación: los 4 jobs en verde; URL de la ejecución, duración por job, tamaño del artefacto y resultado de `cargo audit` anotados. Si `cargo audit` reporta vulnerabilidades o un test falla solo en el runner (D-19), DETENER y volver al dueño con la causa raíz y las opciones; ninguna excepción sin su aprobación.
+- [x] 8.2 Con autorización del dueño: rama `ci-gate/failing-test` desde la del change con un test que falla a propósito → PR **borrador** contra `feat/packaging-and-release-pipeline`. Verificación: job `rust` en rojo en el paso de la suite; URL, paso y mensaje anotados.
+- [x] 8.3 Con autorización del dueño: rama `ci-gate/network-crate` con `ureq` agregado a `src-tauri/Cargo.toml` y `Cargo.lock` actualizado → PR **borrador**. Verificación: el paso "Auditoría de crates de red" en rojo nombrando `ureq`; URL, paso y mensaje anotados.
+- [x] 8.4 Cerrar ambos PRs sin fusionar y borrar las ramas `ci-gate/*` remotas y locales (con autorización). Verificación: `git ls-remote --heads origin "ci-gate/*"` vacío; `git log feat/packaging-and-release-pipeline` sin los commits de demostración.
 
 ## 9. Smoke guiado del instalador en Windows 11 (D-03, D-05, D-20, D-21, D-22)
 
