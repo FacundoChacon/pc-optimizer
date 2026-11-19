@@ -176,8 +176,11 @@ jobs:
       - name: Dependencias
         run: npm ci
 
+      # La caché de target/ puede traer instaladores de versiones anteriores: se borran para que quede uno solo.
       - name: Instalador NSIS
-        run: npm run tauri build -- --ci
+        run: |
+          rm -rf src-tauri/target/release/bundle
+          npm run tauri build -- --ci
 
       # El nombre generado lleva un espacio ("PC Optimizer_..."); GitHub lo cambiaria por un punto y la suma dejaria de coincidir.
       - name: Preparar el instalador y las sumas

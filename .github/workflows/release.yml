@@ -44,10 +44,20 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
+          status=0
+          response="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" 2>&1)" || status=$?
+          if [ "$status" -eq 0 ]; then
             echo "El tag v$VERSION ya existe" >&2
             exit 1
           fi
+          # Solo un 404 significa "tag libre"; cualquier otro error (red, permisos, límite) no puede tomarse por eso.
+          case "$response" in
+            *"HTTP 404"*) ;;
+            *)
+              echo "No se pudo comprobar el tag v$VERSION: $response" >&2
+              exit 1
+              ;;
+          esac
           test -f ".github/release-notes/v$VERSION.md" || { echo "Faltan las notas .github/release-notes/v$VERSION.md" >&2; exit 1; }
 
   ci:
@@ -79,6 +89,7 @@ jobs:
 
       # Tag por API sobre el commit construido (sin credenciales de git en disco); el borrador no crea el tag por si solo.
       - name: Tag sobre el commit construido
+        id: tag
         run: gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$GITHUB_SHA"
 
       - name: Release en borrador
@@ -88,3 +99,8 @@ jobs:
             --notes-file ".github/release-notes/v$VERSION.md" \
             "release-assets/PC-Optimizer_${VERSION}_x64-setup.exe" \
             "release-assets/SHA256SUMS.txt"
+
+      # Si el release falla después de crear el tag, se borra ese tag (solo si lo creó este run) para poder reintentar.
+      - name: Deshacer el tag si el release falló
+        if: failure() && steps.tag.outcome == 'success'
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/v$VERSION"
