@@ -56,9 +56,19 @@
   "bundle": {
     "active": true,
     "targets": [
-      "nsis",
-      "msi"
+      "nsis"
     ],
+    "publisher": "PC Optimizer",
+    "shortDescription": "Análisis y limpieza segura de Windows",
+    "copyright": "Copyright (c) 2026 FacundoChacon. Licencia MIT.",
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": [
+          "Spanish"
+        ]
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

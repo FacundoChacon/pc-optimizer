@@ -8,6 +8,27 @@ use pe_manifest::read_manifest;
 /// Literal presente en el binario de este test fuera de su recurso de manifest.
 const TEXT_OUTSIDE_RESOURCE: &str = "requireAdministrator";
 
+/// Variable con la ruta del ejecutable empaquetado o instalado que se inspecciona (D-06).
+const EXE_UNDER_TEST_VAR: &str = "PCOPT_EXE_UNDER_TEST";
+
+/// Ruta a inspeccionar a partir del valor de la variable; nunca devuelve una ruta inexistente.
+fn resolve_exe_under_test(value: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let text = value
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| {
+            format!("falta {EXE_UNDER_TEST_VAR}: indica la ruta del ejecutable a inspeccionar")
+        })?;
+    let path = std::path::PathBuf::from(text);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "{EXE_UNDER_TEST_VAR} no apunta a un archivo existente: {text}"
+        ))
+    }
+}
+
 fn own_exe_bytes() -> Vec<u8> {
     let path = std::env::current_exe().expect("ruta del test");
     std::fs::read(path).expect("leer el propio ejecutable")
@@ -66,4 +87,59 @@ fn app_binary_should_match_build_profile_execution_level() {
     };
     assert_eq!(info.execution_level.as_deref(), Some(expected));
     assert!(info.common_controls_v6);
+}
+
+#[test]
+fn resolve_exe_under_test_should_fail_naming_the_variable_when_it_is_absent_or_empty() {
+    for value in [None, Some(""), Some("   ")] {
+        let error = resolve_exe_under_test(value).expect_err("sin variable no hay ruta");
+        assert!(error.contains("falta PCOPT_EXE_UNDER_TEST"), "{error}");
+    }
+}
+
+#[test]
+fn resolve_exe_under_test_should_fail_with_the_path_when_the_file_does_not_exist() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing = dir.path().join("no-existe.exe");
+    let text = missing.to_string_lossy().into_owned();
+    let error = resolve_exe_under_test(Some(&text)).expect_err("ruta inexistente");
+    assert!(error.contains(&text), "{error}");
+    assert!(error.contains("PCOPT_EXE_UNDER_TEST"), "{error}");
+}
+
+#[test]
+fn resolve_exe_under_test_should_fail_when_the_path_is_a_folder() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let text = dir.path().to_string_lossy().into_owned();
+    let error = resolve_exe_under_test(Some(&text)).expect_err("una carpeta no es un ejecutable");
+    assert!(error.contains(&text), "{error}");
+}
+
+#[test]
+fn resolve_exe_under_test_should_return_the_path_of_an_existing_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("pc-optimizer.exe");
+    std::fs::write(&file, b"MZ").expect("escribir");
+    let text = file.to_string_lossy().into_owned();
+    assert_eq!(resolve_exe_under_test(Some(&text)), Ok(file));
+}
+
+#[test]
+#[ignore = "requiere PCOPT_EXE_UNDER_TEST: ejecutable empaquetado o instalado"]
+fn packaged_app_should_require_administrator() {
+    let value = std::env::var(EXE_UNDER_TEST_VAR).ok();
+    let path = resolve_exe_under_test(value.as_deref()).unwrap_or_else(|error| panic!("{error}"));
+    let bytes = std::fs::read(&path).expect("leer el ejecutable a inspeccionar");
+    let info = read_manifest(&bytes).expect("manifest del ejecutable a inspeccionar");
+    assert_eq!(
+        info.execution_level.as_deref(),
+        Some("requireAdministrator"),
+        "{} no exige administrador",
+        path.display()
+    );
+    assert!(
+        info.common_controls_v6,
+        "{} sin Common Controls v6",
+        path.display()
+    );
 }
