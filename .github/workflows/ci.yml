@@ -114,13 +114,17 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
 
       - name: Caché de cargo-audit
+        id: cargo-audit-cache
         if: inputs.use_cache != 'false'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-audit.exe
           key: ${{ runner.os }}-cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ env.RUST_TOOLCHAIN }}
 
+      # La clave incluye la version: si el cache restauro el binario, ya es la version fijada.
+      # Sin esta condicion `cargo install` falla porque el cache no trae .crates.toml.
       - name: Instalar cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked --version "$CARGO_AUDIT_VERSION"
 
       # Desde src-tauri: ahi estan Cargo.lock y .cargo/audit.toml (excepciones versionadas y aprobadas por el dueño).

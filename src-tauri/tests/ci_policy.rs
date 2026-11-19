@@ -860,6 +860,31 @@ fn bundle_job_should_remove_stale_installers_before_building() {
 }
 
 #[test]
+fn audit_job_should_skip_installing_cargo_audit_when_the_cache_restored_it() {
+    // El cache restaura solo el binario (sin .crates.toml): un `cargo install` sin
+    // condicion falla con "binary `cargo-audit.exe` already exists".
+    let yaml = workflow("ci.yml");
+    let audit = yaml
+        .split("\n  audit:\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  bundle:\n").next())
+        .expect("falta el job audit");
+    assert!(
+        audit.contains("id: cargo-audit-cache"),
+        "el paso de cache de cargo-audit necesita id"
+    );
+    let install = audit
+        .split("- name: Instalar cargo-audit")
+        .nth(1)
+        .and_then(|rest| rest.split("- name:").next())
+        .expect("falta el paso Instalar cargo-audit");
+    assert!(
+        install.contains("if: steps.cargo-audit-cache.outputs.cache-hit != 'true'"),
+        "la instalacion debe saltarse cuando el cache restauro el binario"
+    );
+}
+
+#[test]
 fn release_preflight_should_tell_a_free_tag_from_an_api_failure() {
     let yaml = workflow("release.yml");
     let preflight = yaml
