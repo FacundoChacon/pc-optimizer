@@ -300,3 +300,64 @@ README.md                     # instalación, SmartScreen, UAC, datos, desinstal
 ## Apply notes
 
 <!-- Se completa durante el apply: línea base, evidencia RED, ejecuciones de CI (URLs), demostración en rojo, smoke y mediciones. -->
+
+### Apply 1 (grupos 1 a 7, local) — 2026-11-19
+
+Contexto: un apply anterior se interrumpió dejando trabajo sin commitear y sin anotar. Este apply lo revisó pieza por pieza, completó lo que faltaba (4.3, 5.x, 6.x, 7.x) y reprodujo RED donde fue honesto y barato. Donde no, queda escrito "RED no observado".
+
+#### 1.1 Línea base (tomada sobre el árbol con trabajo parcial: desvío; no hay línea base previa pura)
+
+| Comando | Resultado |
+|---|---|
+| `npm test` | 54 archivos, 838 tests verdes |
+| `npm run build` | verde |
+| `cargo test --locked` | lib 1198 ok / 25 ignorados; `architecture` 24; `manifest` 5 preexistentes (9 con los 4 nuevos de 3.1; 1 ignorado nuevo de 3.2); `no_network_crates` 9; `security_baseline` 22 (`ci_policy` y `release_config` del apply anterior ya presentes) |
+| `cargo fmt --check` / `cargo clippy --all-targets --all-features --locked -D warnings` | verdes |
+| `rustc --version` | rustc 1.100.0 (0ef1bc386 2026-11-09), fijada en CI como `RUST_TOOLCHAIN` |
+| `node --version` | v24.22.1 local (CI usa Node 22, cumple `engines >= 22.12.0`) |
+| `npm audit --audit-level=high` y `npm audit --omit=dev --audit-level=moderate` | 0 vulnerabilidades en ambos |
+
+#### 1.2 Hallazgos de fuente (solo lectura)
+
+| Tema | Fuente | Hallazgo |
+|---|---|---|
+| CLI | `node_modules/@tauri-apps/cli` | 2.12.4 |
+| Plantilla NSIS generada | `src-tauri/target/release/nsis/x64/installer.nsi` | `INSTALLMODE perMachine`, `MULTIUSER_EXECUTIONLEVEL Highest`, `INSTALLWEBVIEW2MODE downloadBootstrapper` (por defecto), `DISPLAYLANGUAGESELECTOR false`, idioma Spanish (`Spanish.nsh`), `COPYRIGHT` y `MANUFACTURER` tomados de `bundle` |
+| Nombre del instalador | build real | `PC Optimizer_0.1.0_x64-setup.exe` (con ESPACIO). GitHub cambia el espacio por un punto al adjuntar; el workflow lo copia como `PC-Optimizer_<versión>_x64-setup.exe` antes de calcular `SHA256SUMS.txt` |
+| `RunAsUser` (D-03) | `nsis_tauri_utils.dll` que descarga el CLI (`%LOCALAPPDATA%\tauri\NSIS\Plugins\x86-unicode\additional`), importaciones y símbolos | Usa `GetShellWindow` + `OpenProcessToken` + `DuplicateTokenEx` + `CreateProcessWithTokenW` (crea el proceso con el token del shell, SIN pasar por el shell) y también importa `ShellExecuteW`. La plantilla lo usa en el botón "Ejecutar" final (`RunMainBinary`). Con un manifest `requireAdministrator`, `CreateProcessWithTokenW` con token no elevado suele devolver 740 (`ERROR_ELEVATION_REQUIRED`). **D-03 probablemente termine en B1** (plantilla propia sin la opción "Ejecutar"). El análisis estático no confirma si `ShellExecuteW` es un respaldo; se decide en el smoke 9.2, paso 2 |
+| `cargo-audit` | crates.io (`max_stable_version`) | 0.23.0 (fijada en `CARGO_AUDIT_VERSION`). Lee `.cargo/audit.toml` relativo al directorio de ejecución; el job corre `cargo audit` con `working-directory: src-tauri`, donde están `Cargo.lock` y `.cargo/audit.toml` |
+| `actions/checkout` | `git ls-remote --tags` (etiqueta ligera, sin `^{}`: el SHA es el del commit) | v7.0.1 = `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `actions/setup-node` | idem | v7.1.0 = `949feb2413d6458794dcd2491c4babbbce0c15c1` |
+| `actions/cache` | idem | v6.1.0 = `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` |
+| `actions/upload-artifact` | idem | v7.0.2 = `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
+| `actions/download-artifact` | idem | v8.0.2 = `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
+
+Aviso para el orquestador: D-03 probable B1 (ver `RunAsUser`). No bloquea los grupos 1 a 7.
+
+#### 1.3 Decisiones registradas
+
+Diff de `CHANGES.md` y `knowledge-base/{02,08,09,10}` revisado: C-13 en curso con D-01/D-02/D-12/D-16/D-20; KB 02 distribución NSIS por máquina, borrador, SmartScreen en README y notas; KB 08 CI/Build con jobs, gates y release; KB 09 DD-11 con detalles y SU-05 "v0.1 sin verificar en Windows 10"; KB 10 PA-08 abierta con la nota. `git diff --stat` solo lista esos cinco archivos.
+
+#### Evidencia por tarea (RED / GREEN)
+
+- **2.1 y 2.2** (`release_config.rs`, versión): RED no observado en este apply (código escrito por la ejecución interrumpida). GREEN actual: `--test release_config` verde; cubre `parse_semver` (válidas e inválidas), dos fuentes desacordadas a la vez, las cuatro iguales, lectura sobre `tempdir` nombrando `package.json`, lock sin `packages[""]` y el repo real (todo 0.1.0). No se editaron los archivos reales de versión.
+- **2.3** (bundle): RED **reproducido** con el `tauri.conf.json` de `HEAD` restaurado temporalmente (se repuso después; `git diff` confirma la sección `bundle` nueva):
+  `cargo test --manifest-path src-tauri/Cargo.toml --locked --test release_config real_tauri_conf` ->
+  `real_tauri_conf_should_ship_only_the_nsis_per_machine_spanish_installer ... FAILED` con
+  `left: ["bundle.targets debe ser exactamente [\"nsis\"]", "bundle.windows.nsis.installMode debe ser \"perMachine\"", "bundle.windows.nsis.languages debe ser [\"Spanish\"]", "bundle.publisher debe ser un texto no vacio"]`.
+  GREEN con la configuración actual; TRIANGULATE: tabla con `currentUser`, `["nsis","msi"]` y config vacía. `--test security_baseline` verde (22).
+- **2.4** `npm run tauri build` (terminal no elevada): un solo instalador `src-tauri/target/release/bundle/nsis/PC Optimizer_0.1.0_x64-setup.exe`, 3 290 350 bytes (3,14 MiB); no existe `bundle/msi`. No se ejecutó.
+- **3.1** (`resolve_exe_under_test`): RED no observado (ejecución interrumpida). GREEN: ausente/vacía/blancos, inexistente en `tempdir`, carpeta, archivo existente (4 tests).
+- **3.2** (`packaged_app_should_require_administrator`, `#[ignore]`): RED **observado**: (a) sin la variable -> `falta PCOPT_EXE_UNDER_TEST: indica la ruta del ejecutable a inspeccionar`; (b) con la variable apuntando al binario de test `asInvoker` -> `left: Some("asInvoker") right: Some("requireAdministrator")`. GREEN con una copia (carpeta temporal) de `target/release/pc-optimizer.exe` -> `test packaged_app_should_require_administrator ... ok`. `--test manifest` sin `--ignored`: 9 ok / 1 ignorado.
+- **3.3** `--release --test manifest`: 9 ok / 1 ignorado.
+- **4.1, 4.2** (`ci_policy.rs`: SHA, permisos, `pull_request_target`): RED no observado (ejecución interrumpida). GREEN con tablas de rechazo/aceptación (tags, 39/41 caracteres, mayúsculas, `docker://`, locales `./`, comentario `# vX`, `permissions` en columna 0 frente a dentro de un job, `contents: write` en `publish`, `write-all`, `pull_request_target` en comentario y `pull_request`).
+- **4.3** (expresiones no confiables, excepciones de auditoría, `persist-credentials`): RED **observado**: `cargo test ... --test ci_policy` -> `error[E0425]: cannot find function untrusted_expressions in this scope` (y `audit_exceptions`, `checkout_with_persisted_credentials`). GREEN. TRIANGULATE (el workflow real destapó un falso positivo): `--ignored` del arnés de tests se tomaba por `--ignore`; se agregó el caso (aceptado `-- --ignored --exact`, rechazado `--ignore=RUSTSEC`) y se corrigió con comparación por palabra.
+- **5.1** (workflows reales): RED **observado** sin `.github/`: `no se pudo leer ...\.github\workflows: El sistema no puede encontrar la ruta especificada`. GREEN: `ci.yml` creado; `real_workflows_should_satisfy_every_policy_rule` y `ci_workflow_should_declare_the_four_jobs_on_a_pinned_windows_runner` verdes. El job `rust` crea una carpeta `dist` vacía (`tauri::generate_context!` exige que exista `frontendDist`); verificado localmente: clippy compila con `dist` vacía.
+- **5.2** (`src-tauri/.cargo/audit.toml`): RED **observado** (`no se pudo leer ...\.cargo\audit.toml`); GREEN con el archivo sin excepciones (`ignore = []`) y el comentario que exige ID, crate, justificación y aprobación del dueño. Revisión del YAML contra D-10/D-11: `cargo install --locked --version 0.23.0` con caché del binario por versión, `cargo audit` sin `--ignore`, `npm audit` en los dos niveles de D-11.
+- **5.3** Ensayo local de los pasos (terminal no elevada, sin `cargo-audit`): fmt ok; clippy ok (también con `dist` vacía); `--test no_network_crates` 9 ok; suite completa ok; `npm test` 838 ok; `npm run build` ok; `npm run tauri build -- --ci` ok; copia del `.exe`, `--release --test manifest` 9 ok / 1 ignorado y el test ignorado sobre la copia ok; `sha256sum` -> `1f885d3652c22e0cda857de65ad799a9b59f1a8208eb3b20702f44fceb00e743  PC-Optimizer_0.1.0_x64-setup.exe`, igual a `Get-FileHash` (mayúsculas). `package-lock.json` y `Cargo.lock` sin cambios. Desvío: NO se ejecutó `npm ci` (el clasificador de permisos denegó el comando que lo incluía); `node_modules` ya coincide con el lock porque `npm test` y `npm run build` pasan; `npm ci` queda para el CI. Se agregó `release-assets/` a `.gitignore` (salida local del ensayo).
+- **6.1** (notas): RED **observado**: `error[E0425]: cannot find function missing_note_points`. GREEN: `.github/release-notes/v0.1.0.md` cubre los 10 puntos (SmartScreen sin firma y pasos, UAC, Windows 11, Windows 10 no verificado, sin red ni telemetría, WebView2, carpeta de datos, borrado, suma). TRIANGULATE: cada punto removido se nombra como faltante; nota vacía -> 10 faltantes. Desvío de texto: se usa "Ejecutar de todas formas" (texto de Windows 11 en español; D-17 decía "todos modos"); se confirma en el smoke (9.4).
+- **6.2** (`release.yml`): RED **observado**: `falta .github/workflows/release.yml`. GREEN: solo `workflow_dispatch`; `preflight` (ref `refs/heads/main`, versión desde `tauri.conf.json`, tag inexistente por API, notas presentes), `ci` vía `uses: ./.github/workflows/ci.yml` con `use_cache: "false"`, `publish` con `needs: [preflight, ci]` y único `contents: write`, tag por API sobre `GITHUB_SHA`, `gh release create --draft --verify-tag --notes-file`. Suma con `sha256sum --text` (formato `hash  archivo` de D-17). Revisión contra los escenarios: "Gates en verde" (tag + borrador con instalador, sumas y notas, sin publicar), "Gate en rojo" (`publish` depende de `ci`; sin gate verde no hay tag), "Disparo desde otra rama" (primer paso de `preflight` falla antes de construir), "Tag existente" (preflight falla antes de `ci`), "Tag nuevo". No ejecutable antes de estar en `main`.
+- **7.1** README: secciones de instalación, SmartScreen, UAC, sistemas, desinstalación/datos, CI y licencia, coherentes punto por punto con `v0.1.0.md`; el único enlace externo es el propio repositorio. Nota: la sección "Elevación" del README (preexistente) sigue diciendo `asInvoker`; está desactualizada desde C-05 y no se tocó (fuera de alcance).
+- **7.2** Verificación integral: fmt ok, clippy ok, `cargo test --locked`: lib 1198 / 25 ign (igual a línea base), architecture 24, ci_policy 16, manifest 9 / 1 ign, no_network_crates 9, release_config 16, security_baseline 22; Vitest 838 (igual a línea base); `npm run build` ok; `openspec validate packaging-and-release-pipeline --strict` válido; `package-lock.json` y `Cargo.lock` sin cambios.
+
+Pendiente (requiere al dueño): grupos 8 a 10.

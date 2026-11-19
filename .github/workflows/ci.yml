@@ -1,0 +1,207 @@
+# CI de pc-optimizer (C-13). Politica verificada por src-tauri/tests/ci_policy.rs:
+# acciones fijadas por SHA, permisos minimos, sin pull_request_target, sin excepciones de auditoria en el YAML.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      use_cache:
+        description: "'false' para un build limpio, sin leer ni escribir cache (lo usa el release)"
+        type: string
+        default: "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Misma toolchain que la maquina del dueño (apply 1.1): un clippy nuevo no pone el CI en rojo sin un cambio en el repo.
+  RUST_TOOLCHAIN: "1.100.0"
+  CARGO_AUDIT_VERSION: "0.23.0"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rust:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain de Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      - name: Caché de Cargo
+        if: inputs.use_cache != 'false'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-rust-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-rust-
+
+      # tauri::generate_context! exige que exista la carpeta frontendDist; los tests de Rust no usan su contenido.
+      - name: Carpeta del frontend (vacía)
+        run: mkdir -p dist
+
+      - name: Formato
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features --locked -- -D warnings
+
+      - name: Auditoría de crates de red
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test no_network_crates
+
+      - name: Suite completa
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+  frontend:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: ${{ inputs.use_cache != 'false' && 'npm' || '' }}
+
+      - name: Dependencias
+        run: npm ci
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  audit:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain de Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Caché de cargo-audit
+        if: inputs.use_cache != 'false'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit.exe
+          key: ${{ runner.os }}-cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ env.RUST_TOOLCHAIN }}
+
+      - name: Instalar cargo-audit
+        run: cargo install cargo-audit --locked --version "$CARGO_AUDIT_VERSION"
+
+      # Desde src-tauri: ahi estan Cargo.lock y .cargo/audit.toml (excepciones versionadas y aprobadas por el dueño).
+      - name: Auditoría de Cargo
+        working-directory: src-tauri
+        run: cargo audit
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: ${{ inputs.use_cache != 'false' && 'npm' || '' }}
+
+      - name: Auditoría de npm (alta, todas las dependencias)
+        run: npm audit --audit-level=high
+
+      - name: Auditoría de npm (moderada, producción)
+        run: npm audit --omit=dev --audit-level=moderate
+
+  bundle:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain de Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Caché de Cargo
+        if: inputs.use_cache != 'false'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-bundle-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-bundle-
+
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: ${{ inputs.use_cache != 'false' && 'npm' || '' }}
+
+      - name: Dependencias
+        run: npm ci
+
+      - name: Instalador NSIS
+        run: npm run tauri build -- --ci
+
+      # El nombre generado lleva un espacio ("PC Optimizer_..."); GitHub lo cambiaria por un punto y la suma dejaria de coincidir.
+      - name: Preparar el instalador y las sumas
+        run: |
+          mkdir -p release-assets
+          installers=(src-tauri/target/release/bundle/nsis/*_x64-setup.exe)
+          test "${#installers[@]}" -eq 1
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          cp "${installers[0]}" "release-assets/PC-Optimizer_${version}_x64-setup.exe"
+          (cd release-assets && sha256sum --text "PC-Optimizer_${version}_x64-setup.exe" > SHA256SUMS.txt)
+          cat release-assets/SHA256SUMS.txt
+
+      - name: Manifest del ejecutable empaquetado
+        run: |
+          mkdir -p "$RUNNER_TEMP/packaged"
+          cp src-tauri/target/release/pc-optimizer.exe "$RUNNER_TEMP/packaged/pc-optimizer.exe"
+          cargo test --manifest-path src-tauri/Cargo.toml --release --locked --test manifest
+          PCOPT_EXE_UNDER_TEST="$(cygpath -w "$RUNNER_TEMP/packaged/pc-optimizer.exe")" \
+            cargo test --manifest-path src-tauri/Cargo.toml --release --locked --test manifest -- --ignored --exact packaged_app_should_require_administrator
+
+      - name: Subir el instalador
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7

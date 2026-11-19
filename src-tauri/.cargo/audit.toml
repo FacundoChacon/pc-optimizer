@@ -1,0 +1,8 @@
+# Excepciones de `cargo audit` (D-10, D-11). Empieza vacio: ninguna excepcion sin aprobacion.
+# Cada entrada de `ignore` exige, en un comentario sobre ella:
+#   - el ID del aviso (RUSTSEC-AAAA-NNNN) y el crate afectado;
+#   - la justificacion (p. ej. "no esta en el grafo de Windows x64");
+#   - la aprobacion del dueño, con fecha.
+# Nunca se agrega `--ignore` en el workflow (lo verifica src-tauri/tests/ci_policy.rs).
+[advisories]
+ignore = []

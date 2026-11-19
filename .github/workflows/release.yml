@@ -1,0 +1,90 @@
+# Release de pc-optimizer (C-13, D-16): solo manual, desde main, deja un BORRADOR; publica el dueño.
+# Vuelta atras (la ejecuta el dueño): gh release delete vX.Y.Z --yes && git push origin --delete vX.Y.Z
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preflight:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Solo desde main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "El release solo se dispara desde main (ref actual: $GITHUB_REF)" >&2
+            exit 1
+          fi
+
+      - name: Código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Versión de la app
+        id: version
+        run: |
+          version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Versión: $version"
+
+      - name: El tag no existe y las notas están
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
+            echo "El tag v$VERSION ya existe" >&2
+            exit 1
+          fi
+          test -f ".github/release-notes/v$VERSION.md" || { echo "Faltan las notas .github/release-notes/v$VERSION.md" >&2; exit 1; }
+
+  ci:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+    with:
+      use_cache: "false"
+
+  publish:
+    needs: [preflight, ci]
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - name: Código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Descargar el instalador
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer
+          path: release-assets
+
+      # Tag por API sobre el commit construido (sin credenciales de git en disco); el borrador no crea el tag por si solo.
+      - name: Tag sobre el commit construido
+        run: gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$GITHUB_SHA"
+
+      - name: Release en borrador
+        run: |
+          gh release create "v$VERSION" --draft --verify-tag \
+            --title "PC Optimizer $VERSION" \
+            --notes-file ".github/release-notes/v$VERSION.md" \
+            "release-assets/PC-Optimizer_${VERSION}_x64-setup.exe" \
+            "release-assets/SHA256SUMS.txt"
